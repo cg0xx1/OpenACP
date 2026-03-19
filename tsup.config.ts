@@ -4,6 +4,7 @@ export default defineConfig({
   entry: {
     cli: 'packages/core/src/cli.ts',
     index: 'packages/core/src/index.ts',
+    'adapter-telegram': 'packages/adapters/telegram/src/index.ts',
   },
   format: ['esm'],
   target: 'node20',
@@ -15,11 +16,14 @@ export default defineConfig({
   },
   clean: true,
   outDir: 'dist-publish/dist',
-  noExternal: ['@openacp/adapter-telegram'],
+  // noExternal not needed — telegram adapter is a separate entry point
+  // All npm dependencies — not bundled, listed in published package.json
+  // Must include everything from core + telegram package.json deps (except workspace:*)
   external: [
     'grammy',
     'zod',
     'nanoid',
     '@agentclientprotocol/sdk',
+    '@inquirer/prompts',
   ],
 })

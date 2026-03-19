@@ -8,5 +8,10 @@
   "include": [
     "packages/core/src/**/*",
     "packages/adapters/telegram/src/**/*"
+  ],
+  "exclude": [
+    "packages/core/dist/**/*",
+    "packages/adapters/telegram/dist/**/*",
+    "**/__tests__/**"
   ]
 }
