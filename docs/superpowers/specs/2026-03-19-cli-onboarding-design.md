@@ -22,10 +22,13 @@ openacp (first run, no config)
   ├─ Step 1: Telegram Setup
   │    ├─ Input: bot token → validate via getMe API
   │    ├─ Input: chat ID → validate via getChat API
+  │    ├─ Set enabled: true automatically
+  │    ├─ Set notificationTopicId: null, assistantTopicId: null
+  │    │   (auto-created by OpenACP on first start)
   │    └─ Display: "✓ Bot @name connected to 'Group Name'"
   │
   ├─ Step 2: Agent Setup
-  │    ├─ Auto-detect agents in PATH (claude, codex, etc.)
+  │    ├─ Auto-detect agents in PATH (claude-agent-acp, codex, etc.)
   │    ├─ Multi-select: which agents to enable
   │    ├─ If none detected → manual command input
   │    └─ Select: default agent
@@ -34,7 +37,7 @@ openacp (first run, no config)
   │    └─ Input: base directory (default: ~/openacp-workspace)
   │
   ├─ Step 4: Security Setup
-  │    ├─ Input: allowed user IDs (comma-separated, or empty = allow all)
+  │    ├─ Input: allowed user IDs (comma-separated → string[], or empty = allow all)
   │    ├─ Input: max concurrent sessions (default: 5)
   │    └─ Input: session timeout minutes (default: 60)
   │
@@ -43,7 +46,7 @@ openacp (first run, no config)
   │    └─ Confirm to save
   │
   └─ Step 6: Save & Start
-       ├─ Write config to ~/.openacp/config.json
+       ├─ Write config via configManager.writeNew(config)
        └─ Ask "Start OpenACP now?" → Yes: start / No: exit with instructions
 ```
 
@@ -53,11 +56,11 @@ openacp (first run, no config)
 
 Main module containing:
 
-- `runSetup(configManager: ConfigManager): Promise<boolean>` — orchestrates the entire setup flow, returns `true` if user wants to start immediately
-- `setupTelegram(): Promise<TelegramChannelConfig>` — collects and validates Telegram config
-- `setupAgents(): Promise<{ agents: Record<string, AgentDefinition>, defaultAgent: string }>` — detects and configures agents
+- `runSetup(configManager: ConfigManager): Promise<boolean>` — orchestrates the entire setup flow. Uses `configManager.getConfigPath()` to determine where to write. Returns `true` if user wants to start immediately.
+- `setupTelegram(): Promise<Config['channels']['telegram']>` — collects and validates Telegram config. Returns Zod-inferred type. Automatically sets `enabled: true`. Sets `notificationTopicId` and `assistantTopicId` to `null` (auto-created on first start).
+- `setupAgents(): Promise<{ agents: Record<string, z.infer<typeof AgentSchema>>, defaultAgent: string }>` — detects and configures agents. Returns agents in Zod schema shape (command, args, env) keyed by name.
 - `setupWorkspace(): Promise<{ baseDir: string }>` — collects workspace path
-- `setupSecurity(): Promise<SecurityConfig>` — collects security settings
+- `setupSecurity(): Promise<Config['security']>` — collects security settings. Allowed user IDs are parsed from comma-separated input into `string[]`.
 - `validateBotToken(token: string): Promise<{ ok: true, botName: string, botUsername: string } | { ok: false, error: string }>` — calls Telegram `getMe` API
 - `validateChatId(token: string, chatId: number): Promise<{ ok: true, title: string, isForum: boolean } | { ok: false, error: string }>` — calls Telegram `getChat` API
 - `detectAgents(): Promise<Array<{ name: string, command: string }>>` — checks PATH for known agent binaries
@@ -83,9 +86,11 @@ await configManager.load()
 
 ### Modified: `packages/core/src/config.ts`
 
-Add method:
+Add methods:
 
 - `exists(): Promise<boolean>` — checks if config file exists without creating it or exiting
+- `getConfigPath(): string` — returns the resolved config path (respects `OPENACP_CONFIG_PATH` env var)
+- `writeNew(config: Config): Promise<void>` — writes a complete config object to the config path, creating the directory if needed. Unlike `save()` which reads-then-merges, this writes from scratch for first-time setup.
 
 ### Modified: `packages/core/package.json`
 
@@ -108,15 +113,16 @@ If `is_forum` is false, warn user and suggest enabling Topics in group settings.
 
 ### Agent Detection
 
-Check PATH for known binaries using `which` command:
-- `claude` / `claude-code` — Claude Code agent
+Check PATH for known binaries using `command -v` (portable across shells):
+- `claude-agent-acp` — Claude Code ACP agent (matches default config)
+- `claude` / `claude-code` — Claude Code (alternative names)
 - `codex` — OpenAI Codex agent
 
-For each found binary, create an agent config entry with default args.
+The agent name in config uses the key (e.g., `claude`), and the `command` field stores the actual binary found (e.g., `claude-agent-acp`). This matches the existing default config pattern.
 
 ### Agent Command Validation
 
-When user inputs a custom command, verify the binary exists using `which`. If not found, display warning but allow proceeding (binary might be installed later).
+When user inputs a custom command, verify the binary exists using `command -v`. If not found, display warning but allow proceeding (binary might be installed later).
 
 ## Error Handling
 
@@ -148,6 +154,6 @@ For now, users delete `~/.openacp/config.json` and run `openacp` again. In Phase
 
 ## Testing
 
-- **Unit tests** for validation functions: mock `fetch` for Telegram API calls, mock `child_process.execSync` for `which` command
+- **Unit tests** for validation functions: mock `fetch` for Telegram API calls, mock `child_process.execSync` for `command -v`
 - **Unit tests** for `detectAgents()`: mock PATH lookups
 - **Integration test**: mock `@inquirer/prompts` to simulate user input through the full flow, verify generated config matches expected output
