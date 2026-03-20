@@ -35,6 +35,26 @@ const LoggingSchema = z
 
 export type LoggingConfig = z.infer<typeof LoggingSchema>;
 
+const TunnelAuthSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    token: z.string().optional(),
+  })
+  .default({});
+
+const TunnelSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    port: z.number().default(3100),
+    provider: z.enum(["cloudflare", "ngrok", "bore"]).default("cloudflare"),
+    options: z.record(z.string(), z.unknown()).default({}),
+    storeTtlMinutes: z.number().default(60),
+    auth: TunnelAuthSchema,
+  })
+  .default({});
+
+export type TunnelConfig = z.infer<typeof TunnelSchema>;
+
 export const ConfigSchema = z.object({
   channels: z.record(z.string(), BaseChannelSchema),
   agents: z.record(z.string(), AgentSchema),
@@ -57,6 +77,7 @@ export const ConfigSchema = z.object({
       ttlDays: z.number().default(30),
     })
     .default({}),
+  tunnel: TunnelSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -222,6 +243,24 @@ export class ConfigManager {
     if (process.env.OPENACP_DEBUG && !process.env.OPENACP_LOG_LEVEL) {
       raw.logging = raw.logging || {};
       (raw.logging as Record<string, unknown>).level = "debug";
+    }
+
+    // Tunnel env var overrides
+    if (process.env.OPENACP_TUNNEL_ENABLED) {
+      raw.tunnel = raw.tunnel || {};
+      (raw.tunnel as Record<string, unknown>).enabled =
+        process.env.OPENACP_TUNNEL_ENABLED === "true";
+    }
+    if (process.env.OPENACP_TUNNEL_PORT) {
+      raw.tunnel = raw.tunnel || {};
+      (raw.tunnel as Record<string, unknown>).port = Number(
+        process.env.OPENACP_TUNNEL_PORT,
+      );
+    }
+    if (process.env.OPENACP_TUNNEL_PROVIDER) {
+      raw.tunnel = raw.tunnel || {};
+      (raw.tunnel as Record<string, unknown>).provider =
+        process.env.OPENACP_TUNNEL_PROVIDER;
     }
   }
 
