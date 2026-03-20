@@ -146,12 +146,25 @@ export function formatPlan(plan: { entries: Array<{ content: string; status: str
   return `<b>Plan:</b>\n${lines.join('\n')}`
 }
 
-export function formatUsage(usage: { tokensUsed?: number; contextSize?: number; cost?: { amount: number; currency: string } }): string {
-  const parts: string[] = []
-  if (usage.tokensUsed != null) parts.push(`Tokens: ${usage.tokensUsed.toLocaleString()}`)
-  if (usage.contextSize != null) parts.push(`Context: ${usage.contextSize.toLocaleString()}`)
-  if (usage.cost) parts.push(`Cost: $${usage.cost.amount.toFixed(4)}`)
-  return `📊 ${parts.join(' | ')}`
+function formatTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
+}
+
+function progressBar(ratio: number): string {
+  const filled = Math.round(Math.min(ratio, 1) * 10)
+  return '▓'.repeat(filled) + '░'.repeat(10 - filled)
+}
+
+export function formatUsage(usage: { tokensUsed?: number; contextSize?: number }): string {
+  const { tokensUsed, contextSize } = usage
+  if (tokensUsed == null) return '📊 Usage data unavailable'
+  if (contextSize == null) return `📊 ${formatTokens(tokensUsed)} tokens`
+
+  const ratio = tokensUsed / contextSize
+  const pct = Math.round(ratio * 100)
+  const bar = progressBar(ratio)
+  const emoji = pct >= 85 ? '⚠️' : '📊'
+  return `${emoji} ${formatTokens(tokensUsed)} / ${formatTokens(contextSize)} tokens\n${bar} ${pct}%`
 }
 
 export function splitMessage(text: string, maxLength = 4096): string[] {
