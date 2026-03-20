@@ -14,3 +14,4 @@ export { AdapterFactory, installPlugin, uninstallPlugin, listPlugins, loadAdapte
 export { startDaemon, stopDaemon, getStatus, getPidPath } from './daemon.js'
 export { installAutoStart, uninstallAutoStart, isAutoStartInstalled, isAutoStartSupported } from './autostart.js'
 export { runConfigEditor } from './config-editor.js'
+export { ApiServer, type ApiConfig } from './api-server.js'
