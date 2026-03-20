@@ -17,7 +17,7 @@ autoStart: z.boolean().default(false)
 
 - `runMode: 'daemon'` — `openacp` spawns a background process and exits
 - `autoStart: true` — installs OS-level auto-start (LaunchAgent on macOS, systemd on Linux)
-- Env override: `OPENACP_RUN_MODE`
+- Env override: `OPENACP_RUN_MODE` (must be added to `applyEnvOverrides` in config.ts)
 
 ## CLI Commands
 
@@ -27,14 +27,14 @@ autoStart: z.boolean().default(false)
 | `openacp start` | Force daemon mode (regardless of config) |
 | `openacp stop` | Reads PID from `~/.openacp/openacp.pid`, sends SIGTERM |
 | `openacp status` | Checks PID file, reports running/stopped |
-| `openacp logs` | Reads `logDir` from config, tails active log file with `tail -f -n 50` |
+| `openacp logs` | Reads `logDir` from config, tails `openacp.log` in that dir with `tail -f -n 50` |
 | `openacp config` | Menu-based config editor |
 | `openacp --foreground` | Force foreground (overrides `runMode: daemon`) |
 | `openacp --daemon-child` | Internal flag — actual server process spawned by daemon mode |
 
 ### Daemon Spawn Logic
 
-1. Check `~/.openacp/openacp.pid` — if process alive, print "Already running (PID xxx)" and exit
+1. Check `~/.openacp/openacp.pid` — if PID file exists but process is not alive, remove stale PID file. If process alive, print "Already running (PID xxx)" and exit
 2. Spawn `node <cli-path> --daemon-child` with `{ detached: true, stdio: 'ignore' }`
 3. **Parent** writes child PID to `~/.openacp/openacp.pid` (single writer — child does NOT write PID)
 4. Parent exits immediately
@@ -173,10 +173,10 @@ All paths in generated service files (plist, systemd) must use absolute paths vi
 
 ## Onboarding Changes
 
-Add step 4 after Workspace:
+Add Run Mode as step 3 (Workspace becomes step 2):
 
 ```
-[4/4] Run Mode
+[3/3] Run Mode
 
   How would you like to run OpenACP?
 
