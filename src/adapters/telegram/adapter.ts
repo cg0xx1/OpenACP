@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard } from "grammy";
+import { Bot } from "grammy";
 import {
   ChannelAdapter,
   type OpenACPCore,
@@ -76,6 +76,7 @@ export class TelegramAdapter extends ChannelAdapter {
   private bot!: Bot;
   private telegramConfig: TelegramChannelConfig;
   private sessionDrafts: Map<string, MessageDraft> = new Map();
+  private sessionTextBuffers: Map<string, string> = new Map();
   private toolCallMessages: Map<
     string,
     Map<
@@ -339,6 +340,10 @@ export class TelegramAdapter extends ChannelAdapter {
           this.sessionDrafts.set(sessionId, draft);
         }
         draft.append(content.text);
+        this.sessionTextBuffers.set(
+          sessionId,
+          (this.sessionTextBuffers.get(sessionId) ?? '') + content.text,
+        );
         break;
       }
 
@@ -662,20 +667,31 @@ export class TelegramAdapter extends ChannelAdapter {
     const draft = this.sessionDrafts.get(sessionId);
     if (!draft) return;
 
-    // Detect actions in assistant responses and pass keyboard to finalize in one API call
-    let keyboard: InlineKeyboard | undefined;
+    const finalMsgId = await draft.finalize();
+    this.sessionDrafts.delete(sessionId);
+
+    // Detect actions in assistant responses and attach keyboard via editMessageReplyMarkup
     if (sessionId === this.assistantSession?.id) {
-      const fullText = draft.getBuffer();
-      if (fullText) {
+      const fullText = this.sessionTextBuffers.get(sessionId);
+      this.sessionTextBuffers.delete(sessionId);
+      if (fullText && finalMsgId) {
         const detected = detectAction(fullText);
         if (detected) {
           const actionId = storeAction(detected);
-          keyboard = buildActionKeyboard(actionId, detected);
+          const keyboard = buildActionKeyboard(actionId, detected);
+          try {
+            await this.bot.api.editMessageReplyMarkup(
+              this.telegramConfig.chatId,
+              finalMsgId,
+              { reply_markup: keyboard },
+            );
+          } catch {
+            // Best effort — keyboard attachment is non-critical
+          }
         }
       }
+    } else {
+      this.sessionTextBuffers.delete(sessionId);
     }
-
-    await draft.finalize(keyboard);
-    this.sessionDrafts.delete(sessionId);
   }
 }
