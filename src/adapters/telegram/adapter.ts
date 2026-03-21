@@ -20,11 +20,9 @@ import {
 import {
   setupCommands,
   setupMenuCallbacks,
-  setupSkillCallbacks,
   setupDangerousModeCallbacks,
   buildMenuKeyboard,
-  buildSkillKeyboard,
-  clearSkillCallbacks,
+  buildSkillMessages,
   STATIC_COMMANDS,
 } from "./commands.js";
 import { PermissionHandler } from "./permissions.js";
@@ -215,7 +213,6 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
     // Callback registration order matters!
     // Specific regex handlers first, catch-all last.
-    setupSkillCallbacks(this.bot, this.core as OpenACPCore);
     setupDangerousModeCallbacks(this.bot, this.core as OpenACPCore);
     setupActionCallbacks(
       this.bot,
@@ -696,14 +693,12 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     // Suppress skill commands for the assistant session entirely
     if (sessionId === this.assistantSession?.id) return;
 
-    const session = this.core.sessionManager.getSession(
-      sessionId,
-    );
+    const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
     const threadId = Number(session.threadId);
     if (!threadId) return;
 
-    // Restore skillMsgId from persisted platform data if not in memory (e.g. after restart)
+    // Restore skillMsgIds from persisted platform data if not in memory (e.g. after restart)
     if (!this.skillMessages.has(sessionId)) {
       const record = this.core.sessionManager.getSessionRecord(sessionId);
       const platform = record?.platform as import("../../core/types.js").TelegramPlatformData | undefined;
@@ -718,21 +713,17 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       return;
     }
 
-    // Clear old callback entries before building new keyboard
-    clearSkillCallbacks(sessionId);
-
-    const keyboard = buildSkillKeyboard(sessionId, commands);
-    const text = "🛠 <b>Available commands:</b>";
+    const messages = buildSkillMessages(commands);
     const existingMsgId = this.skillMessages.get(sessionId);
 
     if (existingMsgId) {
-      // Update existing pinned message
+      // Update existing pinned message (first chunk only, remove extra if any)
       try {
         await this.bot.api.editMessageText(
           this.telegramConfig.chatId,
           existingMsgId,
-          text,
-          { parse_mode: "HTML", reply_markup: keyboard },
+          messages[0],
+          { parse_mode: "HTML" },
         );
         return;
       } catch {
@@ -740,44 +731,43 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       }
     }
 
-    // Create and pin new message
+    // Send new messages and pin the first one
     try {
-      const msg = await this.sendQueue.enqueue(() =>
-        this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          text,
-          {
-            message_thread_id: threadId,
-            parse_mode: "HTML",
-            reply_markup: keyboard,
-            disable_notification: true,
-          },
-        ),
-      );
-      this.skillMessages.set(sessionId, msg!.message_id);
+      let firstMsgId: number | undefined;
+      for (const text of messages) {
+        const msg = await this.sendQueue.enqueue(() =>
+          this.bot.api.sendMessage(
+            this.telegramConfig.chatId,
+            text,
+            {
+              message_thread_id: threadId,
+              parse_mode: "HTML",
+              disable_notification: true,
+            },
+          ),
+        );
+        if (!firstMsgId) firstMsgId = msg!.message_id;
+      }
+
+      this.skillMessages.set(sessionId, firstMsgId!);
 
       // Persist skillMsgId so it survives restarts
       const record = this.core.sessionManager.getSessionRecord(sessionId);
       if (record) {
         await this.core.sessionManager.updateSessionPlatform(
           sessionId,
-          { ...record.platform, skillMsgId: msg!.message_id },
+          { ...record.platform, skillMsgId: firstMsgId },
         );
       }
 
       await this.bot.api.pinChatMessage(
         this.telegramConfig.chatId,
-        msg!.message_id,
-        {
-          disable_notification: true,
-        },
+        firstMsgId!,
+        { disable_notification: true },
       );
     } catch (err) {
       log.error({ err, sessionId }, "Failed to send skill commands");
     }
-
-    // Update Telegram autocomplete with skill commands
-    await this.updateCommandAutocomplete(session.agentName, commands);
   }
 
   async cleanupSkillCommands(sessionId: string): Promise<void> {
@@ -797,7 +787,6 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     }
 
     this.skillMessages.delete(sessionId);
-    clearSkillCallbacks(sessionId);
 
     // Clear persisted skillMsgId
     const record = this.core.sessionManager.getSessionRecord(sessionId);
@@ -807,39 +796,6 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     }
   }
 
-  private async updateCommandAutocomplete(
-    agentName: string,
-    skillCommands: AgentCommand[],
-  ): Promise<void> {
-    // Telegram requires: 1-32 chars, lowercase a-z, 0-9, underscores only
-    const prefix = `[${agentName}] `;
-    const validSkills = skillCommands
-      .map((c) => ({
-        command: c.name
-          .toLowerCase()
-          .replace(/[^a-z0-9_]/g, "_")
-          .slice(0, 32),
-        description: (
-          prefix + (c.description || c.name).replace(/\n/g, " ")
-        ).slice(0, 256),
-      }))
-      .filter((c) => c.command.length > 0);
-    const all = [...STATIC_COMMANDS, ...validSkills];
-    try {
-      await this.bot.api.setMyCommands(all, {
-        scope: { type: "chat", chat_id: this.telegramConfig.chatId },
-      });
-      log.info(
-        { count: all.length, skills: validSkills.length },
-        "Updated command autocomplete",
-      );
-    } catch (err) {
-      log.error(
-        { err, commands: all },
-        "Failed to update command autocomplete",
-      );
-    }
-  }
 
   private async finalizeDraft(sessionId: string): Promise<void> {
     const draft = this.sessionDrafts.get(sessionId);

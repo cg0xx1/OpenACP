@@ -3,9 +3,8 @@ import { InlineKeyboard } from "grammy";
 import type { OpenACPCore } from "../../core/index.js";
 import type { Session } from "../../core/session.js";
 import { escapeHtml } from "./formatting.js";
-import { createSessionTopic, renameSessionTopic } from "./topics.js";
+import { createSessionTopic, renameSessionTopic, buildDeepLink } from "./topics.js";
 import { createChildLogger } from "../../core/log.js";
-import { nanoid } from "nanoid";
 import type { AgentCommand } from "../../core/index.js";
 const log = createChildLogger({ module: "telegram-commands" });
 
@@ -234,6 +233,13 @@ async function handleNewChat(
       botFromCtx(ctx),
       chatId,
       topicName,
+    );
+
+    // Notify in the original topic immediately with a deep link to the new one
+    const topicLink = buildDeepLink(chatId, newThreadId);
+    await ctx.reply(
+      `✅ New chat created → <a href="${topicLink}">Open topic</a>`,
+      { parse_mode: "HTML" },
     );
 
     await ctx.api.sendMessage(chatId, `⏳ Setting up session, please wait...`, {
@@ -536,57 +542,32 @@ function botFromCtx(ctx: Context): Bot {
   return { api: ctx.api } as unknown as Bot;
 }
 
-// Skill command callback lookup map (short key → session + command)
-interface SkillCallbackEntry {
-  sessionId: string;
-  commandName: string;
-}
+const TELEGRAM_MSG_LIMIT = 4096;
 
-const skillCallbackMap = new Map<string, SkillCallbackEntry>();
-
-export function buildSkillKeyboard(
-  sessionId: string,
-  commands: AgentCommand[],
-): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
+/**
+ * Build plain-text skill command messages. Each command is on its own line
+ * wrapped in <code> for tap-to-copy. If the list exceeds Telegram's message
+ * limit, it is split into multiple messages (cut at line boundaries).
+ */
+export function buildSkillMessages(commands: AgentCommand[]): string[] {
   const sorted = [...commands].sort((a, b) => a.name.localeCompare(b.name));
-  for (let i = 0; i < sorted.length; i++) {
-    const cmd = sorted[i];
-    const key = nanoid(8);
-    skillCallbackMap.set(key, { sessionId, commandName: cmd.name });
-    keyboard.text(`/${cmd.name}`, `s:${key}`);
-    if (i % 2 === 1 && i < sorted.length - 1) {
-      keyboard.row();
+  const header = "🛠 <b>Available Skills</b>\n";
+  const lines = sorted.map((c) => `<code>/${c.name}</code>`);
+
+  const messages: string[] = [];
+  let current = header;
+
+  for (const line of lines) {
+    const candidate = current + "\n" + line;
+    if (candidate.length > TELEGRAM_MSG_LIMIT) {
+      messages.push(current);
+      current = line;
+    } else {
+      current = candidate;
     }
   }
-  return keyboard;
-}
-
-export function clearSkillCallbacks(sessionId: string): void {
-  for (const [key, entry] of skillCallbackMap) {
-    if (entry.sessionId === sessionId) {
-      skillCallbackMap.delete(key);
-    }
-  }
-}
-
-export function setupSkillCallbacks(bot: Bot, core: OpenACPCore): void {
-  bot.callbackQuery(/^s:/, async (ctx) => {
-    try {
-      await ctx.answerCallbackQuery();
-    } catch {
-      /* expired */
-    }
-
-    const key = ctx.callbackQuery.data.slice(2);
-    const entry = skillCallbackMap.get(key);
-    if (!entry) return;
-
-    const session = core.sessionManager.getSession(entry.sessionId);
-    if (!session || session.status !== "active") return;
-
-    await session.enqueuePrompt(`/${entry.commandName}`);
-  });
+  if (current) messages.push(current);
+  return messages;
 }
 
 export async function executeNewSession(
