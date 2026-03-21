@@ -17,6 +17,7 @@ export interface IChannelAdapter {
   // Session lifecycle on channel side
   createSessionThread(sessionId: string, name: string): Promise<string>  // returns threadId
   renameSessionThread(sessionId: string, newName: string): Promise<void>
+  deleteSessionThread(sessionId: string): Promise<void>
 
   // Skill commands — optional
   sendSkillCommands(sessionId: string, commands: AgentCommand[]): Promise<void>
@@ -41,6 +42,7 @@ export abstract class ChannelAdapter<TCore = unknown> implements IChannelAdapter
   // Session lifecycle on channel side
   abstract createSessionThread(sessionId: string, name: string): Promise<string>  // returns threadId
   abstract renameSessionThread(sessionId: string, newName: string): Promise<void>
+  async deleteSessionThread(_sessionId: string): Promise<void> {}
 
   // Skill commands — override in adapters that support dynamic commands
   async sendSkillCommands(_sessionId: string, _commands: AgentCommand[]): Promise<void> {}

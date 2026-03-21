@@ -87,30 +87,45 @@ These are Telegram bot commands (type directly in chat):
 - /agents — List agents
 - /help — Show help
 
-## Topic Management (via CLI)
-You have access to bash. Use these commands to manage topics:
+## Management Commands (via CLI)
+You have access to bash. Use these commands to manage OpenACP:
 
-### List topics
+### Session management
 \`\`\`bash
-openacp runtime topics
-openacp runtime topics --status finished,error
+openacp api status                       # List active sessions
+openacp api session <id>                 # Session detail
+openacp api send <id> "prompt text"      # Send prompt to session
+openacp api cancel <id>                  # Cancel session
+openacp api dangerous <id> on|off        # Toggle dangerous mode
 \`\`\`
 
-### Delete a specific topic
+### Topic management
 \`\`\`bash
-openacp runtime delete-topic <session-id>
-openacp runtime delete-topic <session-id> --force  # for active sessions
+openacp api topics                       # List topics
+openacp api topics --status finished,error
+openacp api delete-topic <id>            # Delete topic
+openacp api delete-topic <id> --force    # Force delete active
+openacp api cleanup                      # Cleanup finished topics
+openacp api cleanup --status finished,error
 \`\`\`
 
-### Cleanup multiple topics
+### System
 \`\`\`bash
-openacp runtime cleanup
-openacp runtime cleanup --status finished,error
+openacp api health                       # System health
+openacp api config                       # Show config
+openacp api config set <key> <value>     # Update config
+openacp api adapters                     # List adapters
+openacp api tunnel                       # Tunnel status
+openacp api notify "message"             # Send notification
+openacp api version                      # Daemon version
+openacp api restart                      # Restart daemon
 \`\`\`
 
 ## Guidelines
-- When a user asks about sessions or topics, run \`openacp runtime topics\` to get current data.
+- When a user asks about sessions or topics, run \`openacp api topics\` or \`openacp api status\` to get current data.
 - When deleting: if the session is active/initializing, warn the user first. Only use --force if they confirm.
+- Use \`openacp api health\` to check system status.
+- Use \`openacp api config\` to check configuration, \`openacp api config set\` to update values.
 - Format responses nicely for Telegram (use bold, code blocks).
 - Be concise and helpful. Respond in the same language the user uses.
 - When creating sessions, guide through: agent selection → workspace → confirm.`

@@ -22,14 +22,30 @@ Usage:
   openacp --version                    Show version
   openacp --help                       Show this help
 
-Runtime (requires running daemon):
-  openacp runtime new [agent] [workspace]  Create a new session
-  openacp runtime cancel <id>              Cancel a session
-  openacp runtime status                   Show active sessions
-  openacp runtime agents                   List available agents
+API (requires running daemon):
+  openacp api status                       Show active sessions
+  openacp api session <id>                 Show session details
+  openacp api new [agent] [workspace]      Create a new session
+  openacp api send <id> <prompt>           Send prompt to session
+  openacp api cancel <id>                  Cancel a session
+  openacp api dangerous <id> [on|off]      Toggle dangerous mode
+  openacp api agents                       List available agents
+  openacp api topics [--status s1,s2]      List topics
+  openacp api delete-topic <id> [--force]  Delete a topic
+  openacp api cleanup [--status s1,s2]     Cleanup finished topics
+  openacp api health                       Show system health
+  openacp api adapters                     List registered adapters
+  openacp api tunnel                       Show tunnel status
+  openacp api config                       Show runtime config
+  openacp api config set <key> <value>     Update config value
+  openacp api restart                      Restart daemon
+  openacp api notify <message>             Send notification to all channels
+  openacp api version                      Show daemon version
 
 Note: "openacp status" shows daemon process health.
-      "openacp runtime status" shows active agent sessions.
+      "openacp api status" shows active agent sessions.
+      "openacp --version" shows CLI version.
+      "openacp api version" shows running daemon version.
 
 Install:
   npm install -g @openacp/cli
@@ -83,7 +99,7 @@ export async function cmdPlugins(): Promise<void> {
   }
 }
 
-export async function cmdRuntime(args: string[]): Promise<void> {
+export async function cmdApi(args: string[]): Promise<void> {
   const subCmd = args[1]
 
   const port = readApiPort()
@@ -120,7 +136,7 @@ export async function cmdRuntime(args: string[]): Promise<void> {
     } else if (subCmd === 'cancel') {
       const sessionId = args[2]
       if (!sessionId) {
-        console.error('Usage: openacp runtime cancel <session-id>')
+        console.error('Usage: openacp api cancel <session-id>')
         process.exit(1)
       }
       const res = await apiCall(port, `/api/sessions/${encodeURIComponent(sessionId)}`, {
@@ -155,13 +171,284 @@ export async function cmdRuntime(args: string[]): Promise<void> {
         console.log(`  ${a.name}${isDefault}`)
       }
 
+    } else if (subCmd === 'topics') {
+      const statusIdx = args.indexOf('--status')
+      const statusParam = statusIdx !== -1 ? args[statusIdx + 1] : undefined
+      const query = statusParam ? `?status=${encodeURIComponent(statusParam)}` : ''
+      const res = await apiCall(port, `/api/topics${query}`)
+      const data = await res.json() as { topics: Array<{ sessionId: string; topicId: number | null; name: string | null; status: string; agentName: string; lastActiveAt: string }> }
+      if (data.topics.length === 0) {
+        console.log('No topics found.')
+      } else {
+        console.log(`Topics: ${data.topics.length}\n`)
+        for (const t of data.topics) {
+          const name = t.name ? `  "${t.name}"` : ''
+          const topic = t.topicId ? `Topic #${t.topicId}` : 'headless'
+          console.log(`  ${t.sessionId}  ${t.agentName}  ${t.status}${name}      ${topic}`)
+        }
+      }
+
+    } else if (subCmd === 'delete-topic') {
+      const sessionId = args[2]
+      if (!sessionId) {
+        console.error('Usage: openacp api delete-topic <session-id> [--force]')
+        process.exit(1)
+      }
+      const force = args.includes('--force')
+      const query = force ? '?force=true' : ''
+      const res = await apiCall(port, `/api/topics/${encodeURIComponent(sessionId)}${query}`, { method: 'DELETE' })
+      const data = await res.json() as Record<string, unknown>
+      if (res.status === 409) {
+        console.error(`Session "${sessionId}" is active (${(data.session as any)?.status}). Use --force to delete.`)
+        process.exit(1)
+      }
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      const topicLabel = data.topicId ? `Topic #${data.topicId}` : 'headless session'
+      console.log(`${topicLabel} deleted (session ${sessionId})`)
+
+    } else if (subCmd === 'cleanup') {
+      const statusIdx = args.indexOf('--status')
+      const statusParam = statusIdx !== -1 ? args[statusIdx + 1] : undefined
+      const body: Record<string, unknown> = {}
+      if (statusParam) body.statuses = statusParam.split(',')
+      const res = await apiCall(port, '/api/topics/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json() as { deleted: string[]; failed: Array<{ sessionId: string; error: string }> }
+      if (data.deleted.length === 0 && data.failed.length === 0) {
+        console.log('Nothing to clean up.')
+      } else {
+        console.log(`Cleaned up ${data.deleted.length} topics${data.deleted.length ? ': ' + data.deleted.join(', ') : ''} (${data.failed.length} failed)`)
+        for (const f of data.failed) {
+          console.error(`  Failed: ${f.sessionId} — ${f.error}`)
+        }
+      }
+
+    } else if (subCmd === 'send') {
+      const sessionId = args[2]
+      if (!sessionId) {
+        console.error('Usage: openacp api send <session-id> <prompt>')
+        process.exit(1)
+      }
+      const prompt = args.slice(3).join(' ')
+      if (!prompt) {
+        console.error('Usage: openacp api send <session-id> <prompt>')
+        process.exit(1)
+      }
+      const res = await apiCall(port, `/api/sessions/${encodeURIComponent(sessionId)}/prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt }),
+      })
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      console.log(`Prompt sent to session ${sessionId} (queue depth: ${data.queueDepth})`)
+
+    } else if (subCmd === 'session') {
+      const sessionId = args[2]
+      if (!sessionId) {
+        console.error('Usage: openacp api session <session-id>')
+        process.exit(1)
+      }
+      const res = await apiCall(port, `/api/sessions/${encodeURIComponent(sessionId)}`)
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      console.log(`Session details:`)
+      console.log(`  ID             : ${data.id}`)
+      console.log(`  Agent          : ${data.agent}`)
+      console.log(`  Status         : ${data.status}`)
+      console.log(`  Name           : ${data.name ?? '(none)'}`)
+      console.log(`  Workspace      : ${data.workspace}`)
+      console.log(`  Created        : ${data.createdAt}`)
+      console.log(`  Dangerous      : ${data.dangerous}`)
+      console.log(`  Queue depth    : ${data.queueDepth}`)
+      console.log(`  Prompt active  : ${data.promptActive}`)
+      console.log(`  Channel        : ${data.channelId ?? '(none)'}`)
+      console.log(`  Thread         : ${data.threadId ?? '(none)'}`)
+
+    } else if (subCmd === 'dangerous') {
+      const sessionId = args[2]
+      if (!sessionId) {
+        console.error('Usage: openacp api dangerous <session-id> [on|off]')
+        process.exit(1)
+      }
+      const toggle = args[3]
+      if (!toggle || (toggle !== 'on' && toggle !== 'off')) {
+        console.error('Usage: openacp api dangerous <session-id> [on|off]')
+        process.exit(1)
+      }
+      const res = await apiCall(port, `/api/sessions/${encodeURIComponent(sessionId)}/dangerous`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: toggle === 'on' }),
+      })
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      const state = toggle === 'on' ? 'enabled' : 'disabled'
+      console.log(`Dangerous mode ${state} for session ${sessionId}`)
+
+    } else if (subCmd === 'health') {
+      const res = await apiCall(port, '/api/health')
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      const uptimeSeconds = typeof data.uptimeSeconds === 'number' ? data.uptimeSeconds : 0
+      const hours = Math.floor(uptimeSeconds / 3600)
+      const minutes = Math.floor((uptimeSeconds % 3600) / 60)
+      const memoryBytes = typeof data.memoryUsage === 'number' ? data.memoryUsage : 0
+      const memoryMB = (memoryBytes / 1024 / 1024).toFixed(1)
+      const sessions = data.sessions as Record<string, unknown> ?? {}
+      console.log(`Status   : ${data.status}`)
+      console.log(`Uptime   : ${hours}h ${minutes}m`)
+      console.log(`Version  : ${data.version}`)
+      console.log(`Memory   : ${memoryMB} MB`)
+      console.log(`Sessions : ${sessions.active ?? 0} active / ${sessions.total ?? 0} total`)
+      console.log(`Adapters : ${data.adapters}`)
+      console.log(`Tunnel   : ${data.tunnel}`)
+
+    } else if (subCmd === 'restart') {
+      const res = await apiCall(port, '/api/restart', { method: 'POST' })
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      console.log('Restart signal sent. OpenACP is restarting...')
+
+    } else if (subCmd === 'config') {
+      const subSubCmd = args[2]
+      if (!subSubCmd) {
+        const res = await apiCall(port, '/api/config')
+        const data = await res.json() as Record<string, unknown>
+        if (!res.ok) {
+          console.error(`Error: ${data.error}`)
+          process.exit(1)
+        }
+        console.log(JSON.stringify(data.config, null, 2))
+      } else if (subSubCmd === 'set') {
+        const configPath = args[3]
+        const configValue = args[4]
+        if (!configPath || configValue === undefined) {
+          console.error('Usage: openacp api config set <path> <value>')
+          process.exit(1)
+        }
+        let value: unknown = configValue
+        try {
+          value = JSON.parse(configValue)
+        } catch {
+          // keep as string
+        }
+        const res = await apiCall(port, '/api/config', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: configPath, value }),
+        })
+        const data = await res.json() as Record<string, unknown>
+        if (!res.ok) {
+          console.error(`Error: ${data.error}`)
+          process.exit(1)
+        }
+        console.log(`Config updated: ${configPath} = ${JSON.stringify(value)}`)
+        if (data.needsRestart) {
+          console.log('Note: restart required for this change to take effect.')
+        }
+      } else {
+        console.error(`Unknown config subcommand: ${subSubCmd}`)
+        console.log('  openacp api config                       Show runtime config')
+        console.log('  openacp api config set <key> <value>     Update config value')
+        process.exit(1)
+      }
+
+    } else if (subCmd === 'adapters') {
+      const res = await apiCall(port, '/api/adapters')
+      const data = await res.json() as { adapters: Array<{ name: string; type: string }> }
+      if (!res.ok) {
+        console.error(`Error: ${(data as any).error}`)
+        process.exit(1)
+      }
+      console.log('Registered adapters:')
+      for (const a of data.adapters) {
+        console.log(`  ${a.name}  (${a.type})`)
+      }
+
+    } else if (subCmd === 'tunnel') {
+      const res = await apiCall(port, '/api/tunnel')
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      if (data.enabled) {
+        console.log(`Tunnel provider : ${data.provider}`)
+        console.log(`Tunnel URL      : ${data.url}`)
+      } else {
+        console.log('Tunnel: not enabled')
+      }
+
+    } else if (subCmd === 'notify') {
+      const message = args.slice(2).join(' ')
+      if (!message) {
+        console.error('Usage: openacp api notify <message>')
+        process.exit(1)
+      }
+      const res = await apiCall(port, '/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      })
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      console.log('Notification sent to all channels.')
+
+    } else if (subCmd === 'version') {
+      const res = await apiCall(port, '/api/version')
+      const data = await res.json() as Record<string, unknown>
+      if (!res.ok) {
+        console.error(`Error: ${data.error}`)
+        process.exit(1)
+      }
+      console.log(`Daemon version: ${data.version}`)
+
     } else {
-      console.error(`Unknown runtime command: ${subCmd || '(none)'}\n`)
+      console.error(`Unknown api command: ${subCmd || '(none)'}\n`)
       console.log('Usage:')
-      console.log('  openacp runtime new [agent] [workspace]  Create a new session')
-      console.log('  openacp runtime cancel <id>         Cancel a session')
-      console.log('  openacp runtime status              Show active sessions')
-      console.log('  openacp runtime agents              List available agents')
+      console.log('  openacp api status                       Show active sessions')
+      console.log('  openacp api session <id>                 Show session details')
+      console.log('  openacp api new [agent] [workspace]      Create a new session')
+      console.log('  openacp api send <id> <prompt>           Send prompt to session')
+      console.log('  openacp api cancel <id>                  Cancel a session')
+      console.log('  openacp api dangerous <id> [on|off]      Toggle dangerous mode')
+      console.log('  openacp api agents                       List available agents')
+      console.log('  openacp api topics [--status s1,s2]      List topics')
+      console.log('  openacp api delete-topic <id> [--force]  Delete a topic')
+      console.log('  openacp api cleanup [--status s1,s2]     Cleanup finished topics')
+      console.log('  openacp api health                       Show system health')
+      console.log('  openacp api adapters                     List registered adapters')
+      console.log('  openacp api tunnel                       Show tunnel status')
+      console.log('  openacp api config                       Show runtime config')
+      console.log('  openacp api config set <key> <value>     Update config value')
+      console.log('  openacp api restart                      Restart daemon')
+      console.log('  openacp api notify <message>             Send notification to all channels')
+      console.log('  openacp api version                      Show daemon version')
       process.exit(1)
     }
   } catch (err) {
