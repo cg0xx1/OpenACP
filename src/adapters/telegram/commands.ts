@@ -56,6 +56,7 @@ export function setupMenuCallbacks(
   bot: Bot,
   core: OpenACPCore,
   chatId: number,
+  systemTopicIds?: { notificationTopicId: number; assistantTopicId: number },
 ): void {
   bot.callbackQuery(/^m:/, async (ctx) => {
     const data = ctx.callbackQuery.data;
@@ -104,6 +105,12 @@ export function setupMenuCallbacks(
         break;
       case "m:cleanup:all":
         await handleCleanup(ctx, core, chatId, ["finished", "error", "cancelled"]);
+        break;
+      case "m:cleanup:everything":
+        await handleCleanupEverything(ctx, core, chatId, systemTopicIds);
+        break;
+      case "m:cleanup:everything:confirm":
+        await handleCleanupEverythingConfirmed(ctx, core, chatId, systemTopicIds);
         break;
     }
   });
@@ -428,9 +435,9 @@ async function handleTopics(ctx: Context, core: OpenACPCore): Promise<void> {
 
     const lines = displayed.map((r) => {
       const emoji = statusEmoji[r.status] || "⚪";
-      const name = r.name ? ` "${escapeHtml(r.name)}"` : "";
-      const platform = r.platform as { topicId?: number };
-      return `${emoji} <code>${r.sessionId.slice(0, 8)}</code>  ${escapeHtml(r.agentName)}  ${r.status}${name}  #${platform.topicId}`;
+      const name = r.name?.trim();
+      const label = name ? escapeHtml(name) : `<i>${escapeHtml(r.agentName)} session</i>`;
+      return `${emoji} ${label}  <code>[${r.status}]</code>`;
     });
 
     const header = `<b>Sessions: ${records.length}</b>` +
@@ -444,18 +451,16 @@ async function handleTopics(ctx: Context, core: OpenACPCore): Promise<void> {
 
     const keyboard = new InlineKeyboard();
     if (finishedCount > 0) {
-      keyboard.text(`🗑 Finished (${finishedCount})`, "m:cleanup:finished");
+      keyboard.text(`Cleanup finished (${finishedCount})`, "m:cleanup:finished").row();
     }
     if (errorCount > 0) {
-      keyboard.text(`🗑 Errors (${errorCount})`, "m:cleanup:errors");
+      keyboard.text(`Cleanup errors (${errorCount})`, "m:cleanup:errors").row();
     }
     if (finishedCount + errorCount > 0) {
-      keyboard.row();
+      keyboard.text(`Cleanup all non-active (${finishedCount + errorCount})`, "m:cleanup:all").row();
     }
-    if (finishedCount + errorCount > 0) {
-      keyboard.text(`🗑 All non-active (${finishedCount + errorCount})`, "m:cleanup:all");
-    }
-    keyboard.text("🔄 Refresh", "m:topics");
+    keyboard.text(`⚠️ Cleanup ALL (${records.length})`, "m:cleanup:everything").row();
+    keyboard.text("Refresh", "m:topics");
 
     await ctx.reply(
       `${header}\n\n${lines.join("\n")}${truncated}`,
@@ -484,6 +489,115 @@ async function handleCleanup(ctx: Context, core: OpenACPCore, chatId: number, st
 
   for (const record of cleanable) {
     try {
+      const topicId = (record.platform as { topicId?: number })?.topicId;
+      if (topicId) {
+        try {
+          await ctx.api.deleteForumTopic(chatId, topicId);
+        } catch (err) {
+          log.warn({ err, sessionId: record.sessionId, topicId }, "Failed to delete forum topic during cleanup");
+        }
+      }
+      await core.sessionManager.removeRecord(record.sessionId);
+      deleted++;
+    } catch (err) {
+      log.error({ err, sessionId: record.sessionId }, "Failed to cleanup session");
+      failed++;
+    }
+  }
+
+  await ctx.reply(
+    `🗑 Cleaned up <b>${deleted}</b> sessions${failed > 0 ? ` (${failed} failed)` : ""}.`,
+    { parse_mode: "HTML" },
+  );
+}
+
+async function handleCleanupEverything(
+  ctx: Context,
+  core: OpenACPCore,
+  chatId: number,
+  systemTopicIds?: { notificationTopicId: number; assistantTopicId: number },
+): Promise<void> {
+  const allRecords = core.sessionManager.listRecords();
+  const cleanable = allRecords.filter((r) => {
+    const platform = r.platform as { topicId?: number };
+    if (!platform?.topicId) return false;
+    if (systemTopicIds && (platform.topicId === systemTopicIds.notificationTopicId || platform.topicId === systemTopicIds.assistantTopicId)) return false;
+    return true;
+  });
+
+  if (cleanable.length === 0) {
+    await ctx.reply("Nothing to clean up.", { parse_mode: "HTML" });
+    return;
+  }
+
+  // Group by status for breakdown
+  const statusCounts = new Map<string, number>();
+  for (const r of cleanable) {
+    statusCounts.set(r.status, (statusCounts.get(r.status) ?? 0) + 1);
+  }
+
+  const statusEmoji: Record<string, string> = {
+    active: "🟢", initializing: "🟡", finished: "✅", error: "❌", cancelled: "⛔",
+  };
+
+  const breakdown = Array.from(statusCounts.entries())
+    .map(([status, count]) => `${statusEmoji[status] ?? "⚪"} ${status}: ${count}`)
+    .join("\n");
+
+  const activeCount = (statusCounts.get("active") ?? 0) + (statusCounts.get("initializing") ?? 0);
+  const activeWarning = activeCount > 0
+    ? `\n\n⚠️ <b>${activeCount} active session(s) will be cancelled and their agents stopped!</b>`
+    : "";
+
+  const keyboard = new InlineKeyboard()
+    .text("Yes, delete all", "m:cleanup:everything:confirm")
+    .text("Cancel", "m:topics");
+
+  await ctx.reply(
+    `<b>Delete ${cleanable.length} topics?</b>\n\n` +
+    `This will:\n` +
+    `• Delete all session topics from this group\n` +
+    `• Cancel any running agent sessions\n` +
+    `• Remove all session records\n\n` +
+    `<b>Breakdown:</b>\n${breakdown}${activeWarning}\n\n` +
+    `<i>Notifications and Assistant topics will NOT be deleted.</i>`,
+    { parse_mode: "HTML", reply_markup: keyboard },
+  );
+}
+
+async function handleCleanupEverythingConfirmed(
+  ctx: Context,
+  core: OpenACPCore,
+  chatId: number,
+  systemTopicIds?: { notificationTopicId: number; assistantTopicId: number },
+): Promise<void> {
+  const allRecords = core.sessionManager.listRecords();
+  const cleanable = allRecords.filter((r) => {
+    const platform = r.platform as { topicId?: number };
+    if (!platform?.topicId) return false;
+    if (systemTopicIds && (platform.topicId === systemTopicIds.notificationTopicId || platform.topicId === systemTopicIds.assistantTopicId)) return false;
+    return true;
+  });
+
+  if (cleanable.length === 0) {
+    await ctx.reply("Nothing to clean up.", { parse_mode: "HTML" });
+    return;
+  }
+
+  let deleted = 0;
+  let failed = 0;
+
+  for (const record of cleanable) {
+    try {
+      // Cancel active sessions first
+      if (record.status === "active" || record.status === "initializing") {
+        try {
+          await core.sessionManager.cancelSession(record.sessionId);
+        } catch (err) {
+          log.warn({ err, sessionId: record.sessionId }, "Failed to cancel session during cleanup");
+        }
+      }
+
       const topicId = (record.platform as { topicId?: number })?.topicId;
       if (topicId) {
         try {

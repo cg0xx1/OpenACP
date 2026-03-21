@@ -226,6 +226,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       this.bot,
       this.core as OpenACPCore,
       this.telegramConfig.chatId,
+      { notificationTopicId: this.notificationTopicId, assistantTopicId: this.assistantTopicId },
     );
     setupCommands(
       this.bot,
