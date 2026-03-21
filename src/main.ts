@@ -6,6 +6,7 @@ import { loadAdapterFactory } from './core/plugin-manager.js'
 import { initLogger, shutdownLogger, cleanupOldSessionLogs, log } from './core/log.js'
 import { TelegramAdapter } from './adapters/telegram/index.js'
 import { ApiServer } from './core/api-server.js'
+import { TopicManager } from './core/topic-manager.js'
 
 export const RESTART_EXIT_CODE = 75
 let shuttingDown = false
@@ -179,7 +180,19 @@ export async function startServer() {
 
   await core.start()
 
-  apiServer = new ApiServer(core, config.api)
+  const updatedConfig = core.configManager.get()
+  const telegramAdapter = core.adapters.get('telegram') ?? null
+  const telegramCfg = updatedConfig.channels?.telegram as any
+  const topicManager = new TopicManager(
+    core.sessionManager,
+    telegramAdapter,
+    {
+      notificationTopicId: telegramCfg?.notificationTopicId ?? null,
+      assistantTopicId: telegramCfg?.assistantTopicId ?? null,
+    },
+  )
+
+  apiServer = new ApiServer(core, config.api, undefined, topicManager)
   await apiServer.start()
 
   // 6. Log ready

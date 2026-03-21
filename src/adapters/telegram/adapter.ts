@@ -686,6 +686,20 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     );
   }
 
+  async deleteSessionThread(sessionId: string): Promise<void> {
+    // Look up topicId from session record platform data
+    const record = this.core.sessionManager.getSessionRecord(sessionId);
+    const platform = record?.platform as import("../../core/types.js").TelegramPlatformData | undefined;
+    const topicId = platform?.topicId;
+    if (!topicId) return;
+
+    try {
+      await this.bot.api.deleteForumTopic(this.telegramConfig.chatId, topicId);
+    } catch (err) {
+      log.warn({ err, sessionId, topicId }, "Failed to delete forum topic (may already be deleted)");
+    }
+  }
+
   async sendSkillCommands(
     sessionId: string,
     commands: AgentCommand[],

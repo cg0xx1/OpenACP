@@ -141,6 +141,20 @@ export class SessionManager {
     return all;
   }
 
+  listRecords(filter?: { statuses?: string[] }): import("./types.js").SessionRecord[] {
+    if (!this.store) return [];
+    let records = this.store.list();
+    if (filter?.statuses?.length) {
+      records = records.filter(r => filter.statuses!.includes(r.status));
+    }
+    return records;
+  }
+
+  async removeRecord(sessionId: string): Promise<void> {
+    if (!this.store) return;
+    await this.store.remove(sessionId);
+  }
+
   async destroyAll(): Promise<void> {
     if (this.store) {
       for (const session of this.sessions.values()) {
