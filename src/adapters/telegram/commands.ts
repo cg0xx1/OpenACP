@@ -192,17 +192,34 @@ async function handleNewChat(
     return;
   }
 
-  try {
-    const session = await core.handleNewChat("telegram", String(threadId));
-    if (!session) {
+  // Resolve agent config from existing session/record BEFORE spawning
+  const currentSession = core.sessionManager.getSessionByThread(
+    "telegram",
+    String(threadId),
+  );
+  let agentName: string | undefined;
+  let workspace: string | undefined;
+
+  if (currentSession) {
+    agentName = currentSession.agentName;
+    workspace = currentSession.workingDirectory;
+  } else {
+    const record = core.sessionManager.getRecordByThread("telegram", String(threadId));
+    if (!record || record.status === "cancelled" || record.status === "error") {
       await ctx.reply("No active session in this topic.", {
         parse_mode: "HTML",
       });
       return;
     }
+    agentName = record.agentName;
+    workspace = record.workingDir;
+  }
 
-    const topicName = `🔄 ${session.agentName} — New Chat`;
-    const newThreadId = await createSessionTopic(
+  let newThreadId: number | undefined;
+  try {
+    // Create topic FIRST so threadId is ready before session events fire
+    const topicName = `🔄 ${agentName} — New Chat`;
+    newThreadId = await createSessionTopic(
       botFromCtx(ctx),
       chatId,
       topicName,
@@ -213,6 +230,11 @@ async function handleNewChat(
       parse_mode: "HTML",
     });
 
+    const session = await core.handleNewSession(
+      "telegram",
+      agentName,
+      workspace,
+    );
     session.threadId = String(newThreadId);
 
     // Persist platform mapping for new chat
@@ -235,6 +257,14 @@ async function handleNewChat(
     // Warm up model cache in background while user types
     session.warmup().catch((err) => log.error({ err }, "Warm-up error"));
   } catch (err) {
+    // Clean up orphaned topic if session creation failed
+    if (newThreadId) {
+      try {
+        await ctx.api.deleteForumTopic(chatId, newThreadId);
+      } catch {
+        /* ignore cleanup failures */
+      }
+    }
     const message = err instanceof Error ? err.message : String(err);
     await ctx.reply(`❌ ${escapeHtml(message)}`, { parse_mode: "HTML" });
   }

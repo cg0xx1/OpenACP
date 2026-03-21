@@ -140,9 +140,10 @@ export class Session {
 
   async cancel(): Promise<void> {
     this.promptQueue = [];
-    this.status = "cancelled";
     this.log.info("Session cancelled");
     await this.agentInstance.cancel();
+    this.promptRunning = false;
+    this.status = "active";
   }
 
   async destroy(): Promise<void> {
