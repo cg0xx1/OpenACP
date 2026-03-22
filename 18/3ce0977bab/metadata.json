@@ -3,7 +3,7 @@
   "checkpoint_id": "183ce0977bab",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 14,
+  "checkpoints_count": 18,
   "files_touched": [
     ".husky/pre-commit",
     "CLAUDE.md",
@@ -158,13 +158,19 @@
       "transcript": "/18/3ce0977bab/1/full.jsonl",
       "content_hash": "/18/3ce0977bab/1/content_hash.txt",
       "prompt": "/18/3ce0977bab/1/prompt.txt"
+    },
+    {
+      "metadata": "/18/3ce0977bab/2/metadata.json",
+      "transcript": "/18/3ce0977bab/2/full.jsonl",
+      "content_hash": "/18/3ce0977bab/2/content_hash.txt",
+      "prompt": "/18/3ce0977bab/2/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 2777,
-    "cache_creation_tokens": 123622,
-    "cache_read_tokens": 5823607,
-    "output_tokens": 26294,
-    "api_call_count": 98
+    "input_tokens": 2859,
+    "cache_creation_tokens": 154507,
+    "cache_read_tokens": 7169526,
+    "output_tokens": 33351,
+    "api_call_count": 150
   }
 }
