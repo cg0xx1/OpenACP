@@ -1,4 +1,4 @@
-import { spawn, execSync, type ChildProcess } from "node:child_process";
+import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { Transform } from "node:stream";
 import fs from "node:fs";
 import path from "node:path";
@@ -78,7 +78,7 @@ function resolveAgentCommand(cmd: string): { command: string; args: string[] } {
 
   // 3. Try resolving from PATH using which
   try {
-    const fullPath = execSync(`which ${cmd}`, { encoding: "utf-8" }).trim();
+    const fullPath = execFileSync("which", [cmd], { encoding: "utf-8" }).trim();
     if (fullPath) {
       const content = fs.readFileSync(fullPath, "utf-8");
       if (content.startsWith("#!/usr/bin/env node")) {

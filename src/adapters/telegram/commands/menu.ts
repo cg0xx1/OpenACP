@@ -1,8 +1,6 @@
 import type { Context } from "grammy";
 import { InlineKeyboard } from "grammy";
-import type { OpenACPCore } from "../../../core/index.js";
 import type { AgentCommand } from "../../../core/index.js";
-import { escapeHtml } from "../formatting.js";
 import type { CommandsAssistantContext } from "../types.js";
 
 export function buildMenuKeyboard(): InlineKeyboard {
@@ -28,21 +26,6 @@ export async function handleMenu(ctx: Context): Promise<void> {
     parse_mode: "HTML",
     reply_markup: buildMenuKeyboard(),
   });
-}
-
-export async function handleAgents(ctx: Context, core: OpenACPCore): Promise<void> {
-  const agents = core.agentManager.getAvailableAgents();
-  const defaultAgent = core.configManager.get().defaultAgent;
-  const lines = agents.map(
-    (a) =>
-      `• <b>${escapeHtml(a.name)}</b>${a.name === defaultAgent ? " (default)" : ""}\n` +
-      `  <code>${escapeHtml(a.command)} ${a.args.map((arg) => escapeHtml(arg)).join(" ")}</code>`,
-  );
-  const text =
-    lines.length > 0
-      ? `<b>Available Agents:</b>\n\n${lines.join("\n")}`
-      : `<b>Available Agents:</b>\n\nNo agents configured.`;
-  await ctx.reply(text, { parse_mode: "HTML" });
 }
 
 export async function handleHelp(ctx: Context): Promise<void> {
