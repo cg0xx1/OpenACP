@@ -1,0 +1,35 @@
+{
+  "cli_version": "0.5.0",
+  "checkpoint_id": "183ce0977bab",
+  "session_id": "324420d8-6f76-4836-b742-98a076977302",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-22T09:58:40.894543Z",
+  "branch": "main",
+  "checkpoints_count": 14,
+  "files_touched": [
+    "src/adapters/telegram/adapter.ts",
+    "src/core/core.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-6[1m]",
+  "turn_id": "935a92139d9b",
+  "token_usage": {
+    "input_tokens": 2766,
+    "cache_creation_tokens": 104745,
+    "cache_read_tokens": 5691998,
+    "output_tokens": 24521,
+    "api_call_count": 91
+  },
+  "session_metrics": {
+    "turn_count": 16
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-22T09:58:40.447077Z",
+    "agent_lines": 507,
+    "human_added": 24884,
+    "human_modified": 317,
+    "human_removed": 0,
+    "total_committed": 25708,
+    "agent_percentage": 1.972148747471604
+  }
+}
