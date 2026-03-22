@@ -18,6 +18,11 @@ Usage:
   openacp update                       Update to latest version
   openacp doctor                         Run system diagnostics
   openacp doctor --dry-run               Check only, don't fix
+  openacp agents                       List available agents
+  openacp agents install <name>        Install an agent
+  openacp agents uninstall <name>      Remove an agent
+  openacp agents refresh               Update agent list
+  openacp agents info <name>           Show agent details
   openacp install <package>            Install a plugin adapter
   openacp uninstall <package>          Uninstall a plugin adapter
   openacp plugins                      List installed plugins
@@ -790,6 +795,170 @@ export async function cmdDoctor(args: string[]): Promise<void> {
   if (failed > 0) {
     process.exit(1);
   }
+}
+
+export async function cmdAgents(args: string[]): Promise<void> {
+  const subcommand = args[1];
+
+  switch (subcommand) {
+    case "install":
+      return agentsInstall(args[2], args.includes("--force"));
+    case "uninstall":
+      return agentsUninstall(args[2]);
+    case "refresh":
+      return agentsRefresh();
+    case "info":
+      return agentsInfo(args[2]);
+    default:
+      return agentsList();
+  }
+}
+
+async function agentsList(): Promise<void> {
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+  await catalog.refreshRegistryIfStale();
+
+  const items = catalog.getAvailable();
+  const installed = items.filter((i) => i.installed);
+  const available = items.filter((i) => !i.installed);
+
+  console.log("");
+  if (installed.length > 0) {
+    console.log("  \x1b[1mInstalled agents:\x1b[0m\n");
+    for (const item of installed) {
+      const deps = item.missingDeps?.length
+        ? `  \x1b[33m(needs: ${item.missingDeps.join(", ")})\x1b[0m`
+        : "";
+      console.log(
+        `  \x1b[32m✓\x1b[0m ${item.key.padEnd(18)} ${item.name.padEnd(22)} v${item.version.padEnd(10)} ${item.distribution}${deps}`,
+      );
+    }
+    console.log("");
+  }
+
+  if (available.length > 0) {
+    console.log("  \x1b[1mAvailable to install:\x1b[0m\n");
+    for (const item of available) {
+      const icon = item.available ? "\x1b[2m⬇\x1b[0m" : "\x1b[33m⚠\x1b[0m";
+      const deps = item.missingDeps?.length
+        ? `  \x1b[33m(needs: ${item.missingDeps.join(", ")})\x1b[0m`
+        : "";
+      console.log(
+        `  ${icon} ${item.key.padEnd(18)} ${item.name.padEnd(22)} v${item.version.padEnd(10)} ${item.distribution}${deps}`,
+      );
+    }
+    console.log("");
+  }
+
+  console.log(
+    `  \x1b[2mInstall an agent: openacp agents install <name>\x1b[0m`,
+  );
+  console.log("");
+}
+
+async function agentsInstall(nameOrId: string | undefined, force: boolean): Promise<void> {
+  if (!nameOrId) {
+    console.log("\n  Usage: openacp agents install <name>");
+    console.log("  Run 'openacp agents' to see available agents.\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+  await catalog.refreshRegistryIfStale();
+
+  const progress: import("../core/types.js").InstallProgress = {
+    onStart(_id, name) {
+      process.stdout.write(`\n  ⏳ Installing ${name}...\n`);
+    },
+    onStep(step) {
+      process.stdout.write(`  ✓ ${step}\n`);
+    },
+    onDownloadProgress(percent) {
+      process.stdout.write(`\r  ⬇ Downloading... ${percent}%`);
+      if (percent >= 100) process.stdout.write("\n");
+    },
+    onSuccess(name) {
+      console.log(`  \x1b[32m✓ ${name} installed successfully!\x1b[0m\n`);
+    },
+    onError(error) {
+      console.log(`  \x1b[31m✗ ${error}\x1b[0m\n`);
+    },
+  };
+
+  const result = await catalog.install(nameOrId, progress, force);
+  if (!result.ok) {
+    process.exit(1);
+  }
+}
+
+async function agentsUninstall(name: string | undefined): Promise<void> {
+  if (!name) {
+    console.log("\n  Usage: openacp agents uninstall <name>\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+
+  const result = await catalog.uninstall(name);
+  if (result.ok) {
+    console.log(`\n  \x1b[32m✓ ${name} removed.\x1b[0m\n`);
+  } else {
+    console.log(`\n  \x1b[31m✗ ${result.error}\x1b[0m\n`);
+  }
+}
+
+async function agentsRefresh(): Promise<void> {
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+  console.log("\n  Updating agent list...");
+  await catalog.fetchRegistry();
+  console.log("  \x1b[32m✓ Agent list updated.\x1b[0m\n");
+}
+
+async function agentsInfo(nameOrId: string | undefined): Promise<void> {
+  if (!nameOrId) {
+    console.log("\n  Usage: openacp agents info <name>\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+
+  const installed = catalog.getInstalledAgent(nameOrId);
+  if (installed) {
+    console.log(`\n  \x1b[1m${installed.name}\x1b[0m`);
+    console.log(`  Version:      ${installed.version}`);
+    console.log(`  Type:         ${installed.distribution}`);
+    console.log(`  Command:      ${installed.command} ${installed.args.join(" ")}`);
+    console.log(`  Installed:    ${new Date(installed.installedAt).toLocaleDateString()}`);
+    if (installed.binaryPath) console.log(`  Binary path:  ${installed.binaryPath}`);
+    console.log("");
+    return;
+  }
+
+  const regAgent = catalog.findRegistryAgent(nameOrId);
+  if (regAgent) {
+    const availability = catalog.checkAvailability(nameOrId);
+    console.log(`\n  \x1b[1m${regAgent.name}\x1b[0m \x1b[2m(not installed)\x1b[0m`);
+    console.log(`  ${regAgent.description}`);
+    console.log(`  Version:    ${regAgent.version}`);
+    console.log(`  License:    ${regAgent.license ?? "unknown"}`);
+    if (regAgent.website) console.log(`  Website:    ${regAgent.website}`);
+    if (regAgent.repository) console.log(`  Source:     ${regAgent.repository}`);
+    console.log(`  Available:  ${availability.available ? "\x1b[32mYes\x1b[0m" : `\x1b[33mNo\x1b[0m — ${availability.reason}`}`);
+    console.log(`\n  Install: openacp agents install ${nameOrId}\n`);
+    return;
+  }
+
+  console.log(`\n  \x1b[31m"${nameOrId}" not found.\x1b[0m Run 'openacp agents' to see available agents.\n`);
 }
 
 export async function cmdDefault(command: string | undefined): Promise<void> {

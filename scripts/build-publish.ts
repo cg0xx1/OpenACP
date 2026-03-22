@@ -28,7 +28,14 @@ for (const file of files) {
   }
 }
 
-// 3. Add shebang to cli.js
+// 3. Copy registry snapshot to dist-publish/dist/data/
+const snapshotSrc = path.join(root, 'src/data/registry-snapshot.json')
+const snapshotDataDir = path.join(distDir, 'data')
+fs.mkdirSync(snapshotDataDir, { recursive: true })
+fs.copyFileSync(snapshotSrc, path.join(snapshotDataDir, 'registry-snapshot.json'))
+console.log('Copied registry-snapshot.json to dist-publish/dist/data/')
+
+// 4. Add shebang to cli.js
 const cliPath = path.join(distDir, 'cli.js')
 const cliContent = fs.readFileSync(cliPath, 'utf-8')
 if (!cliContent.startsWith('#!/usr/bin/env node')) {
@@ -36,7 +43,7 @@ if (!cliContent.startsWith('#!/usr/bin/env node')) {
 }
 fs.chmodSync(cliPath, 0o755)
 
-// 4. Generate package.json
+// 5. Generate package.json
 const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'))
 
 const publishPkg = {

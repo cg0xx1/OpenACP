@@ -70,11 +70,12 @@ export async function handleNew(
   const userId = ctx.from?.id;
   if (!userId) return;
 
-  const agents = core.agentManager.getAvailableAgents();
+  const installedEntries = core.agentCatalog.getInstalledEntries();
+  const agentKeys = Object.keys(installedEntries);
   const config = core.configManager.get();
 
   // If agent provided or only 1 agent → skip to workspace step
-  if (agentName || agents.length === 1) {
+  if (agentName || agentKeys.length === 1) {
     const selectedAgent = agentName || config.defaultAgent;
     await startWorkspaceStep(ctx, core, chatId, userId, selectedAgent);
     return;
@@ -82,11 +83,12 @@ export async function handleNew(
 
   // Multiple agents → show agent selection
   const keyboard = new InlineKeyboard();
-  for (const agent of agents) {
-    const label = agent.name === config.defaultAgent
+  for (const key of agentKeys) {
+    const agent = installedEntries[key]!;
+    const label = key === config.defaultAgent
       ? `${agent.name} (default)`
       : agent.name;
-    keyboard.text(label, `m:new:agent:${agent.name}`).row();
+    keyboard.text(label, `m:new:agent:${key}`).row();
   }
 
   const msg = await ctx.reply(
@@ -445,11 +447,12 @@ export async function startInteractiveNewSession(
   const userId = ctx.from?.id;
   if (!userId) return;
 
-  const agents = core.agentManager.getAvailableAgents();
+  const installedEntries = core.agentCatalog.getInstalledEntries();
+  const agentKeys = Object.keys(installedEntries);
   const config = core.configManager.get();
 
   // If agent provided or only 1 agent → skip to workspace step
-  if (agentName || agents.length === 1) {
+  if (agentName || agentKeys.length === 1) {
     const selectedAgent = agentName || config.defaultAgent;
     await startWorkspaceStep(ctx, core, chatId, userId, selectedAgent);
     return;
@@ -457,11 +460,12 @@ export async function startInteractiveNewSession(
 
   // Multiple agents → show agent selection
   const keyboard = new InlineKeyboard();
-  for (const agent of agents) {
-    const label = agent.name === config.defaultAgent
+  for (const key of agentKeys) {
+    const agent = installedEntries[key]!;
+    const label = key === config.defaultAgent
       ? `${agent.name} (default)`
       : agent.name;
-    keyboard.text(label, `m:new:agent:${agent.name}`).row();
+    keyboard.text(label, `m:new:agent:${key}`).row();
   }
 
   const msg = await ctx.reply(

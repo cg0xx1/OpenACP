@@ -6,7 +6,8 @@ import type { CommandsAssistantContext } from "../types.js";
 import { handleNew, handleNewChat, setupNewSessionCallbacks } from "./new-session.js";
 import { handleCancel, handleStatus, handleTopics, setupSessionCallbacks } from "./session.js";
 import { handleEnableDangerous, handleDisableDangerous, handleUpdate, handleRestart } from "./admin.js";
-import { handleMenu, handleHelp, handleAgents, handleClear, buildMenuKeyboard } from "./menu.js";
+import { handleMenu, handleHelp, handleClear, buildMenuKeyboard } from "./menu.js";
+import { handleAgents, handleInstall, handleAgentInstallCallback } from "./agents.js";
 import { handleIntegrate } from "./integrate.js";
 import { handleSettings, setupSettingsCallbacks } from "./settings.js";
 import { handleDoctor, setupDoctorCallbacks } from "./doctor.js";
@@ -23,6 +24,7 @@ export function setupCommands(
   bot.command("status", (ctx) => handleStatus(ctx, core));
   bot.command("sessions", (ctx) => handleTopics(ctx, core));
   bot.command("agents", (ctx) => handleAgents(ctx, core));
+  bot.command("install", (ctx) => handleInstall(ctx, core));
   bot.command("help", (ctx) => handleHelp(ctx));
   bot.command("menu", (ctx) => handleMenu(ctx));
   bot.command("enable_dangerous", (ctx) => handleEnableDangerous(ctx, core));
@@ -50,6 +52,23 @@ export function setupAllCallbacks(
 
   // Doctor handlers — must be before broad m: handler
   setupDoctorCallbacks(bot);
+
+  // Agent install callback — must be before broad m: handler
+  bot.callbackQuery(/^ag:/, (ctx) => handleAgentInstallCallback(ctx, core));
+
+  // New session with specific agent callback — must be before broad m: handler
+  bot.callbackQuery(/^na:/, async (ctx) => {
+    const agentKey = ctx.callbackQuery.data!.replace("na:", "");
+    await ctx.answerCallbackQuery();
+    try {
+      const session = await core.handleNewSession("telegram", agentKey);
+      if (session.threadId) {
+        await ctx.reply(`✅ Session started with ${agentKey}. Check the new topic above.`);
+      }
+    } catch (err) {
+      await ctx.reply(`❌ Could not start session: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 
   // Broad m: handler for remaining menu dispatch — LAST
   bot.callbackQuery(/^m:/, async (ctx) => {
@@ -110,6 +129,7 @@ export const STATIC_COMMANDS = [
   { command: "status", description: "Show status" },
   { command: "sessions", description: "List all sessions" },
   { command: "agents", description: "List available agents" },
+  { command: "install", description: "Install a new agent" },
   { command: "help", description: "Help" },
   { command: "menu", description: "Show menu" },
   { command: "enable_dangerous", description: "Auto-approve all permission requests (session only)" },

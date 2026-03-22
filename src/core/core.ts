@@ -12,11 +12,13 @@ import { JsonFileSessionStore, type SessionStore } from "./session-store.js";
 import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
 import { getAgentCapabilities } from "./agent-registry.js";
+import { AgentCatalog } from "./agent-catalog.js";
 import { createChildLogger } from "./log.js";
 const log = createChildLogger({ module: "core" });
 
 export class OpenACPCore {
   configManager: ConfigManager;
+  agentCatalog: AgentCatalog;
   agentManager: AgentManager;
   sessionManager: SessionManager;
   notificationManager: NotificationManager;
@@ -31,7 +33,9 @@ export class OpenACPCore {
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
     const config = configManager.get();
-    this.agentManager = new AgentManager(config);
+    this.agentCatalog = new AgentCatalog();
+    this.agentCatalog.load();
+    this.agentManager = new AgentManager(this.agentCatalog);
     const storePath = path.join(os.homedir(), ".openacp", "sessions.json");
     this.sessionStore = new JsonFileSessionStore(
       storePath,
@@ -65,6 +69,9 @@ export class OpenACPCore {
   }
 
   async start(): Promise<void> {
+    this.agentCatalog.refreshRegistryIfStale().catch((err) => {
+      log.warn({ err }, "Background registry refresh failed");
+    });
     for (const adapter of this.adapters.values()) {
       await adapter.start();
     }
@@ -256,8 +263,9 @@ export class OpenACPCore {
     const config = this.configManager.get();
     const resolvedAgent = agentName || config.defaultAgent;
     log.info({ channelId, agentName: resolvedAgent }, "New session request");
+    const agentDef = this.agentCatalog.resolve(resolvedAgent);
     const resolvedWorkspace = this.configManager.resolveWorkspace(
-      workspacePath || config.agents[resolvedAgent]?.workingDirectory,
+      workspacePath || agentDef?.workingDirectory,
     );
 
     return this.createSession({

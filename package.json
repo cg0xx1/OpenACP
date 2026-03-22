@@ -8,7 +8,7 @@
     "openacp": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && mkdir -p dist/data && cp src/data/registry-snapshot.json dist/data/",
     "build:publish": "tsx scripts/build-publish.ts",
     "dev": "tsc --watch",
     "dev:loop": "./scripts/dev-loop.sh",

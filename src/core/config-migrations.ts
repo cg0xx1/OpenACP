@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import { createChildLogger } from "./log.js";
 const log = createChildLogger({ module: "config-migrations" });
 
@@ -50,6 +53,44 @@ export const migrations: Migration[] = [
         }
       }
       return changed;
+    },
+  },
+  {
+    name: "migrate-agents-to-store",
+    apply(raw) {
+      const agentsJsonPath = path.join(os.homedir(), ".openacp", "agents.json");
+      if (fs.existsSync(agentsJsonPath)) return false;
+
+      const agents = raw.agents as Record<string, any> | undefined;
+      if (!agents || Object.keys(agents).length === 0) return false;
+
+      const COMMAND_TO_REGISTRY: Record<string, string> = {
+        "claude-agent-acp": "claude-acp",
+        "codex": "codex-acp",
+      };
+
+      const installed: Record<string, any> = {};
+      for (const [key, cfg] of Object.entries(agents)) {
+        const registryId = COMMAND_TO_REGISTRY[cfg.command] ?? null;
+        installed[key] = {
+          registryId,
+          name: key.charAt(0).toUpperCase() + key.slice(1),
+          version: "unknown",
+          distribution: "custom",
+          command: cfg.command,
+          args: cfg.args ?? [],
+          env: cfg.env ?? {},
+          workingDirectory: cfg.workingDirectory ?? undefined,
+          installedAt: new Date().toISOString(),
+          binaryPath: null,
+        };
+      }
+
+      fs.mkdirSync(path.dirname(agentsJsonPath), { recursive: true });
+      fs.writeFileSync(agentsJsonPath, JSON.stringify({ version: 1, installed }, null, 2));
+
+      raw.agents = {};
+      return true;
     },
   },
 ];
