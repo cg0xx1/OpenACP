@@ -3,18 +3,15 @@ import os from "node:os";
 import { ConfigManager } from "./config.js";
 import { AgentManager } from "./agent-manager.js";
 import { SessionManager } from "./session-manager.js";
+import { SessionBridge } from "./session-bridge.js";
 import { NotificationManager } from "./notification.js";
 import { ChannelAdapter } from "./channel.js";
 import { Session } from "./session.js";
+import { MessageTransformer } from "./message-transformer.js";
 import { JsonFileSessionStore, type SessionStore } from "./session-store.js";
-import type {
-  IncomingMessage,
-  AgentEvent,
-  OutgoingMessage,
-  PermissionRequest,
-} from "./types.js";
+import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
-import { extractFileInfo } from "../tunnel/extract-file-info.js";
+import { getAgentCapabilities } from "./agent-registry.js";
 import { createChildLogger } from "./log.js";
 const log = createChildLogger({ module: "core" });
 
@@ -23,8 +20,11 @@ export class OpenACPCore {
   agentManager: AgentManager;
   sessionManager: SessionManager;
   notificationManager: NotificationManager;
+  messageTransformer: MessageTransformer;
   adapters: Map<string, ChannelAdapter> = new Map();
-  tunnelService?: TunnelService;
+  /** Set by main.ts — triggers graceful shutdown with restart exit code */
+  requestRestart: (() => Promise<void>) | null = null;
+  private _tunnelService?: TunnelService;
   private sessionStore: SessionStore | null = null;
   private resumeLocks: Map<string, Promise<Session | null>> = new Map();
 
@@ -39,6 +39,25 @@ export class OpenACPCore {
     );
     this.sessionManager = new SessionManager(this.sessionStore);
     this.notificationManager = new NotificationManager(this.adapters);
+    this.messageTransformer = new MessageTransformer();
+
+    // Hot-reload: handle config changes that need side effects
+    this.configManager.on('config:changed', async ({ path: configPath, value }: { path: string; value: unknown }) => {
+      if (configPath === 'logging.level' && typeof value === 'string') {
+        const { setLogLevel } = await import('./log.js')
+        setLogLevel(value)
+        log.info({ level: value }, 'Log level changed at runtime')
+      }
+    })
+  }
+
+  get tunnelService(): TunnelService | undefined {
+    return this._tunnelService;
+  }
+
+  set tunnelService(service: TunnelService | undefined) {
+    this._tunnelService = service;
+    this.messageTransformer = new MessageTransformer(service);
   }
 
   registerAdapter(name: string, adapter: ChannelAdapter): void {
@@ -130,13 +149,103 @@ export class OpenACPCore {
       session = (await this.lazyResume(message)) ?? undefined;
     }
 
-    if (!session) return;
+    if (!session) {
+      log.warn(
+        { channelId: message.channelId, threadId: message.threadId },
+        "No session found for thread (in-memory miss + lazy resume returned null)",
+      );
+      return;
+    }
 
     // Update activity timestamp
-    this.sessionManager.updateSessionActivity(session.id);
+    this.sessionManager.patchRecord(session.id, { lastActiveAt: new Date().toISOString() });
 
     // Forward to session
     await session.enqueuePrompt(message.text);
+  }
+
+  // --- Unified Session Creation Pipeline ---
+
+  async createSession(params: {
+    channelId: string;
+    agentName: string;
+    workingDirectory: string;
+    resumeAgentSessionId?: string;
+    existingSessionId?: string;
+    createThread?: boolean;
+    initialName?: string;
+  }): Promise<Session> {
+    // 1. Spawn or resume agent
+    const agentInstance = params.resumeAgentSessionId
+      ? await this.agentManager.resume(
+          params.agentName,
+          params.workingDirectory,
+          params.resumeAgentSessionId,
+        )
+      : await this.agentManager.spawn(
+          params.agentName,
+          params.workingDirectory,
+        );
+
+    // 2. Create Session instance
+    const session = new Session({
+      id: params.existingSessionId,
+      channelId: params.channelId,
+      agentName: params.agentName,
+      workingDirectory: params.workingDirectory,
+      agentInstance,
+    });
+    session.agentSessionId = agentInstance.sessionId;
+    if (params.initialName) {
+      session.name = params.initialName;
+    }
+
+    // 3. Register in SessionManager
+    this.sessionManager.registerSession(session);
+
+    // 4. Create thread if needed
+    const adapter = this.adapters.get(params.channelId);
+    if (params.createThread && adapter) {
+      const threadId = await adapter.createSessionThread(
+        session.id,
+        params.initialName ?? `🔄 ${params.agentName} — New Session`,
+      );
+      session.threadId = threadId;
+    }
+
+    // 5. Connect SessionBridge
+    if (adapter) {
+      const bridge = this.createBridge(session, adapter);
+      bridge.connect();
+    }
+
+    // 6. Persist initial record
+    // Preserve existing platform data (e.g. topicId) when resuming an existing session
+    const existingRecord = this.sessionStore?.get(session.id);
+    const platform: Record<string, unknown> = {
+      ...(existingRecord?.platform ?? {}),
+    };
+    if (session.threadId) {
+      platform.topicId = Number(session.threadId);
+    }
+    await this.sessionManager.patchRecord(session.id, {
+      sessionId: session.id,
+      agentSessionId: agentInstance.sessionId,
+      agentName: params.agentName,
+      workingDir: params.workingDirectory,
+      channelId: params.channelId,
+      status: session.status,
+      createdAt: session.createdAt.toISOString(),
+      lastActiveAt: new Date().toISOString(),
+      name: session.name,
+      platform,
+    });
+
+    log.info(
+      { sessionId: session.id, agentName: params.agentName },
+      "Session created via pipeline",
+    );
+    return session;
   }
 
   async handleNewSession(
@@ -151,20 +260,105 @@ export class OpenACPCore {
       workspacePath || config.agents[resolvedAgent]?.workingDirectory,
     );
 
-    const session = await this.sessionManager.createSession(
+    return this.createSession({
       channelId,
-      resolvedAgent,
-      resolvedWorkspace,
-      this.agentManager,
-    );
+      agentName: resolvedAgent,
+      workingDirectory: resolvedWorkspace,
+    });
+  }
 
-    // Wire events
-    const adapter = this.adapters.get(channelId);
-    if (adapter) {
-      this.wireSessionEvents(session, adapter);
+  async adoptSession(
+    agentName: string,
+    agentSessionId: string,
+    cwd: string,
+  ): Promise<
+    | { ok: true; sessionId: string; threadId: string; status: "adopted" | "existing" }
+    | { ok: false; error: string; message: string }
+  > {
+    // 1. Validate agent supports resume
+    const caps = getAgentCapabilities(agentName);
+    if (!caps.supportsResume) {
+      return { ok: false, error: "agent_not_supported", message: `Agent '${agentName}' does not support session resume` };
     }
 
-    return session;
+    const agentDef = this.agentManager.getAgent(agentName);
+    if (!agentDef) {
+      return { ok: false, error: "agent_not_supported", message: `Agent '${agentName}' not found` };
+    }
+
+    // 2. Validate cwd
+    const { existsSync } = await import("node:fs");
+    if (!existsSync(cwd)) {
+      return { ok: false, error: "invalid_cwd", message: `Directory does not exist: ${cwd}` };
+    }
+
+    // 3. Check session limit
+    const maxSessions = this.configManager.get().security.maxConcurrentSessions;
+    if (this.sessionManager.listSessions().length >= maxSessions) {
+      return { ok: false, error: "session_limit", message: "Maximum concurrent sessions reached" };
+    }
+
+    // 4. Check if session already exists
+    const existingRecord = this.sessionManager.getRecordByAgentSessionId(agentSessionId);
+    if (existingRecord) {
+      const platform = existingRecord.platform as { topicId?: number } | undefined;
+      if (platform?.topicId) {
+        const adapter = this.adapters.values().next().value;
+        if (adapter) {
+          try {
+            await adapter.sendMessage(existingRecord.sessionId, {
+              type: "text",
+              text: "Session resumed from CLI.",
+            });
+          } catch { /* Topic may be deleted */ }
+        }
+        return {
+          ok: true,
+          sessionId: existingRecord.sessionId,
+          threadId: String(platform.topicId),
+          status: "existing",
+        };
+      }
+    }
+
+    // 5. Find default adapter
+    const firstEntry = this.adapters.entries().next().value;
+    if (!firstEntry) {
+      return { ok: false, error: "no_adapter", message: "No channel adapter registered" };
+    }
+    const [adapterChannelId] = firstEntry;
+
+    // 6. Create session via unified pipeline
+    let session: Session;
+    try {
+      session = await this.createSession({
+        channelId: adapterChannelId,
+        agentName,
+        workingDirectory: cwd,
+        resumeAgentSessionId: agentSessionId,
+        createThread: true,
+        initialName: "Adopted session",
+      });
+    } catch (err) {
+      return {
+        ok: false,
+        error: "resume_failed",
+        message: `Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // 7. Update store with adopt-specific fields
+    await this.sessionManager.patchRecord(session.id, {
+      originalAgentSessionId: agentSessionId,
+      platform: { topicId: Number(session.threadId) },
+    });
+
+    return {
+      ok: true,
+      sessionId: session.id,
+      threadId: session.threadId,
+      status: "adopted",
+    };
   }
 
   async handleNewChat(
@@ -211,45 +405,41 @@ export class OpenACPCore {
       message.channelId,
       (p) => String(p.topicId) === message.threadId,
     );
-    if (!record) return null;
+    if (!record) {
+      log.debug(
+        { threadId: message.threadId, channelId: message.channelId },
+        "No session record found for thread",
+      );
+      return null;
+    }
 
     // Don't resume cancelled/error sessions
-    if (record.status === "cancelled" || record.status === "error") return null;
+    if (record.status === "cancelled" || record.status === "error") {
+      log.debug(
+        { threadId: message.threadId, sessionId: record.sessionId, status: record.status },
+        "Skipping resume of cancelled/error session",
+      );
+      return null;
+    }
+
+    log.info(
+      { threadId: message.threadId, sessionId: record.sessionId, status: record.status },
+      "Lazy resume: found record, attempting resume",
+    );
 
     const resumePromise = (async (): Promise<Session | null> => {
       try {
-        const agentInstance = await this.agentManager.resume(
-          record.agentName,
-          record.workingDir,
-          record.agentSessionId,
-        );
-
-        const session = new Session({
-          id: record.sessionId,
+        const session = await this.createSession({
           channelId: record.channelId,
           agentName: record.agentName,
           workingDirectory: record.workingDir,
-          agentInstance,
+          resumeAgentSessionId: record.agentSessionId,
+          existingSessionId: record.sessionId,
+          initialName: record.name,
         });
         session.threadId = message.threadId;
-        session.agentSessionId = agentInstance.sessionId;
-        session.status = "active";
-        session.name = record.name;
-
-        this.sessionManager.registerSession(session);
-
-        const adapter = this.adapters.get(message.channelId);
-        if (adapter) {
-          this.wireSessionEvents(session, adapter);
-        }
-
-        // Update store with new agentSessionId (may differ after resume)
-        await store.save({
-          ...record,
-          agentSessionId: agentInstance.sessionId,
-          status: "active",
-          lastActiveAt: new Date().toISOString(),
-        });
+        session.activate();
+        session.dangerousMode = record.dangerousMode ?? false;
 
         log.info(
           { sessionId: session.id, threadId: message.threadId },
@@ -258,6 +448,16 @@ export class OpenACPCore {
         return session;
       } catch (err) {
         log.error({ err, record }, "Lazy resume failed");
+        // Send error feedback to user instead of silent drop
+        const adapter = this.adapters.get(message.channelId);
+        if (adapter) {
+          try {
+            await adapter.sendMessage(message.threadId, {
+              type: "error",
+              text: `⚠️ Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
+            });
+          } catch { /* best effort */ }
+        }
         return null;
       } finally {
         this.resumeLocks.delete(lockKey);
@@ -270,183 +470,13 @@ export class OpenACPCore {
 
   // --- Event Wiring ---
 
-  private toOutgoingMessage(
-    event: AgentEvent,
-    session?: Session,
-  ): OutgoingMessage {
-    switch (event.type) {
-      case "text":
-        return { type: "text", text: event.content };
-      case "thought":
-        return { type: "thought", text: event.content };
-      case "tool_call": {
-        const metadata: Record<string, unknown> = {
-          id: event.id,
-          name: event.name,
-          kind: event.kind,
-          status: event.status,
-          content: event.content,
-          locations: event.locations,
-        };
-        this.enrichWithViewerLinks(event, metadata, session);
-        return { type: "tool_call", text: event.name, metadata };
-      }
-      case "tool_update": {
-        const metadata: Record<string, unknown> = {
-          id: event.id,
-          name: event.name,
-          kind: event.kind,
-          status: event.status,
-          content: event.content,
-        };
-        this.enrichWithViewerLinks(event, metadata, session);
-        return { type: "tool_update", text: "", metadata };
-      }
-      case "plan":
-        return { type: "plan", text: "", metadata: { entries: event.entries } };
-      case "usage":
-        return {
-          type: "usage",
-          text: "",
-          metadata: {
-            tokensUsed: event.tokensUsed,
-            contextSize: event.contextSize,
-            cost: event.cost,
-          },
-        };
-      default:
-        return { type: "text", text: "" };
-    }
+  /** Create a SessionBridge for the given session and adapter */
+  createBridge(session: Session, adapter: ChannelAdapter): SessionBridge {
+    return new SessionBridge(session, adapter, {
+      messageTransformer: this.messageTransformer,
+      notificationManager: this.notificationManager,
+      sessionManager: this.sessionManager,
+    });
   }
 
-  private enrichWithViewerLinks(
-    event: AgentEvent & { type: "tool_call" | "tool_update" },
-    metadata: Record<string, unknown>,
-    session?: Session,
-  ): void {
-    if (!this.tunnelService || !session) return;
-
-    const name = "name" in event ? event.name || "" : "";
-    const kind = "kind" in event ? event.kind : undefined;
-
-    log.debug(
-      { name, kind, status: event.status, hasContent: !!event.content },
-      "enrichWithViewerLinks: inspecting event",
-    );
-
-    const fileInfo = extractFileInfo(name, kind, event.content, event.rawInput, event.meta);
-    if (!fileInfo) return;
-
-    log.info(
-      {
-        name,
-        kind,
-        filePath: fileInfo.filePath,
-        hasOldContent: !!fileInfo.oldContent,
-      },
-      "enrichWithViewerLinks: extracted file info",
-    );
-
-    const store = this.tunnelService.getStore();
-    const viewerLinks: Record<string, string> = {};
-
-    // For edits/writes with diff data (oldText + newText)
-    if (fileInfo.oldContent) {
-      const id = store.storeDiff(
-        session.id,
-        fileInfo.filePath,
-        fileInfo.oldContent,
-        fileInfo.content,
-        session.workingDirectory,
-      );
-      if (id) viewerLinks.diff = this.tunnelService.diffUrl(id);
-    }
-
-    // Always store as file view (new file creation or read)
-    const id = store.storeFile(
-      session.id,
-      fileInfo.filePath,
-      fileInfo.content,
-      session.workingDirectory,
-    );
-    if (id) viewerLinks.file = this.tunnelService.fileUrl(id);
-
-    if (Object.keys(viewerLinks).length > 0) {
-      metadata.viewerLinks = viewerLinks;
-      metadata.viewerFilePath = fileInfo.filePath;
-    }
-  }
-
-  // Public — adapters call this for assistant session wiring
-  wireSessionEvents(session: Session, adapter: ChannelAdapter): void {
-    // Set adapter reference for autoName → renameSessionThread
-    session.adapter = adapter;
-
-    session.agentInstance.onSessionUpdate = (event: AgentEvent) => {
-      switch (event.type) {
-        case "text":
-        case "thought":
-        case "tool_call":
-        case "tool_update":
-        case "plan":
-        case "usage":
-          adapter.sendMessage(
-            session.id,
-            this.toOutgoingMessage(event, session),
-          );
-          break;
-
-        case "session_end":
-          session.status = "finished";
-          this.sessionManager.updateSessionStatus(session.id, "finished");
-          adapter.cleanupSkillCommands(session.id);
-          adapter.sendMessage(session.id, {
-            type: "session_end",
-            text: `Done (${event.reason})`,
-          });
-          this.notificationManager.notify(session.channelId, {
-            sessionId: session.id,
-            sessionName: session.name,
-            type: "completed",
-            summary: `Session "${session.name || session.id}" completed`,
-          });
-          break;
-
-        case "error":
-          this.sessionManager.updateSessionStatus(session.id, "error");
-          adapter.cleanupSkillCommands(session.id);
-          adapter.sendMessage(session.id, {
-            type: "error",
-            text: event.message,
-          });
-          this.notificationManager.notify(session.channelId, {
-            sessionId: session.id,
-            sessionName: session.name,
-            type: "error",
-            summary: event.message,
-          });
-          break;
-
-        case "commands_update":
-          log.debug({ commands: event.commands }, "Commands available");
-          adapter.sendSkillCommands(session.id, event.commands);
-          break;
-      }
-    };
-
-    session.agentInstance.onPermissionRequest = async (
-      request: PermissionRequest,
-    ) => {
-      // Set pending BEFORE sending UI to avoid race condition
-      const promise = new Promise<string>((resolve) => {
-        session.pendingPermission = { requestId: request.id, resolve };
-      });
-
-      // Send permission UI to session topic (notification is sent by adapter)
-      await adapter.sendPermissionRequest(session.id, request);
-
-      // Wait for user response — adapter resolves this promise
-      return promise;
-    };
-  }
 }

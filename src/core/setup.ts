@@ -515,6 +515,33 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
   try {
     const telegram = await setupTelegram();
     const { agents, defaultAgent } = await setupAgents();
+
+    // Offer Claude CLI integration if claude agent detected
+    if (agents["claude"]) {
+      const { confirm } = await import("@inquirer/prompts");
+      const installClaude = await confirm({
+        message: "Install session transfer for Claude? (enables /openacp:handoff in your terminal)",
+        default: true,
+      });
+
+      if (installClaude) {
+        try {
+          const { getIntegration } = await import("../cli/integrate.js");
+          const integration = getIntegration("claude");
+          if (integration) {
+            for (const item of integration.items) {
+              const result = await item.install();
+              for (const log of result.logs) console.log(`  ${log}`);
+            }
+          }
+          console.log("Claude CLI integration installed.\n");
+        } catch (err) {
+          console.log(`Could not install Claude CLI integration: ${err instanceof Error ? err.message : err}`);
+          console.log("  You can install it later with: openacp integrate claude\n");
+        }
+      }
+    }
+
     const workspace = await setupWorkspace();
     const { runMode, autoStart } = await setupRunMode();
     const security = {
@@ -551,6 +578,7 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
         storeTtlMinutes: 60,
         auth: { enabled: false },
       },
+      integrations: {},
     };
 
     try {

@@ -1,7 +1,8 @@
 {
   "name": "openacp",
-  "version": "0.1.0",
+  "version": "0.4.11",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "bin": {
     "openacp": "dist/cli.js"
@@ -10,6 +11,7 @@
     "build": "tsc",
     "build:publish": "tsx scripts/build-publish.ts",
     "dev": "tsc --watch",
+    "dev:loop": "./scripts/dev-loop.sh",
     "start": "node dist/cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
