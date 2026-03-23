@@ -73,13 +73,45 @@ export class ApiServer {
   private sseCleanupHandlers = new Map<http.ServerResponse, () => void>();
   private healthInterval?: ReturnType<typeof setInterval>;
 
+  private static MIME_TYPES: Record<string, string> = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+  };
+
   constructor(
     private core: OpenACPCore,
     private config: ApiConfig,
     portFilePath?: string,
     private topicManager?: TopicManager,
+    private uiDir?: string,
   ) {
     this.portFilePath = portFilePath ?? DEFAULT_PORT_FILE;
+    // Auto-detect UI directory if not provided
+    if (!this.uiDir) {
+      const __filename = fileURLToPath(import.meta.url);
+      const candidate = path.resolve(path.dirname(__filename), "../../ui/dist");
+      if (fs.existsSync(path.join(candidate, "index.html"))) {
+        this.uiDir = candidate;
+      }
+      // Also check dist-publish layout
+      if (!this.uiDir) {
+        const publishCandidate = path.resolve(
+          path.dirname(__filename),
+          "../ui",
+        );
+        if (fs.existsSync(path.join(publishCandidate, "index.html"))) {
+          this.uiDir = publishCandidate;
+        }
+      }
+    }
   }
 
   async start(): Promise<void> {
@@ -259,7 +291,10 @@ export class ApiServer {
         this.handleSSE(req, res);
         return; // Don't end the response — SSE keeps it open
       } else {
-        this.sendJson(res, 404, { error: "Not found" });
+        // Try static file serving (UI dashboard)
+        if (!this.serveStatic(req, res)) {
+          this.sendJson(res, 404, { error: "Not found" });
+        }
       }
     } catch (err) {
       log.error({ err }, "API request error");
@@ -875,6 +910,39 @@ export class ApiServer {
       }
       res.write(payload);
     }
+  }
+
+  private serveStatic(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): boolean {
+    if (!this.uiDir) return false;
+
+    const urlPath = (req.url || "/").split("?")[0];
+    const safePath = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, "");
+
+    // Try exact file match
+    const filePath = path.join(this.uiDir, safePath);
+    if (!filePath.startsWith(this.uiDir)) return false; // path traversal guard
+
+    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      const ext = path.extname(filePath);
+      const contentType =
+        ApiServer.MIME_TYPES[ext] ?? "application/octet-stream";
+      res.writeHead(200, { "Content-Type": contentType });
+      fs.createReadStream(filePath).pipe(res);
+      return true;
+    }
+
+    // SPA fallback — serve index.html
+    const indexPath = path.join(this.uiDir, "index.html");
+    if (fs.existsSync(indexPath)) {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      fs.createReadStream(indexPath).pipe(res);
+      return true;
+    }
+
+    return false;
   }
 
   private sendJson(

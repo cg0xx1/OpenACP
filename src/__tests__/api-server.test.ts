@@ -961,6 +961,111 @@ describe("ApiServer", () => {
     controller.abort();
   });
 
+  describe("static file serving", () => {
+    let uiDir: string;
+
+    beforeEach(() => {
+      uiDir = path.join(tmpDir, "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(uiDir, "index.html"),
+        "<html><body>Dashboard</body></html>",
+      );
+      fs.mkdirSync(path.join(uiDir, "assets"), { recursive: true });
+      fs.writeFileSync(
+        path.join(uiDir, "assets", "app.js"),
+        'console.log("app")',
+      );
+      fs.writeFileSync(
+        path.join(uiDir, "assets", "style.css"),
+        "body { color: red }",
+      );
+    });
+
+    it("serves index.html for root path", async () => {
+      const { ApiServer } = await import("../core/api-server.js");
+      server = new ApiServer(
+        mockCore as any,
+        { port: 0, host: "127.0.0.1" },
+        portFilePath,
+        mockTopicManager as any,
+        uiDir,
+      );
+      await server.start();
+      const port = server.getPort();
+
+      const res = await apiFetch(port, "/");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("Dashboard");
+    });
+
+    it("serves static assets with correct content-type", async () => {
+      const { ApiServer } = await import("../core/api-server.js");
+      server = new ApiServer(
+        mockCore as any,
+        { port: 0, host: "127.0.0.1" },
+        portFilePath,
+        mockTopicManager as any,
+        uiDir,
+      );
+      await server.start();
+      const port = server.getPort();
+
+      const jsRes = await apiFetch(port, "/assets/app.js");
+      expect(jsRes.status).toBe(200);
+      expect(jsRes.headers.get("content-type")).toContain("javascript");
+
+      const cssRes = await apiFetch(port, "/assets/style.css");
+      expect(cssRes.status).toBe(200);
+      expect(cssRes.headers.get("content-type")).toContain("text/css");
+    });
+
+    it("falls back to index.html for SPA routes", async () => {
+      const { ApiServer } = await import("../core/api-server.js");
+      server = new ApiServer(
+        mockCore as any,
+        { port: 0, host: "127.0.0.1" },
+        portFilePath,
+        mockTopicManager as any,
+        uiDir,
+      );
+      await server.start();
+      const port = server.getPort();
+
+      const res = await apiFetch(port, "/sessions/abc");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("Dashboard");
+    });
+
+    it("API routes still work when UI is enabled", async () => {
+      const { ApiServer } = await import("../core/api-server.js");
+      server = new ApiServer(
+        mockCore as any,
+        { port: 0, host: "127.0.0.1" },
+        portFilePath,
+        mockTopicManager as any,
+        uiDir,
+      );
+      await server.start();
+      const port = server.getPort();
+
+      const res = await apiFetch(port, "/api/health");
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.status).toBe("ok");
+    });
+
+    it("returns 404 for non-API routes when UI not available", async () => {
+      const port = await startServer();
+      const res = await apiFetch(port, "/nonexistent");
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe("token auth", () => {
     it("rejects requests without token when configured and host is not localhost", async () => {
       mockCore.configManager.get.mockReturnValue({
