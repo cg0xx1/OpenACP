@@ -22,8 +22,8 @@ const ok = (msg: string) =>
   `${c.green}${c.bold}✓${c.reset} ${c.green}${msg}${c.reset}`;
 const warn = (msg: string) => `${c.yellow}⚠ ${msg}${c.reset}`;
 const fail = (msg: string) => `${c.red}✗ ${msg}${c.reset}`;
-const step = (n: number, title: string) =>
-  `\n${c.cyan}${c.bold}[${n}/3]${c.reset} ${c.bold}${title}${c.reset}\n`;
+const step = (n: number, total: number, title: string) =>
+  `\n${c.cyan}${c.bold}[${n}/${total}]${c.reset} ${c.bold}${title}${c.reset}\n`;
 const dim = (msg: string) => `${c.dim}${msg}${c.reset}`;
 
 // --- Telegram validation ---
@@ -322,8 +322,8 @@ export async function validateAgentCommand(command: string): Promise<boolean> {
 
 // --- Setup steps ---
 
-export async function setupTelegram(): Promise<Config["channels"][string]> {
-  console.log(step(1, "Telegram Bot"));
+export async function setupTelegram(stepNum = 1, totalSteps = 3): Promise<Config["channels"][string]> {
+  console.log(step(stepNum, totalSteps, "Telegram Bot"));
 
   let botToken = "";
 
@@ -402,7 +402,7 @@ export async function setupTelegram(): Promise<Config["channels"][string]> {
 
 // --- Discord validation ---
 
-async function validateDiscordToken(token: string): Promise<
+export async function validateDiscordToken(token: string): Promise<
   | { ok: true; username: string; id: string }
   | { ok: false; error: string }
 > {
@@ -557,8 +557,8 @@ export async function setupAgents(): Promise<{
   return { defaultAgent };
 }
 
-export async function setupWorkspace(): Promise<{ baseDir: string }> {
-  console.log(step(2, "Workspace"));
+export async function setupWorkspace(stepNum = 2, totalSteps = 3): Promise<{ baseDir: string }> {
+  console.log(step(stepNum, totalSteps, "Workspace"));
 
   const baseDir = await input({
     message: "Base directory for workspaces:",
@@ -569,8 +569,8 @@ export async function setupWorkspace(): Promise<{ baseDir: string }> {
   return { baseDir: baseDir.trim().replace(/^['"]|['"]$/g, "") };
 }
 
-export async function setupRunMode(): Promise<{ runMode: 'foreground' | 'daemon'; autoStart: boolean }> {
-  console.log(step(3, 'Run Mode'))
+export async function setupRunMode(stepNum = 3, totalSteps = 3): Promise<{ runMode: 'foreground' | 'daemon'; autoStart: boolean }> {
+  console.log(step(stepNum, totalSteps, 'Run Mode'))
 
   // Don't show daemon option on Windows
   if (process.platform === 'win32') {
@@ -638,10 +638,18 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
     let telegram: Config["channels"][string] | undefined;
     let discord: DiscordChannelConfig | undefined;
 
+    // Calculate total steps dynamically: channel(s) + workspace + run mode
+    const channelSteps = channelChoice === 'both' ? 2 : 1;
+    const totalSteps = channelSteps + 2; // + workspace + run mode
+
+    let currentStep = 0;
+
     if (channelChoice === 'telegram' || channelChoice === 'both') {
-      telegram = await setupTelegram();
+      currentStep++;
+      telegram = await setupTelegram(currentStep, totalSteps);
     }
     if (channelChoice === 'discord' || channelChoice === 'both') {
+      currentStep++;
       discord = await setupDiscord();
     }
 
@@ -673,8 +681,10 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
       }
     }
 
-    const workspace = await setupWorkspace();
-    const { runMode, autoStart } = await setupRunMode();
+    currentStep++;
+    const workspace = await setupWorkspace(currentStep, totalSteps);
+    currentStep++;
+    const { runMode, autoStart } = await setupRunMode(currentStep, totalSteps);
     const security = {
       allowedUserIds: [] as string[],
       maxConcurrentSessions: 20,

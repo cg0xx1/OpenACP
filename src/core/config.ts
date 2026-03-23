@@ -164,7 +164,7 @@ export class ConfigManager extends EventEmitter {
       );
       log.info({ configPath: this.configPath }, "Config created");
       log.info(
-        "Please edit it with your Telegram bot token and chat ID, then restart.",
+        "Please edit it with your channel credentials (Telegram bot token, Discord bot token, etc.), then restart.",
       );
       process.exit(1);
     }
