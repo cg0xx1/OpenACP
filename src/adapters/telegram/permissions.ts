@@ -56,8 +56,9 @@ export class PermissionHandler {
     // Deep link for notification
     const deepLink = buildDeepLink(this.chatId, msg.message_id)
 
-    // Notify in notification topic
-    await this.sendNotification({
+    // Notify in notification topic (fire-and-forget to avoid sendQueue deadlock:
+    // this method runs INSIDE a sendQueue item, so awaiting another enqueue() deadlocks)
+    void this.sendNotification({
       sessionId: session.id,
       sessionName: session.name,
       type: 'permission',
@@ -84,9 +85,8 @@ export class PermissionHandler {
       const session = this.getSession(pending.sessionId)
       const isAllow = pending.options.find(o => o.id === optionId)?.isAllow ?? false
       log.info({ requestId: pending.requestId, optionId, isAllow }, 'Permission responded')
-      if (session?.pendingPermission?.requestId === pending.requestId) {
-        session.pendingPermission.resolve(optionId)
-        session.pendingPermission = undefined
+      if (session?.permissionGate.requestId === pending.requestId) {
+        session.permissionGate.resolve(optionId)
       }
       this.pending.delete(callbackKey)
 

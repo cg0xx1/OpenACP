@@ -11,7 +11,6 @@ import {
 import { createChildLogger } from "../../core/log.js";
 const log = createChildLogger({ module: "telegram" });
 import type { TelegramChannelConfig } from "./types.js";
-import { MessageDraft } from "./streaming.js";
 import {
   ensureTopics,
   createSessionTopic,
@@ -20,25 +19,29 @@ import {
 import {
   setupCommands,
   setupMenuCallbacks,
-  setupSkillCallbacks,
+  setupDangerousModeCallbacks,
+  setupIntegrateCallbacks,
   buildMenuKeyboard,
-  buildSkillKeyboard,
-  clearSkillCallbacks,
+  handlePendingWorkspaceInput,
   STATIC_COMMANDS,
-} from "./commands.js";
+} from "./commands/index.js";
 import { PermissionHandler } from "./permissions.js";
 import {
   spawnAssistant,
   handleAssistantMessage,
   redirectToAssistant,
+  buildWelcomeMessage,
+  type SpawnAssistantResult,
 } from "./assistant.js";
+import { escapeHtml } from "./formatting.js";
+import { ActivityTracker } from "./activity.js";
+import { TelegramSendQueue } from "./send-queue.js";
 import {
-  escapeHtml,
-  formatToolCall,
-  formatToolUpdate,
-  formatPlan,
-  formatUsage,
-} from "./formatting.js";
+  setupActionCallbacks,
+} from "./action-detect.js";
+import { ToolCallTracker } from "./tool-call-tracker.js";
+import { DraftManager } from "./draft-manager.js";
+import { SkillCommandManager } from "./skill-command-manager.js";
 
 /**
  * Wraps native fetch to work around grammY's polyfilled AbortController.
@@ -66,27 +69,35 @@ function patchedFetch(
   return fetch(input, init);
 }
 
-export class TelegramAdapter extends ChannelAdapter {
+export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
   private bot!: Bot;
   private telegramConfig: TelegramChannelConfig;
-  private sessionDrafts: Map<string, MessageDraft> = new Map();
-  private toolCallMessages: Map<
-    string,
-    Map<
-      string,
-      {
-        msgId: number;
-        name: string;
-        kind?: string;
-        viewerLinks?: { file?: string; diff?: string };
-      }
-    >
-  > = new Map(); // sessionId → (toolCallId → state)
   private permissionHandler!: PermissionHandler;
   private assistantSession: Session | null = null;
+  private assistantInitializing = false;
   private notificationTopicId!: number;
   private assistantTopicId!: number;
-  private skillMessages: Map<string, number> = new Map(); // sessionId → pinned messageId
+  private sendQueue = new TelegramSendQueue(3000);
+
+  // Extracted managers
+  private toolTracker!: ToolCallTracker;
+  private draftManager!: DraftManager;
+  private skillManager!: SkillCommandManager;
+  private sessionTrackers: Map<string, ActivityTracker> = new Map();
+
+  private getOrCreateTracker(sessionId: string, threadId: number): ActivityTracker {
+    let tracker = this.sessionTrackers.get(sessionId);
+    if (!tracker) {
+      tracker = new ActivityTracker(
+        this.bot.api,
+        this.telegramConfig.chatId,
+        threadId,
+        this.sendQueue,
+      );
+      this.sessionTrackers.set(sessionId, tracker);
+    }
+    return tracker;
+  }
 
   constructor(core: OpenACPCore, config: TelegramChannelConfig) {
     super(core, config as never);
@@ -96,17 +107,51 @@ export class TelegramAdapter extends ChannelAdapter {
   async start(): Promise<void> {
     this.bot = new Bot(this.telegramConfig.botToken, { client: { fetch: patchedFetch } });
 
+    // Initialize extracted managers
+    this.toolTracker = new ToolCallTracker(this.bot, this.telegramConfig.chatId, this.sendQueue);
+    this.draftManager = new DraftManager(this.bot, this.telegramConfig.chatId, this.sendQueue);
+    this.skillManager = new SkillCommandManager(
+      this.bot,
+      this.telegramConfig.chatId,
+      this.sendQueue,
+      this.core.sessionManager,
+    );
+
     // Global error handler — prevent unhandled errors from crashing the bot
     this.bot.catch((err) => {
       const rootCause = err.error instanceof Error ? err.error : err;
       log.error({ err: rootCause }, "Telegram bot error");
     });
 
-    // Ensure allowed_updates includes callback_query on every poll.
-    // bot.start() passes allowed_updates, but grammY only sends it on the first
-    // getUpdates call. Subsequent polls may omit the parameter, causing Telegram
-    // to fall back to its default (which excludes callback_query). This transformer
-    // guarantees callback_query is always requested.
+    // Auto-retry on 429 (Too Many Requests)
+    this.bot.api.config.use(async (prev, method, payload, signal) => {
+      const maxRetries = 3;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const result = await prev(method, payload, signal);
+        if (
+          result.ok ||
+          (result as { error_code?: number }).error_code !== 429 ||
+          attempt === maxRetries
+        ) {
+          return result;
+        }
+        const retryAfter =
+          ((result as { parameters?: { retry_after?: number } }).parameters
+            ?.retry_after ?? 5) + 1;
+        const rateLimitedMethods = ['sendMessage', 'editMessageText', 'editMessageReplyMarkup'];
+        if (rateLimitedMethods.includes(method)) {
+          this.sendQueue.onRateLimited();
+        }
+        log.warn(
+          { method, retryAfter, attempt: attempt + 1 },
+          "Rate limited by Telegram, retrying",
+        );
+        await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      }
+      return prev(method, payload, signal);
+    });
+
+    // Ensure allowed_updates includes callback_query on every poll
     this.bot.api.config.use((prev, method, payload, signal) => {
       if (method === "getUpdates") {
         const p = payload as never as Record<string, unknown>;
@@ -118,7 +163,7 @@ export class TelegramAdapter extends ChannelAdapter {
       return prev(method, payload, signal);
     });
 
-    // Register static commands for Telegram autocomplete (scoped to this chat)
+    // Register static commands for Telegram autocomplete
     await this.bot.api.setMyCommands(STATIC_COMMANDS, {
       scope: { type: "chat", chat_id: this.telegramConfig.chatId },
     });
@@ -136,8 +181,7 @@ export class TelegramAdapter extends ChannelAdapter {
       this.telegramConfig.chatId,
       this.telegramConfig,
       async (updates) => {
-        // Save topic IDs to config
-        await (this.core as OpenACPCore).configManager.save({
+        await this.core.configManager.save({
           channels: { telegram: updates },
         });
       },
@@ -145,29 +189,107 @@ export class TelegramAdapter extends ChannelAdapter {
     this.notificationTopicId = topics.notificationTopicId;
     this.assistantTopicId = topics.assistantTopicId;
 
-    // Setup permission handler (instance only, callback registered later)
+    // Setup permission handler
     this.permissionHandler = new PermissionHandler(
       this.bot,
       this.telegramConfig.chatId,
       (sessionId) =>
-        (this.core as OpenACPCore).sessionManager.getSession(sessionId),
+        this.core.sessionManager.getSession(sessionId),
       (notification) => this.sendNotification(notification),
     );
 
     // Callback registration order matters!
-    // Specific regex handlers first, catch-all last.
-    setupSkillCallbacks(this.bot, this.core as OpenACPCore);
+    setupDangerousModeCallbacks(this.bot, this.core as OpenACPCore);
+    setupActionCallbacks(
+      this.bot,
+      this.core as OpenACPCore,
+      this.telegramConfig.chatId,
+      () => this.assistantSession?.id,
+    );
+    setupIntegrateCallbacks(this.bot, this.core as OpenACPCore);
     setupMenuCallbacks(
       this.bot,
       this.core as OpenACPCore,
       this.telegramConfig.chatId,
+      { notificationTopicId: this.notificationTopicId, assistantTopicId: this.assistantTopicId },
+      () => {
+        if (!this.assistantSession) return undefined;
+        return {
+          topicId: this.assistantTopicId,
+          enqueuePrompt: (p: string) => this.assistantSession!.enqueuePrompt(p),
+        };
+      },
     );
     setupCommands(
       this.bot,
       this.core as OpenACPCore,
       this.telegramConfig.chatId,
+      {
+        topicId: this.assistantTopicId,
+        getSession: () => this.assistantSession,
+        respawn: async () => {
+          if (this.assistantSession) {
+            await this.assistantSession.destroy();
+            this.assistantSession = null;
+          }
+          const { session, ready } = await spawnAssistant(
+            this.core as OpenACPCore,
+            this,
+            this.assistantTopicId,
+          );
+          this.assistantSession = session;
+          this.assistantInitializing = true;
+          ready.then(() => { this.assistantInitializing = false; });
+        },
+      },
     );
     this.permissionHandler.setupCallbackHandler();
+
+    // /handoff command
+    this.bot.command("handoff", async (ctx) => {
+      const threadId = ctx.message?.message_thread_id;
+      if (!threadId) return;
+
+      if (threadId === this.notificationTopicId || threadId === this.assistantTopicId) {
+        await ctx.reply("This command only works in session topics.", {
+          message_thread_id: threadId,
+        });
+        return;
+      }
+
+      const session = this.core.sessionManager.getSessionByThread("telegram", String(threadId));
+      const record = session ? undefined : this.core.sessionManager.getRecordByThread("telegram", String(threadId));
+
+      const agentName = session?.agentName ?? record?.agentName;
+      const agentSessionId = session?.agentSessionId ?? record?.agentSessionId;
+
+      if (!agentName || !agentSessionId) {
+        await ctx.reply("No session found for this topic.", {
+          message_thread_id: threadId,
+        });
+        return;
+      }
+
+      const { getAgentCapabilities } = await import("../../core/agent-registry.js");
+      const caps = getAgentCapabilities(agentName);
+
+      if (!caps.supportsResume || !caps.resumeCommand) {
+        await ctx.reply("This agent does not support session transfer.", {
+          message_thread_id: threadId,
+        });
+        return;
+      }
+
+      const command = caps.resumeCommand(agentSessionId);
+
+      await ctx.reply(
+        `Run this in your terminal to continue the session:\n\n<code>${command}</code>`,
+        {
+          message_thread_id: threadId,
+          parse_mode: "HTML",
+        },
+      );
+    });
 
     // Setup message routing
     this.setupRoutes();
@@ -182,36 +304,19 @@ export class TelegramAdapter extends ChannelAdapter {
         ),
     });
 
-    // Spawn assistant (after bot is started so it can send messages)
+    // Send welcome message
     try {
-      this.assistantSession = await spawnAssistant(
-        this.core as OpenACPCore,
-        this,
-        this.assistantTopicId,
-      );
-    } catch (err) {
-      log.error({ err }, "Failed to spawn assistant");
-    }
+      const config = this.core.configManager.get();
+      const agents = this.core.agentManager.getAvailableAgents();
+      const allRecords = this.core.sessionManager.listRecords();
 
-    // Send welcome message with menu to assistant topic
-    try {
-      const config = (this.core as OpenACPCore).configManager.get();
-      const agents = (
-        this.core as OpenACPCore
-      ).agentManager.getAvailableAgents();
-      const agentList = agents
-        .map(
-          (a) =>
-            `${escapeHtml(a.name)}${a.name === config.defaultAgent ? " (default)" : ""}`,
-        )
-        .join(", ");
-      const workspace = escapeHtml(config.workspace.baseDir);
-
-      const welcomeText =
-        `👋 <b>OpenACP Assistant</b> is online.\n\n` +
-        `Available agents: ${agentList}\n` +
-        `Workspace: <code>${workspace}</code>\n\n` +
-        `<b>Select an action:</b>`;
+      const welcomeText = buildWelcomeMessage({
+        activeCount: allRecords.filter(r => r.status === 'active' || r.status === 'initializing').length,
+        errorCount: allRecords.filter(r => r.status === 'error').length,
+        totalCount: allRecords.length,
+        agents: agents.map(a => a.name),
+        defaultAgent: config.defaultAgent,
+      });
 
       await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {
         message_thread_id: this.assistantTopicId,
@@ -220,6 +325,30 @@ export class TelegramAdapter extends ChannelAdapter {
       });
     } catch (err) {
       log.warn({ err }, "Failed to send welcome message");
+    }
+
+    // Spawn assistant in background
+    try {
+      log.info("Spawning assistant session...");
+      const { session, ready } = await spawnAssistant(
+        this.core as OpenACPCore,
+        this,
+        this.assistantTopicId,
+      );
+      this.assistantSession = session;
+      this.assistantInitializing = true;
+      log.info({ sessionId: session.id }, "Assistant session ready, system prompt running in background");
+      ready.then(() => {
+        this.assistantInitializing = false;
+        log.info({ sessionId: session.id }, "Assistant ready for user messages");
+      });
+    } catch (err) {
+      log.error({ err }, "Failed to spawn assistant");
+      this.bot.api.sendMessage(
+        this.telegramConfig.chatId,
+        `⚠️ <b>Failed to start assistant session.</b>\n\n<code>${err instanceof Error ? err.message : String(err)}</code>`,
+        { message_thread_id: this.assistantTopicId, parse_mode: "HTML" },
+      ).catch(() => {});
     }
   }
 
@@ -235,6 +364,11 @@ export class TelegramAdapter extends ChannelAdapter {
     this.bot.on("message:text", async (ctx) => {
       const threadId = ctx.message.message_thread_id;
 
+      // Check for pending workspace input from interactive /new flow
+      if (await handlePendingWorkspaceInput(ctx, this.core, this.telegramConfig.chatId, this.assistantTopicId)) {
+        return;
+      }
+
       // General topic or no thread → redirect to assistant
       if (!threadId) {
         const html = redirectToAssistant(
@@ -248,8 +382,13 @@ export class TelegramAdapter extends ChannelAdapter {
       // Notification topic → ignore
       if (threadId === this.notificationTopicId) return;
 
-      // Assistant topic → send typing indicator and forward to assistant session
+      // Assistant topic → forward to assistant session
       if (threadId === this.assistantTopicId) {
+        if (!this.assistantSession) {
+          await ctx.reply("⚠️ Assistant is not available yet. Please try again shortly.", { parse_mode: "HTML" });
+          return;
+        }
+        await this.draftManager.finalize(this.assistantSession.id, this.assistantSession.id);
         ctx.replyWithChatAction("typing").catch(() => {});
         handleAssistantMessage(this.assistantSession, ctx.message.text).catch(
           (err) => log.error({ err }, "Assistant error"),
@@ -257,9 +396,15 @@ export class TelegramAdapter extends ChannelAdapter {
         return;
       }
 
-      // Session topic → send typing indicator and forward to core
+      // Session topic → forward to core
+      const sessionId = this.core.sessionManager.getSessionByThread("telegram", String(threadId))?.id;
+      if (sessionId) await this.draftManager.finalize(sessionId, this.assistantSession?.id);
+      if (sessionId) {
+        const tracker = this.sessionTrackers.get(sessionId);
+        if (tracker) await tracker.onNewPrompt();
+      }
       ctx.replyWithChatAction("typing").catch(() => {});
-      (this.core as OpenACPCore)
+      this.core
         .handleMessage({
           channelId: "telegram",
           threadId: String(threadId),
@@ -276,36 +421,39 @@ export class TelegramAdapter extends ChannelAdapter {
     sessionId: string,
     content: OutgoingMessage,
   ): Promise<void> {
-    // log.debug({ sessionId, type: content.type }, "Sending message to Telegram");
-    const session = (this.core as OpenACPCore).sessionManager.getSession(
-      sessionId,
-    );
+    // Suppress assistant messages during system prompt
+    if (this.assistantInitializing && sessionId === this.assistantSession?.id) return;
+
+    const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
     const threadId = Number(session.threadId);
+    if (!threadId || isNaN(threadId)) {
+      log.warn({ sessionId, threadId: session.threadId }, "Session has no valid threadId, skipping message");
+      return;
+    }
 
     switch (content.type) {
       case "thought": {
-        // Skip thought/thinking content — it's internal agent reasoning
-        // Users don't need to see it
+        const tracker = this.getOrCreateTracker(sessionId, threadId);
+        await tracker.onThought();
         break;
       }
 
       case "text": {
-        let draft = this.sessionDrafts.get(sessionId);
-        if (!draft) {
-          draft = new MessageDraft(
-            this.bot,
-            this.telegramConfig.chatId,
-            threadId,
-          );
-          this.sessionDrafts.set(sessionId, draft);
+        if (!this.draftManager.hasDraft(sessionId)) {
+          const tracker = this.getOrCreateTracker(sessionId, threadId);
+          await tracker.onTextStart();
         }
+        const draft = this.draftManager.getOrCreate(sessionId, threadId);
         draft.append(content.text);
+        this.draftManager.appendText(sessionId, content.text);
         break;
       }
 
       case "tool_call": {
-        await this.finalizeDraft(sessionId);
+        const tracker = this.getOrCreateTracker(sessionId, threadId);
+        await tracker.onToolCall();
+        await this.draftManager.finalize(sessionId, this.assistantSession?.id);
         const meta = content.metadata as never as {
           id: string;
           name: string;
@@ -314,23 +462,9 @@ export class TelegramAdapter extends ChannelAdapter {
           content?: unknown;
           viewerLinks?: { file?: string; diff?: string };
         };
-        const msg = await this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          formatToolCall(meta),
-          {
-            message_thread_id: threadId,
-            parse_mode: "HTML",
-            disable_notification: true,
-          },
-        );
-        if (!this.toolCallMessages.has(sessionId)) {
-          this.toolCallMessages.set(sessionId, new Map());
-        }
-        this.toolCallMessages.get(sessionId)!.set(meta.id, {
-          msgId: msg.message_id,
-          name: meta.name,
-          kind: meta.kind,
-          viewerLinks: meta.viewerLinks,
+        await this.toolTracker.trackNewCall(sessionId, threadId, {
+          ...meta,
+          viewerFilePath: (content.metadata as any)?.viewerFilePath,
         });
         break;
       }
@@ -344,97 +478,100 @@ export class TelegramAdapter extends ChannelAdapter {
           content?: unknown;
           viewerLinks?: { file?: string; diff?: string };
         };
-        const toolState = this.toolCallMessages.get(sessionId)?.get(meta.id);
-        if (toolState) {
-          // Carry forward viewerLinks from previous updates if not present in current
-          const viewerLinks = meta.viewerLinks || toolState.viewerLinks;
-          if (meta.viewerLinks) toolState.viewerLinks = meta.viewerLinks;
-          // Merge name/kind from original tool_call
-          const merged = {
-            ...meta,
-            name: meta.name || toolState.name,
-            kind: meta.kind || toolState.kind,
-            viewerLinks,
-          };
-          try {
-            await this.bot.api.editMessageText(
-              this.telegramConfig.chatId,
-              toolState.msgId,
-              formatToolUpdate(merged),
-              { parse_mode: "HTML" },
-            );
-          } catch {
-            /* edit failed */
-          }
-        }
+        await this.toolTracker.updateCall(sessionId, {
+          ...meta,
+          viewerFilePath: (content.metadata as any)?.viewerFilePath,
+        });
         break;
       }
 
       case "plan": {
-        await this.finalizeDraft(sessionId);
-        await this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          formatPlan(
-            content.metadata as never as {
-              entries: Array<{ content: string; status: string }>;
-            },
-          ),
-          {
-            message_thread_id: threadId,
-            parse_mode: "HTML",
-            disable_notification: true,
-          },
+        const meta = content.metadata as never as {
+          entries: Array<{ content: string; status: string; priority: string }>;
+        };
+        const tracker = this.getOrCreateTracker(sessionId, threadId);
+        await tracker.onPlan(
+          meta.entries.map(e => ({
+            content: e.content,
+            status: e.status as 'pending' | 'in_progress' | 'completed',
+            priority: (e.priority ?? 'medium') as 'high' | 'medium' | 'low',
+          })),
         );
         break;
       }
 
       case "usage": {
-        // Show usage stats
-        await this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          formatUsage(
-            content.metadata as never as {
-              tokensUsed?: number;
-              contextSize?: number;
-              cost?: { amount: number; currency: string };
-            },
-          ),
-          {
-            message_thread_id: threadId,
-            parse_mode: "HTML",
-            disable_notification: true,
-          },
-        );
+        const meta = content.metadata as never as {
+          tokensUsed?: number;
+          contextSize?: number;
+        };
+        await this.draftManager.finalize(sessionId, this.assistantSession?.id);
+        const tracker = this.getOrCreateTracker(sessionId, threadId);
+        await tracker.sendUsage(meta);
+
+        // Notify the Notifications topic that a prompt has completed
+        if (this.notificationTopicId && sessionId !== this.assistantSession?.id) {
+          const sess = this.core.sessionManager.getSession(sessionId);
+          const sessionName = sess?.name || 'Session';
+          const chatIdStr = String(this.telegramConfig.chatId);
+          const numericId = chatIdStr.startsWith('-100') ? chatIdStr.slice(4) : chatIdStr.replace('-', '');
+          const usageMsgId = tracker.getUsageMsgId();
+          const deepLink = `https://t.me/c/${numericId}/${usageMsgId ?? threadId}`;
+          const text = `✅ <b>${escapeHtml(sessionName)}</b>\nTask completed.\n\n<a href="${deepLink}">→ Go to topic</a>`;
+          this.sendQueue.enqueue(() =>
+            this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
+              message_thread_id: this.notificationTopicId,
+              parse_mode: 'HTML',
+              disable_notification: false,
+            }),
+          ).catch(() => {});
+        }
         break;
       }
 
       case "session_end": {
-        await this.finalizeDraft(sessionId);
-        this.sessionDrafts.delete(sessionId);
-        this.toolCallMessages.delete(sessionId);
-        await this.cleanupSkillCommands(sessionId);
-        await this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          `✅ <b>Done</b>`,
-          {
-            message_thread_id: threadId,
-            parse_mode: "HTML",
-            disable_notification: true,
-          },
-        );
+        await this.draftManager.finalize(sessionId, this.assistantSession?.id);
+        this.draftManager.cleanup(sessionId);
+        this.toolTracker.cleanup(sessionId);
+        await this.skillManager.cleanup(sessionId);
+        const tracker = this.sessionTrackers.get(sessionId);
+        if (tracker) {
+          await tracker.onComplete();
+          tracker.destroy();
+          this.sessionTrackers.delete(sessionId);
+        } else {
+          await this.sendQueue.enqueue(() =>
+            this.bot.api.sendMessage(
+              this.telegramConfig.chatId,
+              `✅ <b>Done</b>`,
+              {
+                message_thread_id: threadId,
+                parse_mode: "HTML",
+                disable_notification: true,
+              },
+            ),
+          );
+        }
         break;
       }
 
       case "error": {
-        await this.finalizeDraft(sessionId);
-        await this.bot.api.sendMessage(
-          this.telegramConfig.chatId,
-          `❌ <b>Error:</b> ${escapeHtml(content.text)}`,
-          {
-            message_thread_id: threadId,
-            parse_mode: "HTML",
-            disable_notification: true,
-          },
+        await this.draftManager.finalize(sessionId, this.assistantSession?.id);
+        const tracker = this.sessionTrackers.get(sessionId);
+        if (tracker) {
+          tracker.destroy();
+          this.sessionTrackers.delete(sessionId);
+        }
+        await this.sendQueue.enqueue(() =>
+          this.bot.api.sendMessage(
+            this.telegramConfig.chatId,
+            `❌ <b>Error:</b> ${escapeHtml(content.text)}`,
+            {
+              message_thread_id: threadId,
+              parse_mode: "HTML",
+              disable_notification: true,
+            },
+          ),
         );
         break;
       }
@@ -446,14 +583,37 @@ export class TelegramAdapter extends ChannelAdapter {
     request: PermissionRequest,
   ): Promise<void> {
     log.info({ sessionId, requestId: request.id }, "Permission request sent");
-    const session = (this.core as OpenACPCore).sessionManager.getSession(
-      sessionId,
-    );
+    const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
-    await this.permissionHandler.sendPermissionRequest(session, request);
+
+    // Auto-approve openacp CLI commands
+    if (request.description.includes("openacp")) {
+      const allowOption = request.options.find((o) => o.isAllow);
+      if (allowOption && session.permissionGate.requestId === request.id) {
+        log.info({ sessionId, requestId: request.id }, "Auto-approving openacp command");
+        session.permissionGate.resolve(allowOption.id);
+      }
+      return;
+    }
+
+    // Dangerous mode: auto-approve
+    if (session.dangerousMode) {
+      const allowOption = request.options.find((o) => o.isAllow);
+      if (allowOption && session.permissionGate.requestId === request.id) {
+        log.info({ sessionId, requestId: request.id, optionId: allowOption.id }, "Dangerous mode: auto-approving permission");
+        session.permissionGate.resolve(allowOption.id);
+      }
+      return;
+    }
+
+    await this.sendQueue.enqueue(() =>
+      this.permissionHandler.sendPermissionRequest(session, request),
+    );
   }
 
   async sendNotification(notification: NotificationMessage): Promise<void> {
+    if (notification.sessionId === this.assistantSession?.id) return;
+
     log.info(
       { sessionId: notification.sessionId, type: notification.type },
       "Notification sent",
@@ -465,16 +625,28 @@ export class TelegramAdapter extends ChannelAdapter {
       permission: "🔐",
       input_required: "💬",
     };
-    let text = `${emoji[notification.type] || "ℹ️"} <b>${escapeHtml(notification.sessionName || notification.sessionId)}</b>\n`;
+    let text = `${emoji[notification.type] || "ℹ️"} <b>${escapeHtml(notification.sessionName || "New session")}</b>\n`;
     text += escapeHtml(notification.summary);
-    if (notification.deepLink) {
-      text += `\n\n<a href="${notification.deepLink}">→ Go to message</a>`;
+
+    const deepLink = notification.deepLink ?? (() => {
+      const session = this.core.sessionManager.getSession(notification.sessionId);
+      const threadId = session?.threadId;
+      if (!threadId) return undefined;
+      const chatIdStr = String(this.telegramConfig.chatId);
+      const numericId = chatIdStr.startsWith("-100") ? chatIdStr.slice(4) : chatIdStr.replace("-", "");
+      return `https://t.me/c/${numericId}/${threadId}`;
+    })();
+
+    if (deepLink) {
+      text += `\n\n<a href="${deepLink}">→ Go to topic</a>`;
     }
-    await this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
-      message_thread_id: this.notificationTopicId,
-      parse_mode: "HTML",
-      disable_notification: false,
-    });
+    await this.sendQueue.enqueue(() =>
+      this.bot.api.sendMessage(this.telegramConfig.chatId, text, {
+        message_thread_id: this.notificationTopicId,
+        parse_mode: "HTML",
+        disable_notification: false,
+      }),
+    );
   }
 
   async createSessionThread(sessionId: string, name: string): Promise<string> {
@@ -485,9 +657,7 @@ export class TelegramAdapter extends ChannelAdapter {
   }
 
   async renameSessionThread(sessionId: string, newName: string): Promise<void> {
-    const session = (this.core as OpenACPCore).sessionManager.getSession(
-      sessionId,
-    );
+    const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
     await renameSessionTopic(
       this.bot,
@@ -495,135 +665,37 @@ export class TelegramAdapter extends ChannelAdapter {
       Number(session.threadId),
       newName,
     );
+    await this.core.sessionManager.patchRecord(sessionId, { name: newName });
+  }
+
+  async deleteSessionThread(sessionId: string): Promise<void> {
+    const record = this.core.sessionManager.getSessionRecord(sessionId);
+    const platform = record?.platform as import("../../core/types.js").TelegramPlatformData | undefined;
+    const topicId = platform?.topicId;
+    if (!topicId) return;
+
+    try {
+      await this.bot.api.deleteForumTopic(this.telegramConfig.chatId, topicId);
+    } catch (err) {
+      log.warn({ err, sessionId, topicId }, "Failed to delete forum topic (may already be deleted)");
+    }
   }
 
   async sendSkillCommands(
     sessionId: string,
     commands: AgentCommand[],
   ): Promise<void> {
-    const session = (this.core as OpenACPCore).sessionManager.getSession(
-      sessionId,
-    );
+    if (sessionId === this.assistantSession?.id) return;
+
+    const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
     const threadId = Number(session.threadId);
     if (!threadId) return;
 
-    // Empty commands → remove pinned message
-    if (commands.length === 0) {
-      await this.cleanupSkillCommands(sessionId);
-      return;
-    }
-
-    // Clear old callback entries before building new keyboard
-    clearSkillCallbacks(sessionId);
-
-    const keyboard = buildSkillKeyboard(sessionId, commands);
-    const text = "🛠 <b>Available commands:</b>";
-    const existingMsgId = this.skillMessages.get(sessionId);
-
-    if (existingMsgId) {
-      // Update existing pinned message
-      try {
-        await this.bot.api.editMessageText(
-          this.telegramConfig.chatId,
-          existingMsgId,
-          text,
-          { parse_mode: "HTML", reply_markup: keyboard },
-        );
-        return;
-      } catch {
-        // Message may have been deleted — fall through to create new
-      }
-    }
-
-    // Create and pin new message
-    try {
-      const msg = await this.bot.api.sendMessage(
-        this.telegramConfig.chatId,
-        text,
-        {
-          message_thread_id: threadId,
-          parse_mode: "HTML",
-          reply_markup: keyboard,
-          disable_notification: true,
-        },
-      );
-      this.skillMessages.set(sessionId, msg.message_id);
-
-      await this.bot.api.pinChatMessage(
-        this.telegramConfig.chatId,
-        msg.message_id,
-        {
-          disable_notification: true,
-        },
-      );
-    } catch (err) {
-      log.error({ err, sessionId }, "Failed to send skill commands");
-    }
-
-    // Update Telegram autocomplete with skill commands
-    await this.updateCommandAutocomplete(session.agentName, commands);
+    await this.skillManager.send(sessionId, threadId, commands);
   }
 
   async cleanupSkillCommands(sessionId: string): Promise<void> {
-    const msgId = this.skillMessages.get(sessionId);
-    if (!msgId) return;
-
-    try {
-      await this.bot.api.editMessageText(
-        this.telegramConfig.chatId,
-        msgId,
-        "🛠 <i>Session ended</i>",
-        { parse_mode: "HTML" },
-      );
-      await this.bot.api.unpinChatMessage(this.telegramConfig.chatId, msgId);
-    } catch {
-      /* message may already be deleted */
-    }
-
-    this.skillMessages.delete(sessionId);
-    clearSkillCallbacks(sessionId);
-  }
-
-  private async updateCommandAutocomplete(
-    agentName: string,
-    skillCommands: AgentCommand[],
-  ): Promise<void> {
-    // Telegram requires: 1-32 chars, lowercase a-z, 0-9, underscores only
-    const prefix = `[${agentName}] `;
-    const validSkills = skillCommands
-      .map((c) => ({
-        command: c.name
-          .toLowerCase()
-          .replace(/[^a-z0-9_]/g, "_")
-          .slice(0, 32),
-        description: (
-          prefix + (c.description || c.name).replace(/\n/g, " ")
-        ).slice(0, 256),
-      }))
-      .filter((c) => c.command.length > 0);
-    const all = [...STATIC_COMMANDS, ...validSkills];
-    try {
-      await this.bot.api.setMyCommands(all, {
-        scope: { type: "chat", chat_id: this.telegramConfig.chatId },
-      });
-      log.info(
-        { count: all.length, skills: validSkills.length },
-        "Updated command autocomplete",
-      );
-    } catch (err) {
-      log.error(
-        { err, commands: all },
-        "Failed to update command autocomplete",
-      );
-    }
-  }
-
-  private async finalizeDraft(sessionId: string): Promise<void> {
-    const draft = this.sessionDrafts.get(sessionId);
-    if (draft) {
-      await draft.finalize();
-      this.sessionDrafts.delete(sessionId);
-    }
+    await this.skillManager.cleanup(sessionId);
   }
 }

@@ -56,13 +56,19 @@ export type AgentEvent =
       status: string;
       content?: unknown;
       locations?: unknown;
+      rawInput?: unknown;
+      meta?: unknown;
     }
   | {
       type: "tool_update";
       id: string;
+      name?: string;
+      kind?: string;
       status: string;
       content?: unknown;
       locations?: unknown;
+      rawInput?: unknown;
+      meta?: unknown;
     }
   | { type: "plan"; entries: PlanEntry[] }
   | {
@@ -89,6 +95,83 @@ export interface AgentDefinition {
   env?: Record<string, string>;
 }
 
+// --- Agent Registry Types ---
+
+export type AgentDistribution = "npx" | "uvx" | "binary" | "custom";
+
+export interface InstalledAgent {
+  registryId: string | null;
+  name: string;
+  version: string;
+  distribution: AgentDistribution;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  workingDirectory?: string;
+  installedAt: string;
+  binaryPath: string | null;
+}
+
+export interface RegistryBinaryTarget {
+  archive: string;
+  cmd: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface RegistryDistribution {
+  npx?: { package: string; args?: string[]; env?: Record<string, string> };
+  uvx?: { package: string; args?: string[]; env?: Record<string, string> };
+  binary?: Record<string, RegistryBinaryTarget>;
+}
+
+export interface RegistryAgent {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  repository?: string;
+  website?: string;
+  authors?: string[];
+  license?: string;
+  icon?: string;
+  distribution: RegistryDistribution;
+}
+
+export interface AgentListItem {
+  key: string;
+  registryId: string;
+  name: string;
+  version: string;
+  description?: string;
+  distribution: AgentDistribution;
+  installed: boolean;
+  available: boolean;
+  missingDeps?: string[];
+}
+
+export interface AvailabilityResult {
+  available: boolean;
+  reason?: string;
+  missing?: Array<{ label: string; installHint: string }>;
+}
+
+export interface InstallProgress {
+  onStart(agentId: string, agentName: string): void | Promise<void>;
+  onStep(step: string): void | Promise<void>;
+  onDownloadProgress(percent: number): void | Promise<void>;
+  onSuccess(agentName: string): void | Promise<void>;
+  onError(error: string, hint?: string): void | Promise<void>;
+}
+
+export interface InstallResult {
+  ok: boolean;
+  agentKey: string;
+  error?: string;
+  hint?: string;
+  setupSteps?: string[];
+}
+
 export type SessionStatus =
   | "initializing"
   | "active"
@@ -99,6 +182,7 @@ export type SessionStatus =
 export interface SessionRecord<P = Record<string, unknown>> {
   sessionId: string;
   agentSessionId: string;
+  originalAgentSessionId?: string;
   agentName: string;
   workingDir: string;
   channelId: string;
@@ -106,9 +190,11 @@ export interface SessionRecord<P = Record<string, unknown>> {
   createdAt: string;
   lastActiveAt: string;
   name?: string;
+  dangerousMode?: boolean;
   platform: P;
 }
 
 export interface TelegramPlatformData {
   topicId: number;
+  skillMsgId?: number;
 }

@@ -2,6 +2,8 @@ import { z } from "zod";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { EventEmitter } from "node:events";
+import { applyMigrations } from "./config-migrations.js";
 import { createChildLogger } from "./log.js";
 const log = createChildLogger({ module: "config" });
 
@@ -57,7 +59,7 @@ export type TunnelConfig = z.infer<typeof TunnelSchema>;
 
 export const ConfigSchema = z.object({
   channels: z.record(z.string(), BaseChannelSchema),
-  agents: z.record(z.string(), AgentSchema),
+  agents: z.record(z.string(), AgentSchema).optional().default({}),
   defaultAgent: z.string(),
   workspace: z
     .object({
@@ -67,7 +69,7 @@ export const ConfigSchema = z.object({
   security: z
     .object({
       allowedUserIds: z.array(z.string()).default([]),
-      maxConcurrentSessions: z.number().default(5),
+      maxConcurrentSessions: z.number().default(20),
       sessionTimeoutMinutes: z.number().default(60),
     })
     .default({}),
@@ -84,6 +86,10 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   tunnel: TunnelSchema,
+  integrations: z.record(z.string(), z.object({
+    installed: z.boolean(),
+    installedAt: z.string().optional(),
+  })).default({}),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -113,7 +119,7 @@ const DEFAULT_CONFIG = {
   workspace: { baseDir: "~/openacp-workspace" },
   security: {
     allowedUserIds: [],
-    maxConcurrentSessions: 5,
+    maxConcurrentSessions: 20,
     sessionTimeoutMinutes: 60,
   },
   sessionStore: { ttlDays: 30 },
@@ -127,11 +133,12 @@ const DEFAULT_CONFIG = {
   },
 };
 
-export class ConfigManager {
+export class ConfigManager extends EventEmitter {
   private config!: Config;
   private configPath: string;
 
   constructor() {
+    super();
     this.configPath =
       process.env.OPENACP_CONFIG_PATH || expandHome("~/.openacp/config.json");
   }
@@ -157,20 +164,8 @@ export class ConfigManager {
     // 3. Read and parse
     const raw = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
 
-    // 3.5. Auto-migrate: add missing sections with defaults
-    let configUpdated = false;
-    if (!raw.tunnel) {
-      raw.tunnel = {
-        enabled: true,
-        port: 3100,
-        provider: "cloudflare",
-        options: {},
-        storeTtlMinutes: 60,
-        auth: { enabled: false },
-      };
-      configUpdated = true;
-      log.info("Added tunnel section to config (enabled by default with cloudflare)");
-    }
+    // 3.5. Auto-migrate config
+    const { changed: configUpdated } = applyMigrations(raw);
     if (configUpdated) {
       fs.writeFileSync(this.configPath, JSON.stringify(raw, null, 2));
     }
@@ -197,7 +192,8 @@ export class ConfigManager {
     return this.config;
   }
 
-  async save(updates: Record<string, unknown>): Promise<void> {
+  async save(updates: Record<string, unknown>, changePath?: string): Promise<void> {
+    const oldConfig = this.config ? structuredClone(this.config) : undefined;
     // Read current file, merge updates, write back
     const raw = JSON.parse(fs.readFileSync(this.configPath, "utf-8"));
     this.deepMerge(raw, updates);
@@ -206,6 +202,13 @@ export class ConfigManager {
     const result = ConfigSchema.safeParse(raw);
     if (result.success) {
       this.config = result.data;
+    }
+    // Emit change event if path provided
+    if (changePath) {
+      const { getConfigValue } = await import('./config-registry.js')
+      const value = getConfigValue(this.config, changePath)
+      const oldValue = oldConfig ? getConfigValue(oldConfig, changePath) : undefined
+      this.emit('config:changed', { path: changePath, value, oldValue })
     }
   }
 

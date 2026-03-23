@@ -1,74 +1,113 @@
 import type { Bot } from 'grammy'
 import { markdownToTelegramHtml, splitMessage } from './formatting.js'
+import type { TelegramSendQueue } from './send-queue.js'
+
+const FLUSH_INTERVAL = 5000
 
 export class MessageDraft {
-  private messageId?: number
   private buffer: string = ''
-  private lastFlush: number = 0
+  private messageId?: number
+  private firstFlushPending = false
   private flushTimer?: ReturnType<typeof setTimeout>
-  private flushPromise: Promise<void> = Promise.resolve()  // serialize flushes
-  private minInterval = 1000  // 1 second throttle
+  private flushPromise: Promise<void> = Promise.resolve()
+  private lastSentBuffer: string = ''
+  private displayTruncated = false
 
   constructor(
     private bot: Bot,
     private chatId: number,
     private threadId: number,
+    private sendQueue: TelegramSendQueue,
+    private sessionId: string,
   ) {}
 
   append(text: string): void {
+    if (!text) return
     this.buffer += text
     this.scheduleFlush()
   }
 
   private scheduleFlush(): void {
-    const now = Date.now()
-    const elapsed = now - this.lastFlush
-
-    if (elapsed >= this.minInterval) {
-      // Chain flush to prevent concurrent sends
-      this.flushPromise = this.flushPromise.then(() => this.flush()).catch(() => {})
-    } else if (!this.flushTimer) {
-      this.flushTimer = setTimeout(() => {
-        this.flushTimer = undefined
-        this.flushPromise = this.flushPromise.then(() => this.flush()).catch(() => {})
-      }, this.minInterval - elapsed)
-    }
+    if (this.flushTimer) return
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined
+      this.flushPromise = this.flushPromise
+        .then(() => this.flush())
+        .catch(() => {})
+    }, FLUSH_INTERVAL)
   }
 
   private async flush(): Promise<void> {
     if (!this.buffer) return
-    this.lastFlush = Date.now()
+    if (this.firstFlushPending) return
 
-    const html = markdownToTelegramHtml(this.buffer)
-    // Truncate for streaming (will send full on finalize)
-    const truncated = html.length > 4096 ? html.slice(0, 4090) + '\n...' : html
-    if (!truncated) return
+    // CRITICAL: Snapshot the buffer BEFORE any await.
+    // append() can be called synchronously while we're awaiting sendQueue,
+    // so this.buffer may change. We must track what was ACTUALLY sent.
+    const snapshot = this.buffer
 
-    try {
-      if (!this.messageId) {
-        const msg = await this.bot.api.sendMessage(this.chatId, truncated, {
-          message_thread_id: this.threadId,
-          parse_mode: 'HTML',
-          disable_notification: true,
-        })
-        this.messageId = msg.message_id
-      } else {
-        await this.bot.api.editMessageText(this.chatId, this.messageId, truncated, {
-          parse_mode: 'HTML',
-        })
+    let html = markdownToTelegramHtml(snapshot)
+    if (!html) return
+    let truncated = false
+    if (html.length > 4096) {
+      // Estimate markdown cut point proportionally, then find a line boundary
+      const ratio = 4000 / html.length
+      const targetLen = Math.floor(snapshot.length * ratio)
+      let cutAt = snapshot.lastIndexOf('\n', targetLen)
+      if (cutAt < targetLen * 0.5) cutAt = targetLen
+      html = markdownToTelegramHtml(snapshot.slice(0, cutAt) + '\n…')
+      truncated = true
+      if (html.length > 4096) {
+        html = html.slice(0, 4090) + '\n…'
       }
-    } catch {
-      // Edit failed — try plain text without HTML parse mode
+    }
+
+    if (!this.messageId) {
+      this.firstFlushPending = true
       try {
-        if (!this.messageId) {
-          const msg = await this.bot.api.sendMessage(this.chatId, this.buffer.slice(0, 4096), {
+        const result = await this.sendQueue.enqueue(
+          () => this.bot.api.sendMessage(this.chatId, html, {
             message_thread_id: this.threadId,
+            parse_mode: 'HTML',
             disable_notification: true,
-          })
-          this.messageId = msg.message_id
+          }),
+          { type: 'other' },
+        )
+        if (result) {
+          this.messageId = result.message_id
+          if (!truncated) {
+            this.lastSentBuffer = snapshot
+            this.displayTruncated = false
+          } else {
+            this.displayTruncated = true
+          }
         }
       } catch {
-        // Give up on this flush
+        // sendMessage failed — next flush will retry
+      } finally {
+        this.firstFlushPending = false
+      }
+    } else {
+      try {
+        const result = await this.sendQueue.enqueue(
+          () => this.bot.api.editMessageText(this.chatId, this.messageId!, html, {
+            parse_mode: 'HTML',
+          }),
+          { type: 'text', key: this.sessionId },
+        )
+        // Only mark as sent if the edit was actually executed (not dropped by dedup/rate-limit)
+        if (result !== undefined) {
+          if (!truncated) {
+            this.lastSentBuffer = snapshot
+            this.displayTruncated = false
+          } else {
+            this.displayTruncated = true
+          }
+        }
+      } catch {
+        // Don't reset messageId — transient errors (rate limit, network) would cause
+        // the next flush to sendMessage the full buffer as a NEW message, creating duplicates.
+        // If the message was truly deleted, finalize() handles the fallback.
       }
     }
   }
@@ -79,42 +118,95 @@ export class MessageDraft {
       this.flushTimer = undefined
     }
 
-    // Wait for any in-flight flush to complete
     await this.flushPromise
 
     if (!this.buffer) return this.messageId
 
-    // Final send with full content + splitting
-    const html = markdownToTelegramHtml(this.buffer)
-    const chunks = splitMessage(html)
+    // Skip if buffer was already fully sent by flush() and nothing new was appended.
+    // Do NOT skip if flush() truncated the display — finalize must send the full content.
+    if (this.messageId && this.buffer === this.lastSentBuffer && !this.displayTruncated) {
+      return this.messageId
+    }
 
-    try {
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]
-        if (i === 0 && this.messageId) {
-          // Edit existing message with first chunk
-          await this.bot.api.editMessageText(this.chatId, this.messageId, chunk, {
-            parse_mode: 'HTML',
-          })
-        } else {
-          // Send new message
-          const msg = await this.bot.api.sendMessage(this.chatId, chunk, {
-            message_thread_id: this.threadId,
-            parse_mode: 'HTML',
-            disable_notification: true,
-          })
-          this.messageId = msg.message_id
-        }
-      }
-    } catch {
-      // Best effort — try plain text
+    // Try sending full buffer as a single message first (most common case).
+    // Only split if HTML exceeds Telegram's 4096 char limit.
+    const fullHtml = markdownToTelegramHtml(this.buffer)
+    if (fullHtml.length <= 4096) {
       try {
-        await this.bot.api.sendMessage(this.chatId, this.buffer.slice(0, 4096), {
-          message_thread_id: this.threadId,
-          disable_notification: true,
-        })
+        if (this.messageId) {
+          await this.sendQueue.enqueue(
+            () => this.bot.api.editMessageText(this.chatId, this.messageId!, fullHtml, {
+              parse_mode: 'HTML',
+            }),
+            { type: 'other' },
+          )
+        } else {
+          const msg = await this.sendQueue.enqueue(
+            () => this.bot.api.sendMessage(this.chatId, fullHtml, {
+              message_thread_id: this.threadId,
+              parse_mode: 'HTML',
+              disable_notification: true,
+            }),
+            { type: 'other' },
+          )
+          if (msg) this.messageId = msg.message_id
+        }
+        return this.messageId
       } catch {
-        // Give up
+        // HTML send failed — fall through to split/fallback below
+      }
+    }
+
+    // HTML > 4096 or single send failed — split markdown, convert each chunk separately.
+    // This prevents breaking HTML tags (e.g. <pre><code>) at split boundaries.
+    const mdChunks = splitMessage(this.buffer)
+
+    for (let i = 0; i < mdChunks.length; i++) {
+      const html = markdownToTelegramHtml(mdChunks[i])
+      try {
+        if (i === 0 && this.messageId) {
+          await this.sendQueue.enqueue(
+            () => this.bot.api.editMessageText(this.chatId, this.messageId!, html, {
+              parse_mode: 'HTML',
+            }),
+            { type: 'other' },
+          )
+        } else {
+          const msg = await this.sendQueue.enqueue(
+            () => this.bot.api.sendMessage(this.chatId, html, {
+              message_thread_id: this.threadId,
+              parse_mode: 'HTML',
+              disable_notification: true,
+            }),
+            { type: 'other' },
+          )
+          if (msg) {
+            this.messageId = msg.message_id
+          }
+        }
+      } catch {
+        // HTML failed for this chunk — try plain text fallback
+        try {
+          if (i === 0 && this.messageId) {
+            await this.sendQueue.enqueue(
+              () => this.bot.api.editMessageText(this.chatId, this.messageId!, mdChunks[i].slice(0, 4096)),
+              { type: 'other' },
+            )
+          } else {
+            const msg = await this.sendQueue.enqueue(
+              () => this.bot.api.sendMessage(this.chatId, mdChunks[i].slice(0, 4096), {
+                message_thread_id: this.threadId,
+                disable_notification: true,
+              }),
+              { type: 'other' },
+            )
+            if (msg) {
+              this.messageId = msg.message_id
+            }
+          }
+        } catch {
+          // Give up on this chunk
+        }
       }
     }
 

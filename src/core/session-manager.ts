@@ -1,7 +1,6 @@
 import type { AgentManager } from "./agent-manager.js";
 import { Session } from "./session.js";
 import type { SessionStore } from "./session-store.js";
-import type { SessionStatus } from "./types.js";
 
 export class SessionManager {
   private sessions: Map<string, Session> = new Map();
@@ -38,6 +37,7 @@ export class SessionManager {
         createdAt: session.createdAt.toISOString(),
         lastActiveAt: new Date().toISOString(),
         name: session.name,
+        dangerousMode: false,
         platform: {},
       });
     }
@@ -58,52 +58,59 @@ export class SessionManager {
     return undefined;
   }
 
+  getSessionByAgentSessionId(agentSessionId: string): Session | undefined {
+    for (const session of this.sessions.values()) {
+      if (session.agentSessionId === agentSessionId) {
+        return session;
+      }
+    }
+    return undefined;
+  }
+
+  getRecordByAgentSessionId(agentSessionId: string): import("./types.js").SessionRecord | undefined {
+    return this.store?.findByAgentSessionId(agentSessionId);
+  }
+
+  getRecordByThread(channelId: string, threadId: string): import("./types.js").SessionRecord | undefined {
+    return this.store?.findByPlatform(
+      channelId,
+      (p) => String(p.topicId) === threadId,
+    );
+  }
+
   registerSession(session: Session): void {
     this.sessions.set(session.id, session);
   }
 
-  async updateSessionPlatform(
+  async patchRecord(
     sessionId: string,
-    platform: Record<string, unknown>,
+    patch: Partial<import("./types.js").SessionRecord>,
   ): Promise<void> {
     if (!this.store) return;
     const record = this.store.get(sessionId);
     if (record) {
-      await this.store.save({ ...record, platform });
+      await this.store.save({ ...record, ...patch });
+    } else if (patch.sessionId) {
+      // Initial save — treat patch as full record
+      await this.store.save(patch as import("./types.js").SessionRecord);
     }
   }
 
-  async updateSessionActivity(sessionId: string): Promise<void> {
-    if (!this.store) return;
-    const record = this.store.get(sessionId);
-    if (record) {
-      await this.store.save({
-        ...record,
-        lastActiveAt: new Date().toISOString(),
-      });
-    }
-  }
 
-  async updateSessionStatus(
-    sessionId: string,
-    status: SessionStatus,
-  ): Promise<void> {
-    if (!this.store) return;
-    const record = this.store.get(sessionId);
-    if (record) {
-      await this.store.save({ ...record, status });
-    }
+  getSessionRecord(sessionId: string): import("./types.js").SessionRecord | undefined {
+    return this.store?.get(sessionId);
   }
 
   async cancelSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (session) {
-      await session.cancel();
-      if (this.store) {
-        const record = this.store.get(sessionId);
-        if (record) {
-          await this.store.save({ ...record, status: "cancelled" });
-        }
+      await session.abortPrompt();
+      session.markCancelled();
+    }
+    if (this.store) {
+      const record = this.store.get(sessionId);
+      if (record && record.status !== "cancelled") {
+        await this.store.save({ ...record, status: "cancelled" });
       }
     }
   }
@@ -112,6 +119,20 @@ export class SessionManager {
     const all = Array.from(this.sessions.values());
     if (channelId) return all.filter((s) => s.channelId === channelId);
     return all;
+  }
+
+  listRecords(filter?: { statuses?: string[] }): import("./types.js").SessionRecord[] {
+    if (!this.store) return [];
+    let records = this.store.list();
+    if (filter?.statuses?.length) {
+      records = records.filter(r => filter.statuses!.includes(r.status));
+    }
+    return records;
+  }
+
+  async removeRecord(sessionId: string): Promise<void> {
+    if (!this.store) return;
+    await this.store.remove(sessionId);
   }
 
   async destroyAll(): Promise<void> {
