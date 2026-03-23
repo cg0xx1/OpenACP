@@ -322,9 +322,11 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
             if (update.content.type === "text") {
               event = { type: "text", content: update.content.text };
             } else if (update.content.type === "image") {
+              // ACP SDK types don't expose data/mimeType fields for image content
               const c = update.content as unknown as { data: string; mimeType: string };
               event = { type: "image_content", data: c.data, mimeType: c.mimeType };
             } else if (update.content.type === "audio") {
+              // ACP SDK types don't expose data/mimeType fields for audio content
               const c = update.content as unknown as { data: string; mimeType: string };
               event = { type: "audio_content", data: c.data, mimeType: c.mimeType };
             }
