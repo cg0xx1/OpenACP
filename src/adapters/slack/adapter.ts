@@ -1,8 +1,9 @@
-// src/adapters/slack/index.ts
+// src/adapters/slack/adapter.ts
 import { App } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
 import {
   ChannelAdapter,
+  type ChannelConfig,
   type OpenACPCore,
   type OutgoingMessage,
   type PermissionRequest,
@@ -35,7 +36,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
   private slackConfig: SlackChannelConfig;
 
   constructor(core: OpenACPCore, config: SlackChannelConfig) {
-    super(core, config as never);
+    super(core, config as unknown as ChannelConfig);
     this.slackConfig = config;
     this.formatter = new SlackFormatter();
   }

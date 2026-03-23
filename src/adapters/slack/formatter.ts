@@ -1,6 +1,7 @@
 // src/adapters/slack/formatter.ts
 import type { types } from "@slack/bolt";
 import type { OutgoingMessage, PermissionRequest } from "../../core/types.js";
+import { splitSafe } from "./utils.js";
 
 type KnownBlock = types.KnownBlock;
 
@@ -46,24 +47,6 @@ function section(text: string): KnownBlock {
 
 function context(text: string): KnownBlock {
   return { type: "context", elements: [{ type: "mrkdwn", text }] };
-}
-
-/**
- * Split text at SECTION_LIMIT boundary, never inside a fenced code block.
- */
-function splitSafe(text: string, limit = SECTION_LIMIT): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= limit) { chunks.push(remaining); break; }
-    // Find last newline before limit
-    let cut = remaining.lastIndexOf("\n", limit);
-    if (cut <= 0) cut = limit;
-    chunks.push(remaining.slice(0, cut));
-    remaining = remaining.slice(cut).trimStart();
-  }
-  return chunks;
 }
 
 export class SlackFormatter implements ISlackFormatter {

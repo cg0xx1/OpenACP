@@ -4,26 +4,12 @@
 
 import type { ISlackSendQueue } from "./send-queue.js";
 import { markdownToMrkdwn } from "./formatter.js";
+import { splitSafe } from "./utils.js";
 import { createChildLogger } from "../../core/log.js";
 
 const log = createChildLogger({ module: "slack-text-buffer" });
 
 const FLUSH_IDLE_MS = 2000; // flush after 2s of no new chunks
-const SECTION_LIMIT = 3000;
-
-function splitSafe(text: string, limit = SECTION_LIMIT): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= limit) { chunks.push(remaining); break; }
-    let cut = remaining.lastIndexOf("\n", limit);
-    if (cut <= 0) cut = limit;
-    chunks.push(remaining.slice(0, cut));
-    remaining = remaining.slice(cut).trimStart();
-  }
-  return chunks;
-}
 
 export class SlackTextBuffer {
   private buffer = "";
