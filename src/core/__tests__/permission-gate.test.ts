@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { PermissionGate } from '../permission-gate.js'
 import type { PermissionRequest } from '../types.js'
 
@@ -73,5 +73,37 @@ describe('PermissionGate', () => {
     gate.resolve('deny')
     const result = await p2
     expect(result).toBe('deny')
+  })
+
+  it('rejects with timeout when no response received', async () => {
+    vi.useFakeTimers()
+    const gate = new PermissionGate(5000) // 5s timeout
+    const promise = gate.setPending(mockRequest)
+
+    expect(gate.isPending).toBe(true)
+
+    // Advance past timeout
+    vi.advanceTimersByTime(5000)
+
+    await expect(promise).rejects.toThrow('Permission request timed out')
+    expect(gate.isPending).toBe(false)
+
+    vi.useRealTimers()
+  })
+
+  it('clears timeout when resolved before expiry', async () => {
+    vi.useFakeTimers()
+    const gate = new PermissionGate(5000)
+    const promise = gate.setPending(mockRequest)
+
+    gate.resolve('allow')
+    const result = await promise
+    expect(result).toBe('allow')
+
+    // Advancing past timeout should not cause issues
+    vi.advanceTimersByTime(10000)
+    expect(gate.isPending).toBe(false)
+
+    vi.useRealTimers()
   })
 })

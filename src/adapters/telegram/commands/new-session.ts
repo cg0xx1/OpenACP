@@ -66,41 +66,8 @@ export async function handleNew(
     }
   }
 
-  // Outside assistant topic → interactive flow
-  const userId = ctx.from?.id;
-  if (!userId) return;
-
-  const agents = core.agentManager.getAvailableAgents();
-  const config = core.configManager.get();
-
-  // If agent provided or only 1 agent → skip to workspace step
-  if (agentName || agents.length === 1) {
-    const selectedAgent = agentName || config.defaultAgent;
-    await startWorkspaceStep(ctx, core, chatId, userId, selectedAgent);
-    return;
-  }
-
-  // Multiple agents → show agent selection
-  const keyboard = new InlineKeyboard();
-  for (const agent of agents) {
-    const label = agent.name === config.defaultAgent
-      ? `${agent.name} (default)`
-      : agent.name;
-    keyboard.text(label, `m:new:agent:${agent.name}`).row();
-  }
-
-  const msg = await ctx.reply(
-    `🤖 <b>Choose an agent:</b>`,
-    { parse_mode: "HTML", reply_markup: keyboard },
-  );
-
-  cleanupPending(userId);
-  pendingNewSessions.set(userId, {
-    step: "agent",
-    messageId: msg.message_id,
-    threadId: currentThreadId,
-    timer: setTimeout(() => pendingNewSessions.delete(userId), PENDING_TIMEOUT_MS),
-  });
+  // Outside assistant topic → interactive agent picker flow
+  await showAgentPicker(ctx, core, chatId, agentName);
 }
 
 async function startWorkspaceStep(
@@ -192,7 +159,7 @@ async function startConfirmStep(
   });
 }
 
-async function createSessionDirect(
+export async function createSessionDirect(
   ctx: Context,
   core: OpenACPCore,
   chatId: number,
@@ -442,14 +409,28 @@ export async function startInteractiveNewSession(
   chatId: number,
   agentName?: string,
 ): Promise<void> {
+  await showAgentPicker(ctx, core, chatId, agentName);
+}
+
+/**
+ * Shared agent picker logic used by both handleNew and startInteractiveNewSession.
+ * Shows agent selection keyboard if multiple agents installed, otherwise skips to workspace step.
+ */
+async function showAgentPicker(
+  ctx: Context,
+  core: OpenACPCore,
+  chatId: number,
+  agentName?: string,
+): Promise<void> {
   const userId = ctx.from?.id;
   if (!userId) return;
 
-  const agents = core.agentManager.getAvailableAgents();
+  const installedEntries = core.agentCatalog.getInstalledEntries();
+  const agentKeys = Object.keys(installedEntries);
   const config = core.configManager.get();
 
   // If agent provided or only 1 agent → skip to workspace step
-  if (agentName || agents.length === 1) {
+  if (agentName || agentKeys.length === 1) {
     const selectedAgent = agentName || config.defaultAgent;
     await startWorkspaceStep(ctx, core, chatId, userId, selectedAgent);
     return;
@@ -457,11 +438,12 @@ export async function startInteractiveNewSession(
 
   // Multiple agents → show agent selection
   const keyboard = new InlineKeyboard();
-  for (const agent of agents) {
-    const label = agent.name === config.defaultAgent
+  for (const key of agentKeys) {
+    const agent = installedEntries[key]!;
+    const label = key === config.defaultAgent
       ? `${agent.name} (default)`
       : agent.name;
-    keyboard.text(label, `m:new:agent:${agent.name}`).row();
+    keyboard.text(label, `m:new:agent:${key}`).row();
   }
 
   const msg = await ctx.reply(
@@ -470,10 +452,12 @@ export async function startInteractiveNewSession(
   );
 
   cleanupPending(userId);
+  const threadId = ctx.message?.message_thread_id
+    ?? (ctx.callbackQuery as any)?.message?.message_thread_id;
   pendingNewSessions.set(userId, {
     step: "agent",
     messageId: msg.message_id,
-    threadId: (ctx.callbackQuery as any)?.message?.message_thread_id,
+    threadId,
     timer: setTimeout(() => pendingNewSessions.delete(userId), PENDING_TIMEOUT_MS),
   });
 }

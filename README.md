@@ -9,8 +9,10 @@ One message, any channel, any agent.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js >= 20](https://img.shields.io/badge/Node.js-%3E%3D%2020-green.svg)](https://nodejs.org/)
 [![ACP Protocol](https://img.shields.io/badge/Protocol-ACP-purple.svg)](https://agentclientprotocol.org/)
+[![npm](https://img.shields.io/npm/v/@openacp/cli.svg)](https://www.npmjs.com/package/@openacp/cli)
+[![Twitter Follow](https://img.shields.io/twitter/follow/Open_ACP?style=social)](https://x.com/Open_ACP)
 
-[Getting Started](docs/guide/getting-started.md) | [Usage](docs/guide/usage.md) | [Configuration](docs/guide/configuration.md) | [Tunnel](docs/guide/tunnel.md) | [Plugins](docs/guide/plugins.md) | [Development](docs/guide/development.md)
+[Getting Started](docs/guide/getting-started.md) | [Agents](docs/guide/agents.md) | [Usage](docs/guide/usage.md) | [Configuration](docs/guide/configuration.md) | [Tunnel](docs/guide/tunnel.md) | [Plugins](docs/guide/plugins.md) | [Development](docs/guide/development.md)
 
 </div>
 
@@ -47,9 +49,32 @@ AI Agent (Claude Code, Codex, ...)            File/Diff Viewer
 </table>
 </div>
 
+## Supported Agents
+
+OpenACP follows the [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) standard — an open protocol for connecting AI coding agents to client applications. Agent definitions are loaded from the [official ACP Registry](https://agentclientprotocol.com/get-started/registry) via CDN ([`registry.json`](https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json)), so new agents are available as soon as they're registered.
+
+| Agent | Distribution | Description |
+|-------|-------------|-------------|
+| [Claude Agent](https://github.com/anthropics/claude-code) | npx | Anthropic's Claude coding agent |
+| [Gemini CLI](https://github.com/google-gemini/gemini-cli) | npx | Google's official CLI for Gemini |
+| [Codex CLI](https://github.com/openai/codex) | npx | OpenAI's coding assistant |
+| [GitHub Copilot](https://github.com/github/copilot-cli) | npx | GitHub's AI pair programmer |
+| [Cursor](https://www.cursor.com/) | binary | Cursor's coding agent |
+| [Cline](https://github.com/cline/cline) | npx | Autonomous coding agent with file editing, commands, and browser |
+| [goose](https://github.com/block/goose) | binary | Open source AI agent for engineering tasks |
+| [Amp](https://github.com/tao12345666333/amp-acp) | binary | The frontier coding agent |
+| [Auggie CLI](https://www.augmentcode.com/) | npx | Augment Code's agent with industry-leading context engine |
+| [Junie](https://www.jetbrains.com/) | binary | AI coding agent by JetBrains |
+| [Kilo](https://github.com/kilocode/kilo) | npx | The open source coding agent |
+| [Qwen Code](https://github.com/QwenLM/qwen-code) | npx | Alibaba's Qwen coding assistant |
+| [crow-cli](https://github.com/crowdecode/crow-cli) | uvx | Minimal ACP native coding agent |
+| ...and more | | [See full registry →](https://agentclientprotocol.com/get-started/registry) |
+
+> **28+ agents supported** — any agent registered in the ACP Registry works out of the box. Install with `openacp agents install <name>` or browse from Telegram with `/agents`.
+
 ## Features
 
-- **Multi-agent** — Claude Code, Codex, or any ACP-compatible agent
+- **Multi-agent** — Claude Code, Codex, Gemini, Cursor, and [28+ ACP-compatible agents](#supported-agents)
 - **Telegram** — Forum topics, real-time streaming, permission buttons, skill commands
 - **Tunnel & file viewer** — Public file/diff viewer via Cloudflare, ngrok, bore, or Tailscale
 - **Session persistence** — Resume sessions across restarts
@@ -102,6 +127,14 @@ openacp logs
 ### Other CLI commands
 
 ```bash
+# Agent management
+openacp agents                    # List all agents (installed + available)
+openacp agents install <name>     # Install an agent from the ACP Registry
+openacp agents uninstall <name>   # Remove an installed agent
+openacp agents info <name>        # Show agent details & dependencies
+openacp agents refresh            # Force-refresh the registry
+
+# System
 openacp config            # Show current config
 openacp reset             # Re-run the setup wizard
 openacp update            # Update to latest version
@@ -120,7 +153,8 @@ Once OpenACP is running, control it from Telegram:
 | `/newchat` | New session, same agent & workspace |
 | `/cancel` | Cancel current session |
 | `/status` | Show session or system status |
-| `/agents` | List available agents |
+| `/agents` | Browse & install agents from ACP Registry |
+| `/install <name>` | Install an agent directly |
 
 Each session gets its own forum topic. The agent streams responses in real time, shows tool calls, and asks for permission when needed.
 
@@ -164,6 +198,10 @@ Sessions are not locked after transfer — you can continue from either side.
 ## Contributing
 
 See [development guide](docs/guide/development.md).
+
+## Follow Us
+
+[![Twitter Follow](https://img.shields.io/twitter/follow/Open_ACP?style=social)](https://x.com/Open_ACP)
 
 ## License
 

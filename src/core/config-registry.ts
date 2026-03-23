@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
 import type { Config } from './config.js'
 
 export interface ConfigFieldDef {
@@ -16,7 +19,16 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     displayName: 'Default Agent',
     group: 'agent',
     type: 'select',
-    options: (config) => Object.keys(config.agents),
+    options: (config) => {
+      try {
+        const agentsPath = path.join(os.homedir(), ".openacp", "agents.json");
+        if (fs.existsSync(agentsPath)) {
+          const data = JSON.parse(fs.readFileSync(agentsPath, "utf-8"));
+          return Object.keys(data.installed ?? {});
+        }
+      } catch { /* fallback */ }
+      return Object.keys(config.agents ?? {});
+    },
     scope: 'safe',
     hotReload: true,
   },

@@ -3,10 +3,11 @@ import type { OpenACPCore } from "../../../core/index.js";
 import type { CommandsAssistantContext } from "../types.js";
 
 // Domain modules
-import { handleNew, handleNewChat, setupNewSessionCallbacks } from "./new-session.js";
+import { handleNew, handleNewChat, setupNewSessionCallbacks, createSessionDirect } from "./new-session.js";
 import { handleCancel, handleStatus, handleTopics, setupSessionCallbacks } from "./session.js";
 import { handleEnableDangerous, handleDisableDangerous, handleUpdate, handleRestart } from "./admin.js";
-import { handleMenu, handleHelp, handleAgents, handleClear, buildMenuKeyboard } from "./menu.js";
+import { handleMenu, handleHelp, handleClear, buildMenuKeyboard } from "./menu.js";
+import { handleAgents, handleInstall, handleAgentCallback } from "./agents.js";
 import { handleIntegrate } from "./integrate.js";
 import { handleSettings, setupSettingsCallbacks } from "./settings.js";
 import { handleDoctor, setupDoctorCallbacks } from "./doctor.js";
@@ -23,6 +24,7 @@ export function setupCommands(
   bot.command("status", (ctx) => handleStatus(ctx, core));
   bot.command("sessions", (ctx) => handleTopics(ctx, core));
   bot.command("agents", (ctx) => handleAgents(ctx, core));
+  bot.command("install", (ctx) => handleInstall(ctx, core));
   bot.command("help", (ctx) => handleHelp(ctx));
   bot.command("menu", (ctx) => handleMenu(ctx));
   bot.command("enable_dangerous", (ctx) => handleEnableDangerous(ctx, core));
@@ -50,6 +52,16 @@ export function setupAllCallbacks(
 
   // Doctor handlers — must be before broad m: handler
   setupDoctorCallbacks(bot);
+
+  // Agent callbacks (install + pagination) — must be before broad m: handler
+  bot.callbackQuery(/^ag:/, (ctx) => handleAgentCallback(ctx, core));
+
+  // New session with specific agent callback — must be before broad m: handler
+  bot.callbackQuery(/^na:/, async (ctx) => {
+    const agentKey = ctx.callbackQuery.data!.replace("na:", "");
+    await ctx.answerCallbackQuery();
+    await createSessionDirect(ctx, core, chatId, agentKey, core.configManager.get().workspace.baseDir);
+  });
 
   // Broad m: handler for remaining menu dispatch — LAST
   bot.callbackQuery(/^m:/, async (ctx) => {
@@ -110,6 +122,7 @@ export const STATIC_COMMANDS = [
   { command: "status", description: "Show status" },
   { command: "sessions", description: "List all sessions" },
   { command: "agents", description: "List available agents" },
+  { command: "install", description: "Install a new agent" },
   { command: "help", description: "Help" },
   { command: "menu", description: "Show menu" },
   { command: "enable_dangerous", description: "Auto-approve all permission requests (session only)" },

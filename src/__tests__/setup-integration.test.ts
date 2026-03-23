@@ -9,6 +9,7 @@ vi.mock('@inquirer/prompts', () => ({
   input: vi.fn(),
   select: vi.fn(),
   confirm: vi.fn(),
+  checkbox: vi.fn(),
 }))
 
 // Mock child_process for agent detection
@@ -26,6 +27,35 @@ vi.mock('../core/autostart.js', () => ({
   isAutoStartSupported: vi.fn(() => false),
   installAutoStart: vi.fn(() => ({ success: true })),
 }))
+
+// Mock AgentCatalog to avoid real registry/fs operations during setup
+vi.mock('../core/agent-catalog.js', () => {
+  class MockAgentCatalog {
+    load = vi.fn()
+    refreshRegistryIfStale = vi.fn().mockResolvedValue(undefined)
+    getInstalledAgent = vi.fn((_key: string) => undefined)
+    findRegistryAgent = vi.fn((_key: string) => null)
+    install = vi.fn().mockResolvedValue({ ok: true })
+    getAvailable = vi.fn(() => [])
+    getInstalledEntries = vi.fn(() => ({
+      claude: { name: 'Claude Agent', command: 'npx', version: 'bundled', distribution: 'npx' },
+    }))
+  }
+  return {
+    AgentCatalog: MockAgentCatalog,
+  }
+})
+
+// Mock AgentStore for the fallback path in setupAgents
+vi.mock('../core/agent-store.js', () => {
+  class MockAgentStore {
+    load = vi.fn()
+    addAgent = vi.fn()
+  }
+  return {
+    AgentStore: MockAgentStore,
+  }
+})
 
 import { input, select, confirm } from '@inquirer/prompts'
 import { runSetup } from '../core/setup.js'
@@ -134,7 +164,8 @@ describe('runSetup integration', () => {
     expect(written.channels.telegram.enabled).toBe(true)
     expect(written.channels.telegram.botToken).toBe('123:FAKE_TOKEN')
     expect(written.channels.telegram.chatId).toBe(-1001234567890)
-    expect(written.agents.claude.command).toBe('claude-agent-acp')
+    // agents are now stored in agents.json, not config.json
+    expect(written.agents).toEqual({})
     expect(written.defaultAgent).toBe('claude')
     expect(written.workspace.baseDir).toBe('~/my-workspace')
     expect(written.security.maxConcurrentSessions).toBe(20)

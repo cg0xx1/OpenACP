@@ -4,61 +4,66 @@ import { getCurrentVersion, getLatestVersion, compareVersions, runUpdate, checkA
 
 export function printHelp(): void {
   console.log(`
-OpenACP - Self-hosted bridge for AI coding agents
+\x1b[1mOpenACP\x1b[0m — Self-hosted bridge for AI coding agents
+Connect Telegram (and more) to 28+ AI coding agents via ACP protocol.
 
-Usage:
+\x1b[1mGetting Started:\x1b[0m
+  openacp                              First run launches setup wizard
+  openacp                              After setup, starts the server
+
+\x1b[1mServer:\x1b[0m
   openacp                              Start (mode from config)
   openacp start                        Start as background daemon
   openacp stop                         Stop background daemon
   openacp status                       Show daemon status
   openacp logs                         Tail daemon log file
-  openacp config                       Edit configuration
-  openacp config set <key> <value>     Set a config value
-  openacp reset                        Delete all data and start fresh
-  openacp update                       Update to latest version
-  openacp doctor                         Run system diagnostics
-  openacp doctor --dry-run               Check only, don't fix
-  openacp install <package>            Install a plugin adapter
-  openacp uninstall <package>          Uninstall a plugin adapter
-  openacp plugins                      List installed plugins
   openacp --foreground                 Force foreground mode
-  openacp --version                    Show version
-  openacp --help                       Show this help
-  adopt <agent> <id>                   Adopt an external agent session into OpenACP
-  integrate <agent>                    Install/uninstall agent integration for session transfer
 
-API (requires running daemon):
-  openacp api status                       Show active sessions
-  openacp api session <id>                 Show session details
-  openacp api new [agent] [workspace]      Create a new session
-  openacp api send <id> <prompt>           Send prompt to session
-  openacp api cancel <id>                  Cancel a session
-  openacp api dangerous <id> [on|off]      Toggle dangerous mode
-  openacp api agents                       List available agents
-  openacp api topics [--status s1,s2]      List topics
-  openacp api delete-topic <id> [--force]  Delete a topic
-  openacp api cleanup [--status s1,s2]     Cleanup finished topics
-  openacp api health                       Show system health
-  openacp api adapters                     List registered adapters
-  openacp api tunnel                       Show tunnel status
-  openacp api config                       Show runtime config (deprecated)
-  openacp api config set <key> <value>     Update config value (deprecated)
-  openacp api restart                      Restart daemon
-  openacp api notify <message>             Send notification to all channels
-  openacp api version                      Show daemon version
+\x1b[1mAgent Management:\x1b[0m
+  openacp agents                       Browse all agents (installed + available)
+  openacp agents install <name>        Install an agent from the ACP Registry
+  openacp agents uninstall <name>      Remove an installed agent
+  openacp agents info <name>           Show details, dependencies & setup guide
+  openacp agents run <name> [-- args]  Run agent CLI directly (login, config...)
+  openacp agents refresh               Force-refresh agent list from registry
 
-Note: "openacp status" shows daemon process health.
-      "openacp api status" shows active agent sessions.
-      "openacp --version" shows CLI version.
-      "openacp api version" shows running daemon version.
+  \x1b[2mExamples:\x1b[0m
+    openacp agents install gemini        Install Gemini CLI
+    openacp agents run gemini -- auth login   Login to Google
+    openacp agents run claude -- login        Login to Anthropic
+    openacp agents info cursor               See setup instructions
 
-Install:
-  npm install -g @openacp/cli
+\x1b[1mConfiguration:\x1b[0m
+  openacp config                       Interactive config editor
+  openacp config set <key> <value>     Set a config value
+  openacp reset                        Re-run setup wizard
+  openacp update                       Update to latest version
+  openacp doctor                       Run system diagnostics
+  openacp doctor --dry-run             Check only, don't fix
 
-Examples:
-  openacp
-  openacp install @openacp/adapter-discord
-  openacp uninstall @openacp/adapter-discord
+\x1b[1mPlugins:\x1b[0m
+  openacp install <package>            Install adapter (e.g. @openacp/adapter-discord)
+  openacp uninstall <package>          Remove adapter
+  openacp plugins                      List installed plugins
+
+\x1b[1mSession Transfer:\x1b[0m
+  openacp integrate <agent>            Install handoff integration
+  openacp integrate <agent> --uninstall
+  openacp adopt <agent> <id>           Adopt an external session
+
+\x1b[1mDaemon API:\x1b[0m \x1b[2m(requires running daemon)\x1b[0m
+  openacp api status                   Active sessions
+  openacp api session <id>             Session details
+  openacp api new [agent] [workspace]  Create session
+  openacp api send <id> <prompt>       Send prompt
+  openacp api cancel <id>              Cancel session
+  openacp api dangerous <id> on|off    Toggle dangerous mode
+  openacp api topics [--status ...]    List topics
+  openacp api cleanup [--status ...]   Cleanup old topics
+  openacp api health                   System health check
+  openacp api restart                  Restart daemon
+
+\x1b[2mMore info: https://github.com/Open-ACP/OpenACP\x1b[0m
 `)
 }
 
@@ -789,6 +794,267 @@ export async function cmdDoctor(args: string[]): Promise<void> {
 
   if (failed > 0) {
     process.exit(1);
+  }
+}
+
+export async function cmdAgents(args: string[]): Promise<void> {
+  const subcommand = args[1];
+
+  switch (subcommand) {
+    case "install":
+      return agentsInstall(args[2], args.includes("--force"));
+    case "uninstall":
+      return agentsUninstall(args[2]);
+    case "refresh":
+      return agentsRefresh();
+    case "info":
+      return agentsInfo(args[2]);
+    case "run":
+      return agentsRun(args[2], args.slice(3));
+    default:
+      return agentsList();
+  }
+}
+
+async function agentsList(): Promise<void> {
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+  await catalog.refreshRegistryIfStale();
+
+  const items = catalog.getAvailable();
+  const installed = items.filter((i) => i.installed);
+  const available = items.filter((i) => !i.installed);
+
+  console.log("");
+  if (installed.length > 0) {
+    console.log("  \x1b[1mInstalled agents:\x1b[0m\n");
+    for (const item of installed) {
+      const deps = item.missingDeps?.length
+        ? `  \x1b[33m(needs: ${item.missingDeps.join(", ")})\x1b[0m`
+        : "";
+      console.log(
+        `  \x1b[32m✓\x1b[0m ${item.key.padEnd(18)} ${item.name.padEnd(22)} v${item.version.padEnd(10)} ${item.distribution}${deps}`,
+      );
+      if (item.description) {
+        console.log(`    \x1b[2m${item.description}\x1b[0m`);
+      }
+    }
+    console.log("");
+  }
+
+  if (available.length > 0) {
+    console.log("  \x1b[1mAvailable to install:\x1b[0m\n");
+    for (const item of available) {
+      const icon = item.available ? "\x1b[2m⬇\x1b[0m" : "\x1b[33m⚠\x1b[0m";
+      const deps = item.missingDeps?.length
+        ? `  \x1b[33m(needs: ${item.missingDeps.join(", ")})\x1b[0m`
+        : "";
+      console.log(
+        `  ${icon} ${item.key.padEnd(18)} ${item.name.padEnd(22)} v${item.version.padEnd(10)} ${item.distribution}${deps}`,
+      );
+      if (item.description) {
+        console.log(`    \x1b[2m${item.description}\x1b[0m`);
+      }
+    }
+    console.log("");
+  }
+
+  console.log(
+    `  \x1b[2mInstall an agent: openacp agents install <name>\x1b[0m`,
+  );
+  console.log("");
+}
+
+async function agentsInstall(nameOrId: string | undefined, force: boolean): Promise<void> {
+  if (!nameOrId) {
+    console.log("\n  Usage: openacp agents install <name>");
+    console.log("  Run 'openacp agents' to see available agents.\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+  await catalog.refreshRegistryIfStale();
+
+  const progress: import("../core/types.js").InstallProgress = {
+    onStart(_id, name) {
+      process.stdout.write(`\n  ⏳ Installing ${name}...\n`);
+    },
+    onStep(step) {
+      process.stdout.write(`  \x1b[32m✓\x1b[0m ${step}\n`);
+    },
+    onDownloadProgress(percent) {
+      const filled = Math.round(percent / 5);
+      const empty = 20 - filled;
+      const bar = "█".repeat(filled) + "░".repeat(empty);
+      process.stdout.write(`\r  ${bar} ${String(percent).padStart(3)}%`);
+      if (percent >= 100) process.stdout.write("\n");
+    },
+    onSuccess(name) {
+      console.log(`\n  \x1b[32m✓ ${name} installed successfully!\x1b[0m\n`);
+    },
+    onError(error) {
+      console.log(`\n  \x1b[31m✗ ${error}\x1b[0m\n`);
+    },
+  };
+
+  const result = await catalog.install(nameOrId, progress, force);
+  if (!result.ok) {
+    process.exit(1);
+  }
+
+  // Show setup steps if any
+  if (result.setupSteps?.length) {
+    console.log("  \x1b[1mNext steps to get started:\x1b[0m\n");
+    for (const step of result.setupSteps) {
+      console.log(`  → ${step}`);
+    }
+    console.log(`\n  \x1b[2mRun 'openacp agents info ${result.agentKey}' for more details.\x1b[0m\n`);
+  }
+}
+
+async function agentsUninstall(name: string | undefined): Promise<void> {
+  if (!name) {
+    console.log("\n  Usage: openacp agents uninstall <name>\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+
+  const result = await catalog.uninstall(name);
+  if (result.ok) {
+    console.log(`\n  \x1b[32m✓ ${name} removed.\x1b[0m\n`);
+  } else {
+    console.log(`\n  \x1b[31m✗ ${result.error}\x1b[0m\n`);
+  }
+}
+
+async function agentsRefresh(): Promise<void> {
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+  console.log("\n  Updating agent list...");
+  await catalog.fetchRegistry();
+  console.log("  \x1b[32m✓ Agent list updated.\x1b[0m\n");
+}
+
+async function agentsInfo(nameOrId: string | undefined): Promise<void> {
+  if (!nameOrId) {
+    console.log("\n  Usage: openacp agents info <name>\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+
+  const { getAgentSetup } = await import("../core/agent-dependencies.js");
+
+  const installed = catalog.getInstalledAgent(nameOrId);
+  if (installed) {
+    console.log(`\n  \x1b[1m${installed.name}\x1b[0m`);
+    console.log(`  Version:      ${installed.version}`);
+    console.log(`  Type:         ${installed.distribution}`);
+    console.log(`  Command:      ${installed.command} ${installed.args.join(" ")}`);
+    console.log(`  Installed:    ${new Date(installed.installedAt).toLocaleDateString()}`);
+    if (installed.binaryPath) console.log(`  Binary path:  ${installed.binaryPath}`);
+
+    const setup = installed.registryId ? getAgentSetup(installed.registryId) : undefined;
+    if (setup) {
+      console.log(`\n  \x1b[1mSetup:\x1b[0m`);
+      for (const step of setup.setupSteps) {
+        console.log(`  → ${step}`);
+      }
+    }
+
+    console.log(`\n  Run agent CLI:  openacp agents run ${nameOrId} -- <args>`);
+    console.log("");
+    return;
+  }
+
+  const regAgent = catalog.findRegistryAgent(nameOrId);
+  if (regAgent) {
+    const availability = catalog.checkAvailability(nameOrId);
+    console.log(`\n  \x1b[1m${regAgent.name}\x1b[0m \x1b[2m(not installed)\x1b[0m`);
+    console.log(`  ${regAgent.description}`);
+    console.log(`  Version:    ${regAgent.version}`);
+    console.log(`  License:    ${regAgent.license ?? "unknown"}`);
+    if (regAgent.website) console.log(`  Website:    ${regAgent.website}`);
+    if (regAgent.repository) console.log(`  Source:     ${regAgent.repository}`);
+    console.log(`  Available:  ${availability.available ? "\x1b[32mYes\x1b[0m" : `\x1b[33mNo\x1b[0m — ${availability.reason}`}`);
+
+    const setup = getAgentSetup(regAgent.id);
+    if (setup) {
+      console.log(`\n  \x1b[1mSetup after install:\x1b[0m`);
+      for (const step of setup.setupSteps) {
+        console.log(`  → ${step}`);
+      }
+    }
+
+    console.log(`\n  Install: openacp agents install ${nameOrId}\n`);
+    return;
+  }
+
+  console.log(`\n  \x1b[31m"${nameOrId}" not found.\x1b[0m Run 'openacp agents' to see available agents.\n`);
+}
+
+async function agentsRun(nameOrId: string | undefined, extraArgs: string[]): Promise<void> {
+  if (!nameOrId) {
+    console.log("\n  Usage: openacp agents run <name> [-- <args>]");
+    console.log("  Run the agent's CLI directly (e.g., for login or config).\n");
+    console.log("  Examples:");
+    console.log("    openacp agents run gemini -- auth login");
+    console.log("    openacp agents run copilot -- auth login");
+    console.log("    openacp agents run claude -- login\n");
+    return;
+  }
+
+  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const catalog = new AgentCatalog();
+  catalog.load();
+
+  const installed = catalog.getInstalledAgent(nameOrId);
+  if (!installed) {
+    console.log(`\n  \x1b[31m"${nameOrId}" is not installed.\x1b[0m`);
+    console.log(`  Install first: openacp agents install ${nameOrId}\n`);
+    return;
+  }
+
+  // Strip leading "--" separator if present
+  const userArgs = extraArgs[0] === "--" ? extraArgs.slice(1) : extraArgs;
+
+  const { spawnSync } = await import("node:child_process");
+  const command = installed.command;
+
+  // Include agent's base args (e.g., package name for npx) but strip ACP-specific flags
+  const acpFlags = new Set(["--acp", "acp", "--acp=true", "--experimental-skills"]);
+  const baseArgs: string[] = [];
+  for (let i = 0; i < installed.args.length; i++) {
+    const arg = installed.args[i]!;
+    // Skip standalone ACP flags
+    if (acpFlags.has(arg)) continue;
+    // Skip "--output-format acp" pair (factory-droid pattern)
+    if (arg === "--output-format" && installed.args[i + 1] === "acp") { i++; continue; }
+    // Skip "exec" subcommand used only in ACP mode (factory-droid)
+    if (arg === "exec" && installed.args[i + 1] === "--output-format") continue;
+    baseArgs.push(arg);
+  }
+  const fullArgs = [...baseArgs, ...userArgs];
+
+  console.log(`\n  Running: ${command} ${fullArgs.join(" ")}\n`);
+
+  const result = spawnSync(command, fullArgs, {
+    stdio: "inherit",
+    env: { ...process.env, ...installed.env },
+    cwd: process.cwd(),
+  });
+
+  if (result.status !== null && result.status !== 0) {
+    process.exit(result.status);
   }
 }
 

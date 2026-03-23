@@ -59,7 +59,7 @@ export type TunnelConfig = z.infer<typeof TunnelSchema>;
 
 export const ConfigSchema = z.object({
   channels: z.record(z.string(), BaseChannelSchema),
-  agents: z.record(z.string(), AgentSchema),
+  agents: z.record(z.string(), AgentSchema).optional().default({}),
   defaultAgent: z.string(),
   workspace: z
     .object({

@@ -1,15 +1,3 @@
-export interface AgentCapability {
-  supportsResume: boolean;
-  resumeCommand?: (sessionId: string) => string;
-}
-
-const agentCapabilities: Record<string, AgentCapability> = {
-  claude: {
-    supportsResume: true,
-    resumeCommand: (sid) => `claude --resume ${sid}`,
-  },
-};
-
-export function getAgentCapabilities(agentName: string): AgentCapability {
-  return agentCapabilities[agentName] ?? { supportsResume: false };
-}
+// Re-export from new consolidated module for backward compatibility
+export { getAgentCapabilities } from "./agent-dependencies.js";
+export type { AgentCapability } from "./agent-dependencies.js";
