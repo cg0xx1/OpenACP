@@ -40,7 +40,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
   private permissionHandler!: PermissionHandler
   private sessionTrackers: Map<string, ActivityTracker> = new Map()
   private guild!: Guild
-  private forumChannel!: ForumChannel
+  private forumChannel!: ForumChannel | TextChannel
   private notificationChannel!: TextChannel
   private assistantSession: Session | null = null
   private assistantInitializing = false
@@ -241,11 +241,8 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
     }
 
     if (!threadId) {
-      // Create a new thread in the forum for the assistant
-      const thread = await this.forumChannel.threads.create({
-        name: 'Assistant',
-        message: { content: '🤖 OpenACP Assistant' },
-      })
+      // Create a new thread for the assistant
+      const thread = await forumsCreateThread(this.forumChannel, 'Assistant')
       threadId = thread.id
       await this.core.configManager.save({
         channels: { discord: { assistantThreadId: thread.id } },
@@ -536,7 +533,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
 
   // ─── Public helpers (for slash commands) ─────────────────────────────────
 
-  getForumChannel(): ForumChannel {
+  getForumChannel(): ForumChannel | TextChannel {
     return this.forumChannel
   }
 

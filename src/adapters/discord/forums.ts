@@ -17,39 +17,42 @@ export async function ensureForums(
     notificationChannelId: string | null
   },
   saveConfig: (updates: Record<string, unknown>) => Promise<void>,
-): Promise<{ forumChannel: ForumChannel; notificationChannel: TextChannel }> {
+): Promise<{ forumChannel: ForumChannel | TextChannel; notificationChannel: TextChannel }> {
   let forumChannelId = config.forumChannelId
   let notificationChannelId = config.notificationChannelId
 
-  // Ensure forum channel exists — fetch existing or create new
-  let forumChannel: ForumChannel | null = null
+  // Ensure forum/sessions channel exists — fetch existing or create new
+  let forumChannel: ForumChannel | TextChannel | null = null
   if (forumChannelId) {
     try {
       const ch = guild.channels.cache.get(forumChannelId)
         ?? await guild.channels.fetch(forumChannelId)
-      if (ch && ch.type === ChannelType.GuildForum) {
-        forumChannel = ch as ForumChannel
-        log.info({ forumChannelId }, '[forums] Reusing existing forum channel')
+      if (ch && (ch.type === ChannelType.GuildForum || ch.type === ChannelType.GuildText)) {
+        forumChannel = ch as ForumChannel | TextChannel
+        log.info({ forumChannelId, type: ch.type }, '[forums] Reusing existing sessions channel')
       }
     } catch {
-      log.warn({ forumChannelId }, '[forums] Saved forum channel not found, recreating...')
+      log.warn({ forumChannelId }, '[forums] Saved sessions channel not found, recreating...')
     }
   }
   if (!forumChannel) {
-    // Forum channels require Community mode — check before attempting creation
-    if (!guild.features.includes('COMMUNITY')) {
-      throw new Error(
-        'Forum channels require Community mode. Enable it in Server Settings → Community. ' +
-        'Alternatively, enable it via: Server Settings → Enable Community → Complete setup.',
-      )
+    // Prefer Forum Channel (requires Community mode), fallback to Text Channel with threads
+    if (guild.features.includes('COMMUNITY')) {
+      const channel = await guild.channels.create({
+        name: 'openacp-sessions',
+        type: ChannelType.GuildForum,
+      })
+      forumChannel = channel as ForumChannel
+      log.info({ forumChannelId: channel.id }, '[forums] Created forum channel')
+    } else {
+      const channel = await guild.channels.create({
+        name: 'openacp-sessions',
+        type: ChannelType.GuildText,
+      })
+      forumChannel = channel as TextChannel
+      log.info({ forumChannelId: channel.id }, '[forums] Created text channel (Community mode not enabled, using threads fallback)')
     }
-    const channel = await guild.channels.create({
-      name: 'openacp-sessions',
-      type: ChannelType.GuildForum,
-    })
-    forumChannel = channel as ForumChannel
-    await saveConfig({ channels: { discord: { forumChannelId: channel.id } } })
-    log.info({ forumChannelId: channel.id }, '[forums] Created forum channel')
+    await saveConfig({ channels: { discord: { forumChannelId: forumChannel.id } } })
   }
 
   // Ensure notification channel exists — fetch existing or create new
@@ -82,17 +85,27 @@ export async function ensureForums(
 // ─── createSessionThread ──────────────────────────────────────────────────────
 
 /**
- * Creates a new thread in the forum channel with an initial "⏳ Setting up..." message.
- * Returns the created ThreadChannel.
+ * Creates a new thread for a session.
+ * - Forum Channel: creates a forum post (thread with initial message)
+ * - Text Channel: creates a public thread
  */
 export async function createSessionThread(
-  forumChannel: ForumChannel,
+  forumChannel: ForumChannel | TextChannel,
   name: string,
 ): Promise<ThreadChannel> {
-  const thread = await forumChannel.threads.create({
-    name,
-    message: { content: '⏳ Setting up...' },
-  })
+  if (forumChannel.type === ChannelType.GuildForum) {
+    // Forum channel: create a post (thread with initial message)
+    const thread = await (forumChannel as ForumChannel).threads.create({
+      name,
+      message: { content: '⏳ Setting up...' },
+    })
+    return thread
+  }
+
+  // Text channel fallback: send a message first, then create a thread on it
+  const textChannel = forumChannel as TextChannel
+  const msg = await textChannel.send({ content: `📂 **${name}** — ⏳ Setting up...` })
+  const thread = await msg.startThread({ name })
   return thread
 }
 
