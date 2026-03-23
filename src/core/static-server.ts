@@ -59,7 +59,15 @@ export class StaticServer {
     if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       const ext = path.extname(filePath);
       const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-      res.writeHead(200, { "Content-Type": contentType });
+      // Vite-hashed assets get long cache, others get no-cache
+      const isHashed = /\.[a-zA-Z0-9]{8,}\.(js|css)$/.test(filePath);
+      const cacheControl = isHashed
+        ? "public, max-age=31536000, immutable"
+        : "no-cache";
+      res.writeHead(200, {
+        "Content-Type": contentType,
+        "Cache-Control": cacheControl,
+      });
       fs.createReadStream(filePath).pipe(res);
       return true;
     }
@@ -67,7 +75,10 @@ export class StaticServer {
     // SPA fallback — serve index.html
     const indexPath = path.join(this.uiDir, "index.html");
     if (fs.existsSync(indexPath)) {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-cache",
+      });
       fs.createReadStream(indexPath).pipe(res);
       return true;
     }

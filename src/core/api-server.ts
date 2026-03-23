@@ -209,7 +209,10 @@ export class ApiServer {
     fs.writeFileSync(this.secretFilePath, this.secret, { mode: 0o600 });
   }
 
-  private authenticate(req: http.IncomingMessage): boolean {
+  private authenticate(
+    req: http.IncomingMessage,
+    allowQueryParam = false,
+  ): boolean {
     // Check Authorization header
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith("Bearer ")) {
@@ -224,18 +227,20 @@ export class ApiServer {
         return true;
       }
     }
-    // Check query param (for SSE EventSource which can't set headers)
-    const url = new URL(req.url || "", "http://localhost");
-    const qToken = url.searchParams.get("token");
-    if (
-      qToken &&
-      qToken.length === this.secret.length &&
-      crypto.timingSafeEqual(
-        Buffer.from(qToken, "utf-8"),
-        Buffer.from(this.secret, "utf-8"),
-      )
-    ) {
-      return true;
+    // Query param auth only for SSE (EventSource can't set headers)
+    if (allowQueryParam) {
+      const parsedUrl = new URL(req.url || "", "http://localhost");
+      const qToken = parsedUrl.searchParams.get("token");
+      if (
+        qToken &&
+        qToken.length === this.secret.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(qToken, "utf-8"),
+          Buffer.from(this.secret, "utf-8"),
+        )
+      ) {
+        return true;
+      }
     }
     return false;
   }
@@ -247,10 +252,13 @@ export class ApiServer {
     const method = req.method?.toUpperCase();
     const url = req.url || "";
 
-    // Auth check: exempt health/version + non-/api/ routes (static files)
+    // Auth check: exempt health/version, SSE (has own auth), and non-/api/ routes (static files)
     if (url.startsWith("/api/")) {
       const isExempt =
-        method === "GET" && (url === "/api/health" || url === "/api/version");
+        method === "GET" &&
+        (url === "/api/health" ||
+          url === "/api/version" ||
+          url.startsWith("/api/events"));
       if (!isExempt && !this.authenticate(req)) {
         this.sendJson(res, 401, { error: "Unauthorized" });
         return;
@@ -346,6 +354,11 @@ export class ApiServer {
         const match = url.match(/^\/api\/topics\/([^/?]+)/)!;
         await this.handleDeleteTopic(decodeURIComponent(match[1]), url, res);
       } else if (method === "GET" && url.startsWith("/api/events")) {
+        // SSE auth with query param support (EventSource can't set headers)
+        if (!this.authenticate(req, true)) {
+          this.sendJson(res, 401, { error: "Unauthorized" });
+          return;
+        }
         this.sseManager.handleRequest(req, res);
         return; // Don't end the response — SSE keeps it open
       } else if (url.startsWith("/api/")) {
@@ -366,7 +379,7 @@ export class ApiServer {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let agent: string | undefined;
     let workspace: string | undefined;
 
@@ -464,7 +477,7 @@ export class ApiServer {
       return;
     }
 
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let prompt: string | undefined;
     if (body) {
       try {
@@ -500,7 +513,7 @@ export class ApiServer {
       return;
     }
 
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let permissionId: string | undefined;
     let optionId: string | undefined;
     if (body) {
@@ -572,7 +585,7 @@ export class ApiServer {
       return;
     }
 
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let enabled: boolean | undefined;
     if (body) {
       try {
@@ -658,7 +671,7 @@ export class ApiServer {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let configPath: string | undefined;
     let value: unknown;
 
@@ -778,7 +791,11 @@ export class ApiServer {
       this.sendJson(res, 400, { error: "Tunnel service is not enabled" });
       return;
     }
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
+    if (body === null) {
+      this.sendJson(res, 413, { error: "Request body too large" });
+      return;
+    }
     if (!body) {
       this.sendJson(res, 400, { error: "Missing request body" });
       return;
@@ -830,7 +847,7 @@ export class ApiServer {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let message: string | undefined;
     if (body) {
       try {
@@ -913,7 +930,10 @@ export class ApiServer {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
+    if (body === null) {
+      return this.sendJson(res, 413, { error: "Request body too large" });
+    }
     if (!body) {
       return this.sendJson(res, 400, {
         error: "bad_request",
@@ -1033,7 +1053,7 @@ export class ApiServer {
       this.sendJson(res, 501, { error: "Topic management not available" });
       return;
     }
-    const body = await this.readBody(req, res);
+    const body = await this.readBody(req);
     let statuses: string[] | undefined;
     if (body) {
       try {
@@ -1046,10 +1066,7 @@ export class ApiServer {
     this.sendJson(res, 200, result);
   }
 
-  private readBody(
-    req: http.IncomingMessage,
-    res: http.ServerResponse,
-  ): Promise<string | null> {
+  private readBody(req: http.IncomingMessage): Promise<string | null> {
     const MAX_BODY_SIZE = 1024 * 1024; // 1MB
     return new Promise((resolve) => {
       let data = "";
@@ -1060,7 +1077,6 @@ export class ApiServer {
         if (size > MAX_BODY_SIZE && !destroyed) {
           destroyed = true;
           req.destroy();
-          this.sendJson(res, 413, { error: "Request body too large" });
           resolve(null);
           return;
         }

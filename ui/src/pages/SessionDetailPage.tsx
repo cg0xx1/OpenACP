@@ -135,6 +135,8 @@ export function SessionDetailPage() {
         prompt: prompt.trim(),
       });
       setPrompt("");
+    } catch (err) {
+      setError(`Failed to send prompt: ${(err as Error).message}`);
     } finally {
       setSending(false);
     }

@@ -38,9 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .then((res) => {
         if (res.status === 401) {
           setNeedsAuth(true);
-        } else {
-          // No auth required (e.g. development mode without auth)
+        } else if (res.ok) {
+          // 2xx — no auth required
           setNeedsAuth(false);
+        } else {
+          // 5xx or other errors — assume auth required (safer default)
+          setNeedsAuth(true);
         }
       })
       .catch(() => setNeedsAuth(true));
