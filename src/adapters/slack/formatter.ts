@@ -1,0 +1,120 @@
+// src/adapters/slack/formatter.ts
+import type { types } from "@slack/bolt";
+import type { OutgoingMessage, PermissionRequest } from "../../core/types.js";
+
+type KnownBlock = types.KnownBlock;
+
+export interface ISlackFormatter {
+  formatOutgoing(message: OutgoingMessage): KnownBlock[];
+  formatPermissionRequest(req: PermissionRequest): KnownBlock[];
+  formatNotification(text: string): KnownBlock[];
+  formatSessionEnd(reason?: string): KnownBlock[];
+}
+
+// Slack mrkdwn text block, max 3000 chars per section
+const SECTION_LIMIT = 3000;
+
+function section(text: string): KnownBlock {
+  return { type: "section", text: { type: "mrkdwn", text: text.slice(0, SECTION_LIMIT) } };
+}
+
+function context(text: string): KnownBlock {
+  return { type: "context", elements: [{ type: "mrkdwn", text }] };
+}
+
+/**
+ * Split text at SECTION_LIMIT boundary, never inside a fenced code block.
+ */
+function splitSafe(text: string, limit = SECTION_LIMIT): string[] {
+  if (text.length <= limit) return [text];
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= limit) { chunks.push(remaining); break; }
+    // Find last newline before limit
+    let cut = remaining.lastIndexOf("\n", limit);
+    if (cut <= 0) cut = limit;
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).trimStart();
+  }
+  return chunks;
+}
+
+export class SlackFormatter implements ISlackFormatter {
+  formatOutgoing(message: OutgoingMessage): KnownBlock[] {
+    switch (message.type) {
+      case "text":
+        return splitSafe(message.text ?? "").map(chunk => section(chunk));
+
+      case "thought":
+        return [context(`💭 _${(message.text ?? "").slice(0, 500)}_`)];
+
+      case "tool_call": {
+        const name = (message as OutgoingMessage & { metadata?: { name?: string; input?: unknown } }).metadata?.name ?? "tool";
+        const input = (message as OutgoingMessage & { metadata?: { input?: unknown } }).metadata?.input;
+        const inputStr = input ? `\n\`\`\`\n${JSON.stringify(input, null, 2).slice(0, 500)}\n\`\`\`` : "";
+        return [context(`🔧 \`${name}\`${inputStr}`)];
+      }
+
+      case "tool_update": {
+        const name = (message as OutgoingMessage & { metadata?: { name?: string; status?: string } }).metadata?.name ?? "tool";
+        const status = (message as OutgoingMessage & { metadata?: { status?: string } }).metadata?.status ?? "done";
+        const icon = status === "error" ? "❌" : "✅";
+        return [context(`${icon} \`${name}\` — ${status}`)];
+      }
+
+      case "plan":
+        return [
+          { type: "divider" },
+          section(`📋 *Plan*\n${message.text ?? ""}`),
+        ];
+
+      case "usage": {
+        const meta = (message as OutgoingMessage & { metadata?: { input_tokens?: number; output_tokens?: number; cost_usd?: number } }).metadata ?? {};
+        const parts = [
+          meta.input_tokens != null ? `in: ${meta.input_tokens}` : null,
+          meta.output_tokens != null ? `out: ${meta.output_tokens}` : null,
+          meta.cost_usd != null ? `$${Number(meta.cost_usd).toFixed(4)}` : null,
+        ].filter((p): p is string => p !== null);
+        return parts.length ? [context(`📊 ${parts.join(" · ")}`)] : [];
+      }
+
+      case "session_end":
+        return this.formatSessionEnd(message.text);
+
+      case "error":
+        return [section(`⚠️ *Error:* ${message.text ?? "Unknown error"}`)];
+
+      default:
+        return [];
+    }
+  }
+
+  formatPermissionRequest(req: PermissionRequest): KnownBlock[] {
+    return [
+      section(`🔐 *Permission Request*\n${req.description}`),
+      {
+        type: "actions",
+        block_id: `perm_${req.id}`,
+        elements: req.options.map(opt => ({
+          type: "button" as const,
+          text: { type: "plain_text" as const, text: opt.label, emoji: true },
+          value: `${req.id}:${opt.id}`,
+          action_id: `perm_action_${opt.id}_${req.id}`,
+          style: (opt.isAllow ? "primary" : "danger") as "primary" | "danger",
+        })),
+      } as KnownBlock,
+    ];
+  }
+
+  formatNotification(text: string): KnownBlock[] {
+    return [section(text)];
+  }
+
+  formatSessionEnd(reason?: string): KnownBlock[] {
+    return [
+      { type: "divider" },
+      context(`✅ Session ended${reason ? ` — ${reason}` : ""}`),
+    ];
+  }
+}
