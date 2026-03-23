@@ -447,7 +447,7 @@ export async function setupAgents(): Promise<{
         name: `${a.name} (installed)`,
         value: a.key,
         checked: true,
-        disabled: "(already installed)" as const,
+        disabled: "(already installed)",
       })),
       ...installable.slice(0, 10).map((a) => ({
         name: `${a.name} (${a.distribution})`,
