@@ -20,7 +20,7 @@ This spec addresses the 4 critical issues identified during the PR #19 code revi
 
 1. **Token generation:** On first API server start, generate a 32-byte random hex token using `crypto.randomBytes(32).toString('hex')`.
 2. **Storage:** Write to `~/.openacp/api-secret` with file permission `0600`. If the file already exists, read and reuse the existing token. Token persists across daemon restarts.
-3. **Validation:** Add an `authenticate()` method to `APIServer` that extracts the token from the `Authorization: Bearer <token>` header and compares it against the stored secret using timing-safe comparison. Called at the top of `handleRequest()` before routing.
+3. **Validation:** Add an `authenticate()` method to `APIServer` that extracts the token from the `Authorization: Bearer <token>` header and compares it against the stored secret using `crypto.timingSafeEqual()` (with early rejection on length mismatch). Called at the top of `handleRequest()` before routing.
 4. **Exempt routes:** `GET /api/health` and `GET /api/version` are exempt from authentication (used for monitoring/probes).
 5. **Rejection:** Return `401 Unauthorized` with `{ error: "Unauthorized" }` for missing or invalid tokens on all other routes.
 6. **Client integration:** `src/core/api-client.ts` (`apiCall()`) reads the token from `~/.openacp/api-secret` and attaches it as an `Authorization: Bearer` header. The raw `fetch()` call in `src/cli/commands.ts` (adopt endpoint) must also be migrated to use `apiCall()` or have auth added directly.
@@ -44,7 +44,7 @@ This spec addresses the 4 critical issues identified during the PR #19 code revi
 **Design:**
 
 1. **`escapeXml(str)`** — Escapes `&`, `<`, `>`, `"`, `'` for safe insertion into XML `<string>` elements.
-2. **`escapeSystemdValue(str)`** — Escapes quotes, backslashes, and `%` characters (systemd specifier prefix, doubled to `%%`) for safe insertion into systemd unit values. Each argument is quoted individually on the `ExecStart=` line.
+2. **`escapeSystemdValue(str)`** — Double-quotes each argument individually on the `ExecStart=` line. Inside the double quotes: escape backslashes (`\\`), double-quotes (`\"`), and `%` characters (doubled to `%%` per systemd specifier rules).
 3. **Apply escaping** to all interpolated values:
    - `generateLaunchdPlist()`: `nodePath`, `cliPath`, `logFile` (note: `LAUNCHD_LABEL` is a constant and safe)
    - `generateSystemdUnit()`: `nodePath`, `cliPath` (each quoted individually)
@@ -76,8 +76,8 @@ This spec addresses the 4 critical issues identified during the PR #19 code revi
 1. **Make `stopDaemon()` async.** Return type becomes `Promise<{ stopped: boolean; pid?: number; error?: string }>`.
 2. **After sending `SIGTERM`, poll `process.kill(pid, 0)` every 100ms** to check if the process is still alive.
 3. **Distinguish error codes in polling:** `ESRCH` = process exited (success), `EPERM` = process exists but we lost permission (PID reuse by another user — treat as exited to avoid signaling a foreign process).
-4. **Timeout after 5 seconds.** If the process hasn't exited, attempt `SIGKILL`. If `SIGKILL` fails with `EPERM`, return an error without removing the PID file (PID was reused). If `SIGKILL` succeeds, wait another 1 second, then remove PID file.
-5. **Only remove PID file after confirmed exit** (or after successful SIGKILL).
+4. **Timeout after 5 seconds.** If the process hasn't exited, attempt `SIGKILL`. If `SIGKILL` fails with `EPERM`, return an error and leave PID file in place with a warning message ("PID may have been reused — run `openacp status` to verify, or manually delete the PID file"). If `SIGKILL` succeeds, re-poll for up to 1 second to confirm exit, then remove PID file.
+5. **Only remove PID file after confirmed exit** (or after successful SIGKILL + confirmed exit).
 6. **Update all callers** of `stopDaemon()` to `await` the result, including the re-export in `src/core/index.ts`.
 
 **Files changed:**
