@@ -1,4 +1,5 @@
-import { Bot } from "grammy";
+import { Bot, InputFile } from "grammy";
+import path from "node:path";
 import {
   ChannelAdapter,
   type OpenACPCore,
@@ -7,6 +8,7 @@ import {
   type NotificationMessage,
   type Session,
   type AgentCommand,
+  type FileService,
 } from "../../core/index.js";
 import { createChildLogger } from "../../core/log.js";
 const log = createChildLogger({ module: "telegram" });
@@ -83,6 +85,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
   private toolTracker!: ToolCallTracker;
   private draftManager!: DraftManager;
   private skillManager!: SkillCommandManager;
+  private fileService!: FileService;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
 
   private getOrCreateTracker(sessionId: string, threadId: number): ActivityTracker {
@@ -106,6 +109,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
   async start(): Promise<void> {
     this.bot = new Bot(this.telegramConfig.botToken, { client: { fetch: patchedFetch } });
+    this.fileService = this.core.fileService;
 
     // Initialize extracted managers
     this.toolTracker = new ToolCallTracker(this.bot, this.telegramConfig.chatId, this.sendQueue);
@@ -363,6 +367,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
   private setupRoutes(): void {
     this.bot.on("message:text", async (ctx) => {
       const threadId = ctx.message.message_thread_id;
+      const text = ctx.message.text;
 
       // Check for pending workspace input from interactive /new flow
       if (await handlePendingWorkspaceInput(ctx, this.core, this.telegramConfig.chatId, this.assistantTopicId)) {
@@ -382,6 +387,11 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       // Notification topic → ignore
       if (threadId === this.notificationTopicId) return;
 
+      // Strip leading "/" from unrecognized commands — registered commands
+      // (e.g. /new, /cancel) are already handled by bot.command() above.
+      // Unrecognized slash commands can cause agent subprocesses to hang.
+      const forwardText = text.startsWith("/") ? text.slice(1) : text;
+
       // Assistant topic → forward to assistant session
       if (threadId === this.assistantTopicId) {
         if (!this.assistantSession) {
@@ -390,7 +400,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         }
         await this.draftManager.finalize(this.assistantSession.id, this.assistantSession.id);
         ctx.replyWithChatAction("typing").catch(() => {});
-        handleAssistantMessage(this.assistantSession, ctx.message.text).catch(
+        handleAssistantMessage(this.assistantSession, forwardText).catch(
           (err) => log.error({ err }, "Assistant error"),
         );
         return;
@@ -409,9 +419,71 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           channelId: "telegram",
           threadId: String(threadId),
           userId: String(ctx.from.id),
-          text: ctx.message.text,
+          text: forwardText,
         })
         .catch((err) => log.error({ err }, "handleMessage error"));
+    });
+
+    // --- Incoming media handlers ---
+
+    this.bot.on("message:photo", async (ctx) => {
+      const threadId = ctx.message.message_thread_id;
+      if (!threadId || threadId === this.notificationTopicId) return;
+
+      const photos = ctx.message.photo;
+      const largest = photos[photos.length - 1];
+      const ext = ".jpg";
+      await this.handleIncomingMedia(
+        threadId, ctx.from.id, largest.file_id,
+        `photo${ext}`, "image/jpeg", ctx.message.caption || undefined,
+      );
+    });
+
+    this.bot.on("message:document", async (ctx) => {
+      const threadId = ctx.message.message_thread_id;
+      if (!threadId || threadId === this.notificationTopicId) return;
+
+      const doc = ctx.message.document;
+      await this.handleIncomingMedia(
+        threadId, ctx.from.id, doc.file_id,
+        doc.file_name || "document", doc.mime_type || "application/octet-stream",
+        ctx.message.caption || undefined,
+      );
+    });
+
+    this.bot.on("message:voice", async (ctx) => {
+      const threadId = ctx.message.message_thread_id;
+      if (!threadId || threadId === this.notificationTopicId) return;
+
+      const voice = ctx.message.voice;
+      await this.handleIncomingMedia(
+        threadId, ctx.from.id, voice.file_id,
+        "voice.wav", "audio/wav",
+        undefined, true,
+      );
+    });
+
+    this.bot.on("message:audio", async (ctx) => {
+      const threadId = ctx.message.message_thread_id;
+      if (!threadId || threadId === this.notificationTopicId) return;
+
+      const audio = ctx.message.audio;
+      await this.handleIncomingMedia(
+        threadId, ctx.from.id, audio.file_id,
+        audio.file_name || "audio.mp3", audio.mime_type || "audio/mpeg",
+        ctx.message.caption || undefined,
+      );
+    });
+
+    this.bot.on("message:video_note", async (ctx) => {
+      const threadId = ctx.message.message_thread_id;
+      if (!threadId || threadId === this.notificationTopicId) return;
+
+      const videoNote = ctx.message.video_note;
+      await this.handleIncomingMedia(
+        threadId, ctx.from.id, videoNote.file_id,
+        "video_note.mp4", "video/mp4",
+      );
     });
   }
 
@@ -440,9 +512,13 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
       }
 
       case "text": {
+        // CRITICAL: This handler must be fully synchronous to preserve text ordering.
+        // sendMessage() is not awaited in wireSessionEvents, so multiple text events
+        // run concurrently. Any await here creates a gap where subsequent text events
+        // process first, causing out-of-order buffer accumulation.
         if (!this.draftManager.hasDraft(sessionId)) {
           const tracker = this.getOrCreateTracker(sessionId, threadId);
-          await tracker.onTextStart();
+          tracker.onTextStart().catch(() => {}); // Fire-and-forget, no await
         }
         const draft = this.draftManager.getOrCreate(sessionId, threadId);
         draft.append(content.text);
@@ -525,6 +601,50 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
               disable_notification: false,
             }),
           ).catch(() => {});
+        }
+        break;
+      }
+
+      case "attachment": {
+        if (!content.attachment) break;
+        const { attachment } = content;
+
+        // Telegram bot API upload limit: 50MB
+        if (attachment.size > 50 * 1024 * 1024) {
+          log.warn({ sessionId, fileName: attachment.fileName, size: attachment.size }, "File too large for Telegram (>50MB)");
+          await this.sendQueue.enqueue(() =>
+            this.bot.api.sendMessage(
+              this.telegramConfig.chatId,
+              `⚠️ File too large to send (${Math.round(attachment.size / 1024 / 1024)}MB): ${escapeHtml(attachment.fileName)}`,
+              { message_thread_id: threadId, parse_mode: "HTML" },
+            ),
+          );
+          break;
+        }
+
+        try {
+          const inputFile = new InputFile(attachment.filePath);
+          if (attachment.type === "image") {
+            await this.sendQueue.enqueue(() =>
+              this.bot.api.sendPhoto(this.telegramConfig.chatId, inputFile, {
+                message_thread_id: threadId,
+              }),
+            );
+          } else if (attachment.type === "audio") {
+            await this.sendQueue.enqueue(() =>
+              this.bot.api.sendVoice(this.telegramConfig.chatId, inputFile, {
+                message_thread_id: threadId,
+              }),
+            );
+          } else {
+            await this.sendQueue.enqueue(() =>
+              this.bot.api.sendDocument(this.telegramConfig.chatId, inputFile, {
+                message_thread_id: threadId,
+              }),
+            );
+          }
+        } catch (err) {
+          log.error({ err, sessionId, fileName: attachment.fileName }, "Failed to send attachment");
         }
         break;
       }
@@ -693,6 +813,76 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     if (!threadId) return;
 
     await this.skillManager.send(sessionId, threadId, commands);
+  }
+
+  private resolveSessionId(threadId: number): string | undefined {
+    return this.core.sessionManager.getSessionByThread("telegram", String(threadId))?.id;
+  }
+
+  private async downloadTelegramFile(fileId: string): Promise<{ buffer: Buffer; filePath: string } | null> {
+    try {
+      const file = await this.bot.api.getFile(fileId);
+      if (!file.file_path) return null;
+      const url = `https://api.telegram.org/file/bot${this.telegramConfig.botToken}/${file.file_path}`;
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      return { buffer, filePath: file.file_path };
+    } catch (err) {
+      log.error({ err }, "Failed to download file from Telegram");
+      return null;
+    }
+  }
+
+  private async handleIncomingMedia(
+    threadId: number,
+    userId: number,
+    fileId: string,
+    fileName: string,
+    mimeType: string,
+    caption?: string,
+    convertOggToWav?: boolean,
+  ): Promise<void> {
+    const downloaded = await this.downloadTelegramFile(fileId);
+    if (!downloaded) return;
+
+    let buffer = downloaded.buffer;
+    if (convertOggToWav) {
+      try {
+        buffer = await this.fileService.convertOggToWav(buffer);
+      } catch (err) {
+        log.warn({ err }, "OGG→WAV conversion failed, saving original OGG");
+        fileName = "voice.ogg";
+        mimeType = "audio/ogg";
+      }
+    }
+
+    const sessionId = this.resolveSessionId(threadId) || "unknown";
+    const att = await this.fileService.saveFile(sessionId, fileName, buffer, mimeType);
+
+    const rawText = caption || `[${att.type === "image" ? "Photo" : att.type === "audio" ? "Audio" : "File"}: ${att.fileName}]`;
+    const text = rawText.startsWith("/") ? rawText.slice(1) : rawText;
+
+    // Assistant topic
+    if (threadId === this.assistantTopicId) {
+      if (this.assistantSession) {
+        await this.assistantSession.enqueuePrompt(text, [att]);
+      }
+      return;
+    }
+
+    // Session topic
+    const sid = this.resolveSessionId(threadId);
+    if (sid) await this.draftManager.finalize(sid, this.assistantSession?.id);
+    this.core
+      .handleMessage({
+        channelId: "telegram",
+        threadId: String(threadId),
+        userId: String(userId),
+        text,
+        attachments: [att],
+      })
+      .catch((err) => log.error({ err }, "handleMessage error"));
   }
 
   async cleanupSkillCommands(sessionId: string): Promise<void> {
