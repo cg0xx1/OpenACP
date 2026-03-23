@@ -149,12 +149,40 @@ export class ApiServer {
     }
   }
 
+  private checkAuth(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: string,
+  ): boolean {
+    const config = this.core.configManager.get();
+    const token = config.api.token;
+    if (!token) return true; // No token configured — allow all
+
+    // Localhost bypass
+    const host = config.api.host;
+    if (host === "127.0.0.1" || host === "localhost") return true;
+
+    // Check Authorization header
+    const authHeader = req.headers["authorization"];
+    if (authHeader === `Bearer ${token}`) return true;
+
+    // Check query param (for SSE EventSource which can't set headers)
+    const urlObj = new URL(url, "http://localhost");
+    if (urlObj.searchParams.get("token") === token) return true;
+
+    this.sendJson(res, 401, { error: "Unauthorized" });
+    return false;
+  }
+
   private async handleRequest(
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
     const method = req.method?.toUpperCase();
     const url = req.url || "";
+
+    // Auth check for /api/ routes only (static UI files bypass auth)
+    if (url.startsWith("/api/") && !this.checkAuth(req, res, url)) return;
 
     try {
       if (method === "POST" && url === "/api/sessions/adopt") {

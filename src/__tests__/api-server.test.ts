@@ -960,4 +960,99 @@ describe("ApiServer", () => {
     expect(text).toContain("right");
     controller.abort();
   });
+
+  describe("token auth", () => {
+    it("rejects requests without token when configured and host is not localhost", async () => {
+      mockCore.configManager.get.mockReturnValue({
+        ...mockCore.configManager.get(),
+        api: { port: 21420, host: "0.0.0.0", token: "secret123" },
+      });
+      const port = await startServer();
+
+      const res = await apiFetch(port, "/api/health");
+      expect(res.status).toBe(401);
+    });
+
+    it("accepts requests with valid Bearer token", async () => {
+      mockCore.configManager.get.mockReturnValue({
+        ...mockCore.configManager.get(),
+        api: { port: 21420, host: "0.0.0.0", token: "secret123" },
+      });
+      const port = await startServer();
+
+      const res = await apiFetch(port, "/api/health", {
+        headers: { Authorization: "Bearer secret123" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("bypasses auth for localhost when host is 127.0.0.1", async () => {
+      mockCore.configManager.get.mockReturnValue({
+        ...mockCore.configManager.get(),
+        api: { port: 21420, host: "127.0.0.1", token: "secret123" },
+      });
+      const port = await startServer();
+
+      const res = await apiFetch(port, "/api/health");
+      expect(res.status).toBe(200);
+    });
+
+    it("accepts SSE with token query param", async () => {
+      mockCore.eventBus = new EventBus();
+      mockCore.configManager.get.mockReturnValue({
+        ...mockCore.configManager.get(),
+        api: { port: 21420, host: "0.0.0.0", token: "secret123" },
+      });
+      const port = await startServer();
+
+      const controller = new AbortController();
+      const res = await apiFetch(port, "/api/events?token=secret123", {
+        signal: controller.signal,
+      });
+      expect(res.status).toBe(200);
+      controller.abort();
+    });
+
+    it("allows all requests when no token configured", async () => {
+      // Reset to default mock (no token)
+      mockCore.configManager.get.mockReturnValue({
+        defaultAgent: "claude",
+        agents: {
+          claude: { command: "claude", args: [], workingDirectory: "/tmp/ws" },
+        },
+        security: {
+          maxConcurrentSessions: 5,
+          sessionTimeoutMinutes: 60,
+          allowedUserIds: [],
+        },
+        channels: {
+          telegram: { enabled: false, botToken: "secret-token", chatId: 0 },
+        },
+        workspace: { baseDir: "~/openacp-workspace" },
+        logging: {
+          level: "info",
+          logDir: "~/.openacp/logs",
+          maxFileSize: "10m",
+          maxFiles: 7,
+          sessionLogRetentionDays: 30,
+        },
+        tunnel: {
+          enabled: true,
+          port: 3100,
+          provider: "cloudflare",
+          options: {},
+          storeTtlMinutes: 60,
+          auth: { enabled: false },
+        },
+        sessionStore: { ttlDays: 30 },
+        runMode: "foreground",
+        autoStart: false,
+        api: { port: 21420, host: "127.0.0.1" },
+        integrations: {},
+      });
+      const port = await startServer();
+      const res = await apiFetch(port, "/api/health");
+      expect(res.status).toBe(200);
+    });
+  });
 });
