@@ -5,7 +5,7 @@ import { getCurrentVersion, getLatestVersion, compareVersions, runUpdate, checkA
 export function printHelp(): void {
   console.log(`
 \x1b[1mOpenACP\x1b[0m — Self-hosted bridge for AI coding agents
-Connect Telegram (and more) to 28+ AI coding agents via ACP protocol.
+Connect messaging platforms (Telegram, Discord) to 28+ AI coding agents via ACP protocol.
 
 \x1b[1mGetting Started:\x1b[0m
   openacp                              First run launches setup wizard
@@ -42,7 +42,7 @@ Connect Telegram (and more) to 28+ AI coding agents via ACP protocol.
   openacp doctor --dry-run             Check only, don't fix
 
 \x1b[1mPlugins:\x1b[0m
-  openacp install <package>            Install adapter (e.g. @openacp/adapter-discord)
+  openacp install <package>            Install adapter plugin
   openacp uninstall <package>          Remove adapter
   openacp plugins                      List installed plugins
 
@@ -683,9 +683,9 @@ export async function cmdAdopt(args: string[]): Promise<void> {
 
     if (data.ok) {
       if (data.status === "existing") {
-        console.log(`Session already on Telegram. Topic pinged.`);
+        console.log(`Session already active. Topic pinged.`);
       } else {
-        console.log(`Session transferred to Telegram.`);
+        console.log(`Session transferred to messaging platform.`);
       }
       console.log(`  Session ID: ${data.sessionId}`);
       console.log(`  Thread ID:  ${data.threadId}`);

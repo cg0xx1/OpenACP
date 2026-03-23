@@ -233,7 +233,11 @@ export class OpenACPCore {
       ...(existingRecord?.platform ?? {}),
     };
     if (session.threadId) {
-      platform.topicId = Number(session.threadId);
+      if (params.channelId === 'telegram') {
+        platform.topicId = Number(session.threadId);
+      } else {
+        platform.threadId = session.threadId;
+      }
     }
     await this.sessionManager.patchRecord(session.id, {
       sessionId: session.id,

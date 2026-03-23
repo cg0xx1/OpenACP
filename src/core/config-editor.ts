@@ -1,6 +1,6 @@
 import { select, input } from '@inquirer/prompts'
 import type { Config, ConfigManager } from './config.js'
-import { validateBotToken, validateChatId } from './setup.js'
+import { validateBotToken, validateChatId, validateDiscordToken } from './setup.js'
 import { installAutoStart, uninstallAutoStart, isAutoStartInstalled, isAutoStartSupported } from './autostart.js'
 import { expandHome } from './config.js'
 
@@ -107,6 +107,104 @@ async function editTelegram(config: Config, updates: ConfigUpdates): Promise<voi
       }
       ;((updates.channels as Record<string, unknown>).telegram as Record<string, unknown>).chatId = chatId
     }
+  }
+}
+
+// --- Edit: Discord ---
+
+async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void> {
+  const dc = (config.channels?.discord ?? {}) as Record<string, unknown>
+  const currentToken = (dc.botToken as string) ?? ''
+  const currentGuildId = (dc.guildId as string) ?? ''
+
+  console.log(header('Discord'))
+  const tokenDisplay = currentToken.length > 12
+    ? currentToken.slice(0, 6) + '...' + currentToken.slice(-6)
+    : currentToken || dim('(not set)')
+  console.log(`  Bot Token : ${tokenDisplay}`)
+  console.log(`  Guild ID  : ${currentGuildId || dim('(not set)')}`)
+  console.log('')
+
+  while (true) {
+    const choice = await select({
+      message: 'Discord settings:',
+      choices: [
+        { name: 'Change Bot Token', value: 'token' },
+        { name: 'Change Guild ID', value: 'guildid' },
+        { name: 'Back', value: 'back' },
+      ],
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'token') {
+      const token = await input({
+        message: 'New bot token:',
+        default: currentToken,
+        validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
+      })
+
+      const result = await validateDiscordToken(token.trim())
+      if (result.ok) {
+        console.log(ok(`Connected as @${result.username}`))
+      } else {
+        console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+      }
+
+      if (!updates.channels) updates.channels = {}
+      if (!(updates.channels as Record<string, unknown>).discord) {
+        (updates.channels as Record<string, unknown>).discord = {}
+      }
+      ;((updates.channels as Record<string, unknown>).discord as Record<string, unknown>).botToken = token.trim()
+    }
+
+    if (choice === 'guildid') {
+      const guildIdStr = await input({
+        message: 'New Guild (server) ID:',
+        default: currentGuildId,
+        validate: (val) => {
+          const trimmed = val.trim()
+          if (!trimmed) return 'Guild ID cannot be empty'
+          if (!/^\d{17,20}$/.test(trimmed)) return 'Guild ID must be a numeric Discord snowflake (17-20 digits)'
+          return true
+        },
+      })
+
+      if (!updates.channels) updates.channels = {}
+      if (!(updates.channels as Record<string, unknown>).discord) {
+        (updates.channels as Record<string, unknown>).discord = {}
+      }
+      ;((updates.channels as Record<string, unknown>).discord as Record<string, unknown>).guildId = guildIdStr.trim()
+      console.log(ok(`Guild ID set to ${guildIdStr.trim()}`))
+    }
+  }
+}
+
+// --- Edit: Channels (parent menu) ---
+
+async function editChannels(config: Config, updates: ConfigUpdates): Promise<void> {
+  const tgEnabled = (config.channels?.telegram as Record<string, unknown>)?.enabled !== false && config.channels?.telegram
+  const dcEnabled = (config.channels?.discord as Record<string, unknown>)?.enabled !== false && config.channels?.discord
+
+  console.log(header('Channels'))
+  console.log(`  Telegram : ${tgEnabled ? ok('configured') : dim('not configured')}`)
+  console.log(`  Discord  : ${dcEnabled ? ok('configured') : dim('not configured')}`)
+  console.log('')
+
+  while (true) {
+    const choice = await select({
+      message: 'Channel settings:',
+      choices: [
+        { name: 'Telegram', value: 'telegram' },
+        { name: 'Discord', value: 'discord' },
+        { name: 'Back', value: 'back' },
+      ],
+    })
+
+    if (choice === 'back') break
+
+    if (choice === 'telegram') await editTelegram(config, updates)
+    if (choice === 'discord') await editDiscord(config, updates)
   }
 }
 
@@ -576,7 +674,7 @@ export async function runConfigEditor(
       const choice = await select({
         message: `What would you like to edit?${hasChanges ? ` ${c.yellow}(unsaved changes)${c.reset}` : ''}`,
         choices: [
-          { name: 'Telegram', value: 'telegram' },
+          { name: 'Channels', value: 'channels' },
           { name: 'Agent', value: 'agent' },
           { name: 'Workspace', value: 'workspace' },
           { name: 'Security', value: 'security' },
@@ -600,7 +698,7 @@ export async function runConfigEditor(
 
       const sectionUpdates: ConfigUpdates = {}
 
-      if (choice === 'telegram') await editTelegram(config, sectionUpdates)
+      if (choice === 'channels') await editChannels(config, sectionUpdates)
       else if (choice === 'agent') await editAgent(config, sectionUpdates)
       else if (choice === 'workspace') await editWorkspace(config, sectionUpdates)
       else if (choice === 'security') await editSecurity(config, sectionUpdates)
