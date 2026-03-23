@@ -3,6 +3,7 @@ import { input, select } from "@inquirer/prompts";
 import type { Config, ConfigManager } from "./config.js";
 import { expandHome } from "./config.js";
 import { commandExists } from "./agent-dependencies.js";
+import type { DiscordChannelConfig } from "../adapters/discord/types.js";
 
 // --- ANSI colors ---
 
@@ -399,6 +400,77 @@ export async function setupTelegram(): Promise<Config["channels"][string]> {
   };
 }
 
+// --- Discord validation ---
+
+async function validateDiscordToken(token: string): Promise<
+  | { ok: true; username: string; id: string }
+  | { ok: false; error: string }
+> {
+  try {
+    const res = await fetch("https://discord.com/api/v10/users/@me", {
+      headers: { Authorization: `Bot ${token}` },
+    });
+    if (res.status === 200) {
+      const data = (await res.json()) as { username: string; id: string };
+      return { ok: true, username: data.username, id: data.id };
+    }
+    if (res.status === 401) {
+      return { ok: false, error: "Token rejected by Discord (401 Unauthorized)" };
+    }
+    return { ok: false, error: `Discord API returned ${res.status}` };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+export async function setupDiscord(): Promise<DiscordChannelConfig> {
+  console.log('\n📱 Discord Setup\n');
+
+  let botToken = '';
+
+  while (true) {
+    botToken = await input({
+      message: 'Bot token (from Discord Developer Portal):',
+      validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
+    });
+    botToken = botToken.trim();
+
+    const result = await validateDiscordToken(botToken);
+    if (result.ok) {
+      console.log(ok(`Connected as @${result.username} (id: ${result.id})`));
+      break;
+    }
+    console.log(fail(result.error));
+    const action = await select({
+      message: 'What to do?',
+      choices: [
+        { name: 'Re-enter token', value: 'retry' },
+        { name: 'Use as-is (skip validation)', value: 'skip' },
+      ],
+    });
+    if (action === 'skip') break;
+  }
+
+  const guildId = await input({
+    message: 'Guild (server) ID:',
+    validate: (val) => {
+      const trimmed = val.trim();
+      if (!trimmed) return 'Guild ID cannot be empty';
+      if (!/^\d{17,20}$/.test(trimmed)) return 'Guild ID must be a numeric Discord snowflake (17-20 digits)';
+      return true;
+    },
+  });
+
+  return {
+    enabled: true,
+    botToken,
+    guildId: guildId.trim(),
+    forumChannelId: null,
+    notificationChannelId: null,
+    assistantThreadId: null,
+  };
+}
+
 export async function setupAgents(): Promise<{
   defaultAgent: string;
 }> {
@@ -553,7 +625,26 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
   printWelcomeBanner();
 
   try {
-    const telegram = await setupTelegram();
+    const { select: selectChannel } = await import("@inquirer/prompts");
+    const channelChoice = await selectChannel({
+      message: 'Which messaging platform do you want to use?',
+      choices: [
+        { name: 'Telegram', value: 'telegram' },
+        { name: 'Discord', value: 'discord' },
+        { name: 'Both', value: 'both' },
+      ],
+    });
+
+    let telegram: Config["channels"][string] | undefined;
+    let discord: DiscordChannelConfig | undefined;
+
+    if (channelChoice === 'telegram' || channelChoice === 'both') {
+      telegram = await setupTelegram();
+    }
+    if (channelChoice === 'discord' || channelChoice === 'both') {
+      discord = await setupDiscord();
+    }
+
     const { defaultAgent } = await setupAgents();
 
     // Offer Claude CLI integration
@@ -590,8 +681,12 @@ export async function runSetup(configManager: ConfigManager): Promise<boolean> {
       sessionTimeoutMinutes: 60,
     };
 
+    const channels: Config["channels"] = {};
+    if (telegram) channels.telegram = telegram;
+    if (discord) channels.discord = discord as unknown as Config["channels"][string];
+
     const config: Config = {
-      channels: { telegram },
+      channels,
       agents: {},
       defaultAgent,
       workspace,
