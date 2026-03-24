@@ -216,7 +216,113 @@ Each OpenACP session in Slack gets its own dedicated channel, enabling isolated 
 6. When done, use `/cancel` or let the session timeout (default 60 minutes)
 7. The channel is archived automatically for later reference
 
+## Voice Messages (Speech-to-Text & Text-to-Speech)
+
+OpenACP supports voice interactions in Slack — record audio clips and receive spoken replies.
+
+### How It Works
+
+- **Speech-to-Text (STT):** Record an audio clip using Slack's built-in microphone button. OpenACP transcribes it automatically and sends the text to the agent.
+- **Text-to-Speech (TTS):** When enabled, the agent's response is synthesized into audio and uploaded as a playable file in the session channel.
+
+### Setting Up STT (Speech-to-Text)
+
+STT uses [Groq](https://console.groq.com/) with Whisper for fast, free transcription (~8 hours/day on free tier).
+
+1. **Get a Groq API key** at [console.groq.com](https://console.groq.com/) (free account)
+2. **Add speech config** to `~/.openacp/config.json`:
+
+```json
+{
+  "speech": {
+    "stt": {
+      "provider": "groq",
+      "providers": {
+        "groq": {
+          "apiKey": "gsk_..."
+        }
+      }
+    }
+  }
+}
+```
+
+Or use environment variables:
+
+```bash
+export OPENACP_SPEECH_STT_PROVIDER=groq
+export OPENACP_SPEECH_GROQ_API_KEY=gsk_...
+```
+
+3. **Verify Slack app scopes** — your bot must have `files:read` scope (see [Configure Bot Token Scopes](#configure-bot-token-scopes)). If you added this scope after initial install, **reinstall the app** to your workspace.
+
+4. **Restart OpenACP** and send an audio clip in a session channel. You should see a `🎤 You said: ...` transcription message.
+
+### Setting Up TTS (Text-to-Speech)
+
+TTS uses Microsoft Edge TTS (free, no API key needed).
+
+1. **Add TTS config** to `~/.openacp/config.json`:
+
+```json
+{
+  "speech": {
+    "tts": {
+      "provider": "edge-tts"
+    }
+  }
+}
+```
+
+2. **Verify Slack app scopes** — your bot must have `files:write` scope (see [Configure Bot Token Scopes](#configure-bot-token-scopes)). Reinstall the app if you added this scope after initial install.
+
+3. **Restart OpenACP**. The agent will include a spoken version in its replies, uploaded as an audio file in the channel.
+
+### Available TTS Voices
+
+You can select a voice in the config:
+
+```json
+{
+  "speech": {
+    "tts": {
+      "provider": "edge-tts",
+      "providers": {
+        "edge-tts": {
+          "voice": "en-US-AriaNeural"
+        }
+      }
+    }
+  }
+}
+```
+
+Some popular voices:
+
+| Voice | Language |
+|-------|----------|
+| `en-US-AriaNeural` | English (US, female) — default |
+| `en-US-GuyNeural` | English (US, male) |
+| `en-GB-SoniaNeural` | English (UK, female) |
+| `vi-VN-HoaiMyNeural` | Vietnamese (female) |
+| `vi-VN-NamMinhNeural` | Vietnamese (male) |
+| `ja-JP-NanamiNeural` | Japanese (female) |
+| `ko-KR-SunHiNeural` | Korean (female) |
+| `zh-CN-XiaoxiaoNeural` | Chinese (female) |
+
 ## Troubleshooting
+
+### Voice transcription returns "could not process file"
+
+The bot downloaded an HTML page instead of the actual audio file. This happens when the `files:read` scope is missing.
+
+1. Go to **OAuth & Permissions → Bot Token Scopes** and verify `files:read` is listed
+2. **Reinstall the app** to your workspace (required after adding new scopes)
+3. Restart OpenACP
+
+### Voice transcription not happening (agent says "I can't process audio")
+
+STT is not configured. See [Setting Up STT](#setting-up-stt-speech-to-text) above.
 
 ### Messages sent by users are completely ignored (no response, no logs)
 
