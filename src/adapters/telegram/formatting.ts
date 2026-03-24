@@ -3,7 +3,7 @@ import type {
   FormattedMessage,
   MessageRenderer,
 } from "../shared/format-types.js";
-import { STATUS_ICONS, KIND_ICONS } from "../shared/format-types.js";
+import { STATUS_ICONS } from "../shared/format-types.js";
 import {
   progressBar,
   formatTokens,
@@ -224,7 +224,7 @@ export const telegramRenderer: MessageRenderer = {
       const detail = msg.detail
         ? `\n<pre>${escapeHtml(truncateContent(stripCodeFences(msg.detail), 3800))}</pre>`
         : "";
-      return `${escapeHtml(msg.summary)}${detail}`;
+      return `<b>${escapeHtml(msg.summary)}</b>${detail}`;
     }
     if (msg.style === "thought") {
       return `💭 <i>${escapeHtml(msg.summary)}</i>`;

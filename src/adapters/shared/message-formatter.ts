@@ -56,7 +56,7 @@ export function formatToolSummary(name: string, rawInput: unknown): string {
   }
   if (lowerName === "write") {
     const fp = args.file_path ?? args.filePath ?? "";
-    return fp ? `✏️ Write ${fp}` : `🔧 ${name}`;
+    return fp ? `📝 Write ${fp}` : `🔧 ${name}`;
   }
   if (lowerName === "bash") {
     const cmd = String(args.command ?? "").slice(0, 60);

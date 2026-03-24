@@ -3,7 +3,7 @@ import type {
   FormattedMessage,
   MessageRenderer,
 } from "../shared/format-types.js";
-import { STATUS_ICONS, KIND_ICONS } from "../shared/format-types.js";
+import { STATUS_ICONS } from "../shared/format-types.js";
 import {
   progressBar,
   formatTokens,
@@ -15,12 +15,6 @@ import {
   extractContentText,
   formatToolSummary,
 } from "../shared/message-formatter.js";
-
-// Discord-specific override: command uses ⚡ instead of ▶️
-const DISCORD_KIND_ICONS: Record<string, string> = {
-  ...KIND_ICONS,
-  command: "⚡",
-};
 
 function formatViewerLinks(
   links?: { file?: string; diff?: string },
@@ -109,7 +103,7 @@ export const discordRenderer: MessageRenderer = {
       const detail = msg.detail
         ? `\n\`\`\`\n${truncateContent(stripCodeFences(msg.detail), 500)}\n\`\`\``
         : "";
-      return `${msg.summary}${detail}`;
+      return `**${msg.summary}**${detail}`;
     }
     if (msg.style === "thought") {
       return `💭 _${msg.summary}_`;

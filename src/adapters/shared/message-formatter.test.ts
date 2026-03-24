@@ -80,7 +80,7 @@ describe("formatToolSummary", () => {
   it("summarizes Write tool", () => {
     expect(
       formatToolSummary("Write", JSON.stringify({ file_path: "new-file.ts" })),
-    ).toBe("✏️ Write new-file.ts");
+    ).toBe("📝 Write new-file.ts");
   });
   it("summarizes Grep tool", () => {
     expect(
