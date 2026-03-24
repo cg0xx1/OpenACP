@@ -23,6 +23,7 @@ import {
   setupCommands,
   setupMenuCallbacks,
   setupDangerousModeCallbacks,
+  setupVoiceModeCallbacks,
   setupIntegrateCallbacks,
   buildMenuKeyboard,
   handlePendingWorkspaceInput,
@@ -234,6 +235,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
     // Callback registration order matters!
     setupDangerousModeCallbacks(this.bot, this.core as OpenACPCore);
+    setupVoiceModeCallbacks(this.bot, this.core as OpenACPCore);
     setupActionCallbacks(
       this.bot,
       this.core as OpenACPCore,

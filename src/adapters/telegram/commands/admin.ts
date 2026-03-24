@@ -123,6 +123,78 @@ export async function handleDisableDangerous(ctx: Context, core: OpenACPCore): P
   await ctx.reply("🔐 <b>Dangerous mode disabled</b>\n\nPermission requests will be shown normally.", { parse_mode: "HTML" });
 }
 
+export function buildVoiceModeKeyboard(sessionId: string, enabled: boolean): InlineKeyboard {
+  return new InlineKeyboard().text(
+    enabled ? "🔊 Voice On" : "🔇 Voice Off",
+    `v:${sessionId}`,
+  );
+}
+
+export function buildSessionControlKeyboard(sessionId: string, dangerousMode: boolean, voiceMode: boolean): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(
+      dangerousMode ? "🔐 Disable Dangerous Mode" : "☠️ Enable Dangerous Mode",
+      `d:${sessionId}`,
+    )
+    .text(
+      voiceMode ? "🔊 Voice On" : "🔇 Voice Off",
+      `v:${sessionId}`,
+    );
+}
+
+export function setupVoiceModeCallbacks(bot: Bot, core: OpenACPCore): void {
+  bot.callbackQuery(/^v:/, async (ctx) => {
+    const sessionId = ctx.callbackQuery.data.slice(2);
+    const session = core.sessionManager.getSession(sessionId);
+
+    if (!session) {
+      try { await ctx.answerCallbackQuery({ text: "⚠️ Session not found or not active." }); } catch { }
+      return;
+    }
+
+    const newMode = session.voiceMode === "on" ? "off" : "on";
+    session.setVoiceMode(newMode);
+
+    const toastText = newMode === "on"
+      ? "🔊 Voice mode enabled — agent will send voice summaries"
+      : "🔇 Voice mode disabled";
+    try { await ctx.answerCallbackQuery({ text: toastText }); } catch { }
+
+    try {
+      await ctx.editMessageReplyMarkup({
+        reply_markup: buildSessionControlKeyboard(sessionId, session.dangerousMode, newMode === "on"),
+      });
+    } catch { /* ignore */ }
+  });
+}
+
+export async function handleVoice(ctx: Context, core: OpenACPCore): Promise<void> {
+  const threadId = ctx.message?.message_thread_id;
+  if (!threadId) {
+    await ctx.reply("⚠️ This command only works inside a session topic.", { parse_mode: "HTML" });
+    return;
+  }
+  const session = core.sessionManager.getSessionByThread("telegram", String(threadId));
+  if (!session) {
+    await ctx.reply("⚠️ No active session in this topic.", { parse_mode: "HTML" });
+    return;
+  }
+
+  const args = ctx.message?.text?.split(/\s+/).slice(1) ?? [];
+  const arg = args[0]?.toLowerCase();
+
+  if (arg === "on") {
+    session.setVoiceMode("on");
+    await ctx.reply("🔊 Voice mode enabled for this session.", { parse_mode: "HTML" });
+  } else if (arg === "off") {
+    session.setVoiceMode("off");
+    await ctx.reply("🔇 Voice mode disabled.", { parse_mode: "HTML" });
+  } else {
+    session.setVoiceMode("next");
+    await ctx.reply("🔊 Voice mode enabled for the next message.", { parse_mode: "HTML" });
+  }
+}
+
 export async function handleUpdate(ctx: Context, core: OpenACPCore): Promise<void> {
   if (!core.requestRestart) {
     await ctx.reply("⚠️ Update is not available (no restart handler registered).", { parse_mode: "HTML" });
