@@ -91,7 +91,6 @@ const SpeechSchema = z
       .object({
         provider: z.string().nullable().default(null),
         providers: z.record(SpeechProviderSchema).default({}),
-        voice: z.string().default("en-US-AriaNeural"),
       })
       .default({}),
   })

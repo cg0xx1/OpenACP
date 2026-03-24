@@ -23,7 +23,7 @@ import {
   setupCommands,
   setupMenuCallbacks,
   setupDangerousModeCallbacks,
-  setupVoiceModeCallbacks,
+  setupTTSCallbacks,
   setupIntegrateCallbacks,
   buildMenuKeyboard,
   handlePendingWorkspaceInput,
@@ -139,7 +139,12 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
   }
 
   async start(): Promise<void> {
-    this.bot = new Bot(this.telegramConfig.botToken, { client: { fetch: patchedFetch } });
+    this.bot = new Bot(this.telegramConfig.botToken, {
+      client: {
+        baseFetchConfig: { duplex: "half" } as RequestInit,
+        fetch: patchedFetch,
+      },
+    });
     this.fileService = this.core.fileService;
 
     // Initialize extracted managers
@@ -235,7 +240,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
     // Callback registration order matters!
     setupDangerousModeCallbacks(this.bot, this.core as OpenACPCore);
-    setupVoiceModeCallbacks(this.bot, this.core as OpenACPCore);
+    setupTTSCallbacks(this.bot, this.core as OpenACPCore);
     setupActionCallbacks(
       this.bot,
       this.core as OpenACPCore,

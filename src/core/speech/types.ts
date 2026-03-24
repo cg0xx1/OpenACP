@@ -44,6 +44,5 @@ export interface SpeechServiceConfig {
   tts: {
     provider: string | null;
     providers: Record<string, SpeechProviderConfig>;
-    voice?: string;
   };
 }

@@ -93,7 +93,7 @@ export class OpenACPCore {
     // Register built-in TTS providers
     if (speechConfig.tts?.provider === "edge-tts") {
       const edgeConfig = speechConfig.tts.providers?.["edge-tts"];
-      const voice = (edgeConfig?.voice as string) || speechConfig.tts.voice;
+      const voice = edgeConfig?.voice as string | undefined;
       this.speechService.registerTTSProvider("edge-tts", new EdgeTTS(voice));
     }
 
@@ -131,7 +131,7 @@ export class OpenACPCore {
           const ttsCfg = newSpeechConfig.tts;
           if (ttsCfg?.provider === "edge-tts") {
             const edgeConfig = ttsCfg.providers?.["edge-tts"];
-            const voice = (edgeConfig?.voice as string) || ttsCfg.voice;
+            const voice = edgeConfig?.voice as string | undefined;
             this.speechService.registerTTSProvider("edge-tts", new EdgeTTS(voice));
           }
           log.info("Speech service config updated at runtime");
@@ -517,6 +517,16 @@ export class OpenACPCore {
   }
 
   // --- Lazy Resume ---
+
+  /**
+   * Get active session by thread, or attempt lazy resume from store.
+   * Used by adapter command handlers that need a session but don't go through handleMessage().
+   */
+  async getOrResumeSession(channelId: string, threadId: string): Promise<Session | null> {
+    const session = this.sessionManager.getSessionByThread(channelId, threadId);
+    if (session) return session;
+    return this.lazyResume({ channelId, threadId, userId: "", text: "" });
+  }
 
   private async lazyResume(message: IncomingMessage): Promise<Session | null> {
     const store = this.sessionStore;

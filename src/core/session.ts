@@ -135,7 +135,7 @@ export class Session extends TypedEmitter<SessionEvents> {
 
   setVoiceMode(mode: "off" | "next" | "on"): void {
     this.voiceMode = mode;
-    this.log.info({ voiceMode: mode }, "Voice mode changed");
+    this.log.info({ voiceMode: mode }, "TTS mode changed");
   }
 
   // --- Public API ---
