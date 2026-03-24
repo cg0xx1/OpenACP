@@ -572,7 +572,7 @@ export async function setupAgents(): Promise<{
         value: a.key,
       });
     }
-    for (const a of installable.slice(0, 10)) {
+    for (const a of installable) {
       const dedupeKey = `${a.key}::${a.name}`;
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
@@ -582,10 +582,12 @@ export async function setupAgents(): Promise<{
       });
     }
 
+    const installedKeys = installed.map(a => a.key);
     const selected = guardCancel(
       await (clack as any).autocompleteMultiselect({
-        message: "Install additional agents? (Space to select, Enter to continue)",
+        message: "Install additional agents? (type to search, Space to select)",
         options,
+        initialValues: installedKeys,
         required: false,
       }),
     ) as string[];
@@ -634,7 +636,7 @@ export async function setupWorkspace(stepNum = 2, totalSteps = 3): Promise<{ bas
   const baseDir = guardCancel(
     await clack.text({
       message: "Base directory for workspaces:",
-      defaultValue: "~/openacp-workspace",
+      initialValue: "~/openacp-workspace",
       validate: (val) => (val ?? "").toString().trim().length > 0 ? undefined : "Path cannot be empty",
     }),
   ) as string;
