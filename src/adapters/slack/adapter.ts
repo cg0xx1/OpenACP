@@ -269,29 +269,6 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     const meta = this.sessions.get(sessionId);
     if (!meta) return;
 
-    const session = this.core.sessionManager.getSession(sessionId);
-    if (!session) return;
-
-    // Auto-approve openacp CLI commands
-    if (request.description.includes("openacp")) {
-      const allowOption = request.options.find((o) => o.isAllow);
-      if (allowOption && session.permissionGate.requestId === request.id) {
-        log.info({ sessionId, requestId: request.id }, "Auto-approving openacp command");
-        session.permissionGate.resolve(allowOption.id);
-      }
-      return;
-    }
-
-    // Dangerous mode: auto-approve
-    if (session.dangerousMode) {
-      const allowOption = request.options.find((o) => o.isAllow);
-      if (allowOption && session.permissionGate.requestId === request.id) {
-        log.info({ sessionId, requestId: request.id }, "Dangerous mode: auto-approving");
-        session.permissionGate.resolve(allowOption.id);
-      }
-      return;
-    }
-
     log.info({ sessionId, requestId: request.id }, "Sending Slack permission request");
     const blocks = this.formatter.formatPermissionRequest(request);
 
