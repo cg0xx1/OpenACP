@@ -2,7 +2,7 @@ name: Telegram Notifications
 
 on:
   push:
-    tags-ignore: ["**"]
+    branches: ["**"]
   pull_request_target:
     types: [opened, closed, reopened]
   release:
