@@ -530,7 +530,9 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
           { type: 'other' },
         )
 
-        // Strip [TTS]...[/TTS] block from the text message after audio is sent
+        // Strip [TTS]...[/TTS] block from the text message after audio is sent.
+        // This fires after sendQueue completes, so the draft message already exists.
+        // stripPattern is best-effort and handles missing/finalized drafts gracefully.
         if (attachment.type === 'audio') {
           const draft = this.draftManager.getDraft(ctx.sessionId)
           if (draft) {

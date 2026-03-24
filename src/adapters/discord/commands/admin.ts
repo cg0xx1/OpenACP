@@ -7,18 +7,6 @@ import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
 import { log } from '../../../core/log.js'
 import type { DiscordAdapter } from '../adapter.js'
 
-export function buildDangerousModeKeyboard(
-  sessionId: string,
-  isDangerous: boolean,
-): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`d:${sessionId}`)
-      .setLabel(isDangerous ? '🔐 Disable Dangerous Mode' : '☠️ Enable Dangerous Mode')
-      .setStyle(isDangerous ? ButtonStyle.Secondary : ButtonStyle.Danger),
-  )
-}
-
 export async function handleDangerous(
   interaction: ChatInputCommandInteraction,
   adapter: DiscordAdapter,
@@ -76,7 +64,7 @@ export async function handleDangerousButton(
 
     try {
       await interaction.update({
-        components: [buildDangerousModeKeyboard(sessionId, session.dangerousMode)],
+        components: [buildSessionControlKeyboard(sessionId, session.dangerousMode, session.voiceMode === 'on')],
       })
     } catch { /* ignore */ }
 
@@ -100,8 +88,9 @@ export async function handleDangerousButton(
     : '🔐 Dangerous mode disabled — permissions shown normally'
 
   try {
+    // Store-only path: voiceMode unknown, default to off
     await interaction.update({
-      components: [buildDangerousModeKeyboard(sessionId, newDangerousMode)],
+      components: [buildSessionControlKeyboard(sessionId, newDangerousMode, false)],
     })
   } catch { /* ignore */ }
 
@@ -109,18 +98,6 @@ export async function handleDangerousButton(
 }
 
 // ─── TTS ──────────────────────────────────────────────────────────────────────
-
-export function buildTTSKeyboard(
-  sessionId: string,
-  enabled: boolean,
-): ActionRowBuilder<ButtonBuilder> {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`v:${sessionId}`)
-      .setLabel(enabled ? '🔊 Text to Speech' : '🔇 Text to Speech')
-      .setStyle(enabled ? ButtonStyle.Success : ButtonStyle.Secondary),
-  )
-}
 
 export function buildSessionControlKeyboard(
   sessionId: string,

@@ -80,7 +80,7 @@ export class OpenACPCore {
       tts: { provider: "edge-tts", providers: {} },
     };
     // Default TTS provider to edge-tts if not explicitly set
-    if (speechConfig.tts.provider === null || speechConfig.tts.provider === undefined) {
+    if (speechConfig.tts.provider == null) {
       speechConfig.tts.provider = "edge-tts";
     }
     this.speechService = new SpeechService(speechConfig);
