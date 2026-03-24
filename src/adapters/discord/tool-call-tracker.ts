@@ -2,26 +2,16 @@ import type { TextChannel, ThreadChannel, Message } from "discord.js";
 import { log } from "../../core/log.js";
 import { formatToolCall, formatToolUpdate } from "./formatting.js";
 import type { DiscordSendQueue } from "./send-queue.js";
+import type { ToolCallMeta, ViewerLinks } from "../shared/format-types.js";
 
 interface ToolCallState {
   message?: Message;
   name: string;
   kind?: string;
   rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
+  viewerLinks?: ViewerLinks;
   viewerFilePath?: string;
   ready: Promise<void>;
-}
-
-interface ToolCallMeta {
-  id: string;
-  name: string;
-  kind?: string;
-  status?: string;
-  content?: unknown;
-  rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
-  viewerFilePath?: string;
 }
 
 export class ToolCallTracker {

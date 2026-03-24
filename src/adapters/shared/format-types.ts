@@ -23,6 +23,7 @@ export interface MessageMetadata {
   viewerLinks?: { type: "file" | "diff"; url: string; label: string }[];
 }
 
+/** summary and detail are always plain text (never pre-escaped HTML/markdown) — renderers handle escaping */
 export interface FormattedMessage {
   summary: string;
   detail?: string;
@@ -65,6 +66,26 @@ export const KIND_ICONS: Record<string, string> = {
   move: "📦",
   other: "🛠️",
 };
+
+export interface ViewerLinks {
+  file?: string;
+  diff?: string;
+}
+
+export interface ToolCallMeta {
+  id: string;
+  name: string;
+  kind?: string;
+  status?: string;
+  content?: unknown;
+  rawInput?: unknown;
+  viewerLinks?: ViewerLinks;
+  viewerFilePath?: string;
+}
+
+export interface ToolUpdateMeta extends ToolCallMeta {
+  status: string;
+}
 
 export const MESSAGE_ICONS: Record<string, string> = {
   thought: "💭",

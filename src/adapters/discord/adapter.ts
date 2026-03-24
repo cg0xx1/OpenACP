@@ -18,6 +18,7 @@ import type {
 import type { OpenACPCore } from "../../core/core.js";
 import type { Session } from "../../core/session.js";
 import { log } from "../../core/log.js";
+import type { ViewerLinks } from "../shared/format-types.js";
 import {
   dispatchMessage,
   type MessageHandlers,
@@ -534,9 +535,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
         status: String(meta.status ?? "running"),
         content: meta.content,
         rawInput: meta.rawInput,
-        viewerLinks: meta.viewerLinks as
-          | { file?: string; diff?: string }
-          | undefined,
+        viewerLinks: meta.viewerLinks as ViewerLinks | undefined,
         viewerFilePath: meta.viewerFilePath as string | undefined,
       });
     },
@@ -550,9 +549,7 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
         status: String(meta.status ?? "completed"),
         content: meta.content,
         rawInput: meta.rawInput,
-        viewerLinks: meta.viewerLinks as
-          | { file?: string; diff?: string }
-          | undefined,
+        viewerLinks: meta.viewerLinks as ViewerLinks | undefined,
         viewerFilePath: meta.viewerFilePath as string | undefined,
       });
     },

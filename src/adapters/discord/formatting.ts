@@ -2,6 +2,9 @@ import type { PlanEntry } from "../../core/types.js";
 import type {
   FormattedMessage,
   MessageRenderer,
+  ToolCallMeta,
+  ToolUpdateMeta,
+  ViewerLinks,
 } from "../shared/format-types.js";
 import { STATUS_ICONS } from "../shared/format-types.js";
 import {
@@ -16,10 +19,7 @@ import {
   formatToolSummary,
 } from "../shared/message-formatter.js";
 
-function formatViewerLinks(
-  links?: { file?: string; diff?: string },
-  filePath?: string,
-): string {
+function formatViewerLinks(links?: ViewerLinks, filePath?: string): string {
   if (!links) return "";
   const fileName = filePath ? filePath.split("/").pop() || filePath : "";
   let text = "\n";
@@ -29,16 +29,7 @@ function formatViewerLinks(
   return text;
 }
 
-export function formatToolCall(tool: {
-  id: string;
-  name?: string;
-  kind?: string;
-  status?: string;
-  content?: unknown;
-  rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
-  viewerFilePath?: string;
-}): string {
+export function formatToolCall(tool: ToolCallMeta): string {
   const si = STATUS_ICONS[tool.status || ""] || "🔧";
   const name = tool.name || "Tool";
   const summary = formatToolSummary(name, tool.rawInput);
@@ -53,16 +44,7 @@ export function formatToolCall(tool: {
   return text;
 }
 
-export function formatToolUpdate(update: {
-  id: string;
-  name?: string;
-  kind?: string;
-  status: string;
-  content?: unknown;
-  rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
-  viewerFilePath?: string;
-}): string {
+export function formatToolUpdate(update: ToolUpdateMeta): string {
   return formatToolCall(update);
 }
 

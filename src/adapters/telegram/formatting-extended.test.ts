@@ -178,9 +178,10 @@ describe("formatToolCall", () => {
     expect(result).toContain("… (truncated)");
   });
 
-  it("handles missing name", () => {
+  it("handles generic tool name", () => {
     const result = formatToolCall({
       id: "tc-1",
+      name: "Tool",
       status: "running",
     });
     expect(result).toContain("🔧 Tool");
@@ -254,9 +255,10 @@ describe("formatToolUpdate", () => {
     expect(result).toContain("❌");
   });
 
-  it("handles missing name", () => {
+  it("handles generic tool name", () => {
     const result = formatToolUpdate({
       id: "tc-1",
+      name: "Tool",
       status: "completed",
     });
     expect(result).toContain("🔧 Tool");

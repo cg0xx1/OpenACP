@@ -2,6 +2,7 @@ import type { Bot } from "grammy";
 import type { TelegramSendQueue } from "./send-queue.js";
 import { formatToolCall, formatToolUpdate } from "./formatting.js";
 import { createChildLogger } from "../../core/log.js";
+import type { ToolCallMeta, ViewerLinks } from "../shared/format-types.js";
 
 const log = createChildLogger({ module: "tool-call-tracker" });
 
@@ -10,20 +11,9 @@ interface ToolCallState {
   name: string;
   kind?: string;
   rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
+  viewerLinks?: ViewerLinks;
   viewerFilePath?: string;
   ready: Promise<void>;
-}
-
-interface ToolCallMeta {
-  id: string;
-  name: string;
-  kind?: string;
-  status?: string;
-  content?: unknown;
-  rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
-  viewerFilePath?: string;
 }
 
 export class ToolCallTracker {

@@ -4,8 +4,10 @@ import {
   formatUsage,
   formatToolCall,
   formatPlan,
+  discordRenderer,
 } from "./formatting.js";
 import type { PlanEntry } from "../../core/types.js";
+import type { FormattedMessage } from "../shared/format-types.js";
 
 describe("splitMessage", () => {
   it("returns array with original text when within maxLength", () => {
@@ -217,5 +219,77 @@ describe("formatPlan", () => {
     ];
     const result = formatPlan(entries);
     expect(result).toContain("⬜ 1. Unknown");
+  });
+});
+
+describe("discordRenderer", () => {
+  it("renders tool message with bold markdown", () => {
+    const msg: FormattedMessage = {
+      summary: "⏳ 📖 Read src/main.ts",
+      icon: "📖",
+      originalType: "tool_call",
+      style: "tool",
+    };
+    const result = discordRenderer.render(msg, false);
+    expect(result).toContain("**");
+    expect(result).not.toContain("<b>");
+  });
+
+  it("renders tool message with detail in code block", () => {
+    const msg: FormattedMessage = {
+      summary: "✅ ▶️ Run: pnpm test",
+      detail: "all 50 tests pass",
+      icon: "▶️",
+      originalType: "tool_update",
+      style: "tool",
+    };
+    const result = discordRenderer.render(msg, false);
+    expect(result).toContain("```");
+    expect(result).toContain("all 50 tests pass");
+  });
+
+  it("renders thought message with italic markdown", () => {
+    const msg: FormattedMessage = {
+      summary: "Thinking about the approach",
+      icon: "💭",
+      originalType: "thought",
+      style: "thought",
+    };
+    const result = discordRenderer.render(msg, false);
+    expect(result).toContain("💭");
+    expect(result).toContain("_Thinking about the approach_");
+  });
+
+  it("renders text message as-is", () => {
+    const msg: FormattedMessage = {
+      summary: "Hello world",
+      icon: "",
+      originalType: "text",
+      style: "text",
+    };
+    const result = discordRenderer.render(msg, false);
+    expect(result).toBe("Hello world");
+  });
+
+  it("renderFull returns summary", () => {
+    const msg: FormattedMessage = {
+      summary: "Summary text",
+      icon: "📊",
+      originalType: "usage",
+      style: "usage",
+    };
+    expect(discordRenderer.renderFull(msg)).toBe("Summary text");
+  });
+
+  it("truncates tool detail at 500 chars", () => {
+    const msg: FormattedMessage = {
+      summary: "✅ Read file",
+      detail: "x".repeat(800),
+      icon: "📖",
+      originalType: "tool_update",
+      style: "tool",
+    };
+    const result = discordRenderer.render(msg, false);
+    expect(result).toContain("… (truncated)");
   });
 });

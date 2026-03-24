@@ -54,20 +54,7 @@ interface TelegramMessageCtx {
   threadId: number;
 }
 
-interface ToolCallMetadata {
-  id: string;
-  name: string;
-  kind?: string;
-  status?: string;
-  content?: unknown;
-  rawInput?: unknown;
-  viewerLinks?: { file?: string; diff?: string };
-  viewerFilePath?: string;
-}
-
-interface ToolUpdateMetadata extends ToolCallMetadata {
-  status: string;
-}
+import type { ToolCallMeta, ToolUpdateMeta } from "../shared/format-types.js";
 
 interface PlanMetadata {
   entries: Array<{ content: string; status: string; priority: string }>;
@@ -630,7 +617,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         ctx.sessionId,
         this.assistantSession?.id,
       );
-      const meta = (content.metadata ?? {}) as Partial<ToolCallMetadata>;
+      const meta = (content.metadata ?? {}) as Partial<ToolCallMeta>;
       await this.toolTracker.trackNewCall(ctx.sessionId, ctx.threadId, {
         id: meta.id ?? "",
         name: meta.name ?? content.text ?? "Tool",
@@ -644,7 +631,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     },
 
     onToolUpdate: async (ctx, content) => {
-      const meta = (content.metadata ?? {}) as Partial<ToolUpdateMetadata>;
+      const meta = (content.metadata ?? {}) as Partial<ToolUpdateMeta>;
       await this.toolTracker.updateCall(ctx.sessionId, {
         id: meta.id ?? "",
         name: meta.name ?? content.text ?? "",

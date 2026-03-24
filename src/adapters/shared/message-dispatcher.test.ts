@@ -42,14 +42,15 @@ describe("dispatchMessage", () => {
       const h = createMockHandlers();
       const msg = { type, text: "" } as OutgoingMessage;
       await dispatchMessage(h, "ctx", msg);
-      const handlerName = `on${type.charAt(0).toUpperCase()}${type.slice(1).replace(/_([a-z])/g, (_, c) => c.toUpperCase())}` as keyof MessageHandlers<string>;
+      const handlerName =
+        `on${type.charAt(0).toUpperCase()}${type.slice(1).replace(/_([a-z])/g, (_, c) => c.toUpperCase())}` as keyof MessageHandlers<string>;
       expect(h[handlerName]).toHaveBeenCalled();
     }
   });
 
   it("unknown type does not crash", async () => {
     const h = createMockHandlers();
-    const msg = { type: "unknown_xyz", text: "" } as any;
+    const msg = { type: "unknown_xyz", text: "" } as unknown as OutgoingMessage;
     await expect(dispatchMessage(h, "ctx", msg)).resolves.toBeUndefined();
   });
 });
