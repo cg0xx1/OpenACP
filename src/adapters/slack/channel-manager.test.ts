@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { SlackChannelManager } from "./channel-manager.js";
+import type { ISlackSendQueue } from "./send-queue.js";
 import type { SlackChannelConfig } from "./types.js";
 
 function makeConfig(overrides: Partial<SlackChannelConfig> = {}): SlackChannelConfig {
@@ -87,5 +88,37 @@ describe("SlackChannelManager", () => {
       (call) => call[0] === "conversations.invite",
     );
     expect(inviteCalls).toHaveLength(0);
+  });
+
+  it("retries up to 3 times on name_taken, then throws", async () => {
+    const mockQueue: ISlackSendQueue = {
+      enqueue: vi.fn()
+        .mockRejectedValueOnce({ data: { error: "name_taken" } })
+        .mockRejectedValueOnce({ data: { error: "name_taken" } })
+        .mockRejectedValueOnce({ data: { error: "name_taken" } }),
+    };
+
+    const manager = new SlackChannelManager(mockQueue, { channelPrefix: "test" } as any);
+
+    await expect(manager.createChannel("s1", "test")).rejects.toThrow();
+    expect(mockQueue.enqueue).toHaveBeenCalledTimes(3);
+  });
+
+  it("succeeds on second attempt after name_taken", async () => {
+    const mockQueue: ISlackSendQueue = {
+      enqueue: vi.fn()
+        .mockRejectedValueOnce({ data: { error: "name_taken" } })
+        .mockResolvedValueOnce({ channel: { id: "C456" } })
+        .mockResolvedValue(undefined),
+    };
+
+    const manager = new SlackChannelManager(mockQueue, {
+      channelPrefix: "test",
+      allowedUserIds: [],
+    } as any);
+
+    const result = await manager.createChannel("s1", "test");
+    expect(result.channelId).toBe("C456");
+    expect(mockQueue.enqueue).toHaveBeenCalledTimes(2);
   });
 });

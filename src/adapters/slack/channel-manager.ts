@@ -17,39 +17,39 @@ export class SlackChannelManager implements ISlackChannelManager {
   ) {}
 
   async createChannel(sessionId: string, sessionName: string): Promise<SlackSessionMeta> {
-    let finalSlug = toSlug(sessionName, this.config.channelPrefix ?? "openacp");
+    let lastError: unknown;
 
-    let channelId: string;
-    try {
-      const res = await this.queue.enqueue<{ channel: { id: string } }>(
-        "conversations.create",
-        { name: finalSlug, is_private: true }
-      );
-      channelId = res.channel.id;
-    } catch (err: any) {
-      if (err?.data?.error === "name_taken") {
-        finalSlug = toSlug(sessionName, this.config.channelPrefix ?? "openacp");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const finalSlug = toSlug(sessionName, this.config.channelPrefix ?? "openacp");
+
+      try {
         const res = await this.queue.enqueue<{ channel: { id: string } }>(
           "conversations.create",
-          { name: finalSlug, is_private: true }
+          { name: finalSlug, is_private: true },
         );
-        channelId = res.channel.id;
-      } else {
+        const channelId = res.channel.id;
+
+        // Bot is automatically a member of private channels it creates — no join/invite needed.
+        // Invite configured users so they can access the channel.
+        const userIds = this.config.allowedUserIds ?? [];
+        if (userIds.length > 0) {
+          await this.queue.enqueue("conversations.invite", {
+            channel: channelId,
+            users: userIds.join(","),
+          });
+        }
+
+        return { channelId, channelSlug: finalSlug };
+      } catch (err: any) {
+        if (err?.data?.error === "name_taken" && attempt < 2) {
+          lastError = err;
+          continue;
+        }
         throw err;
       }
     }
 
-    // Bot is automatically a member of private channels it creates — no join/invite needed.
-    // Invite configured users so they can access the channel.
-    const userIds = this.config.allowedUserIds ?? [];
-    if (userIds.length > 0) {
-      await this.queue.enqueue("conversations.invite", {
-        channel: channelId,
-        users: userIds.join(","),
-      });
-    }
-
-    return { channelId, channelSlug: finalSlug };
+    throw lastError;
   }
 
   async archiveChannel(channelId: string): Promise<void> {
