@@ -15,7 +15,27 @@ export class CloudflareTunnelProvider implements TunnelProvider {
   }
 
   async start(localPort: number): Promise<string> {
-    // Auto-install cloudflared if not present
+    const maxRetries = 3
+    let lastError: Error | null = null
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const url = await this.tryStart(localPort)
+        return url
+      } catch (err) {
+        lastError = err as Error
+        if (attempt < maxRetries) {
+          const delay = attempt * 2000
+          log.warn({ attempt, maxRetries, err: lastError.message }, `Cloudflare tunnel failed, retrying in ${delay / 1000}s...`)
+          await new Promise(r => setTimeout(r, delay))
+        }
+      }
+    }
+
+    throw lastError!
+  }
+
+  private async tryStart(localPort: number): Promise<string> {
     const binaryPath = await ensureCloudflared()
 
     const args = ['tunnel', '--url', `http://localhost:${localPort}`]
