@@ -74,11 +74,15 @@ export class OpenACPCore {
       path.join(os.homedir(), ".openacp", "files"),
     );
 
-    // Initialize speech service
+    // Initialize speech service — edge-tts is always available by default (free, no API key)
     const speechConfig = config.speech ?? {
       stt: { provider: null, providers: {} },
-      tts: { provider: null, providers: {} },
+      tts: { provider: "edge-tts", providers: {} },
     };
+    // Default TTS provider to edge-tts if not explicitly set
+    if (speechConfig.tts.provider == null) {
+      speechConfig.tts.provider = "edge-tts";
+    }
     this.speechService = new SpeechService(speechConfig);
 
     // Register built-in STT providers
@@ -90,9 +94,9 @@ export class OpenACPCore {
       );
     }
 
-    // Register built-in TTS providers
-    if (speechConfig.tts?.provider === "edge-tts") {
-      const edgeConfig = speechConfig.tts.providers?.["edge-tts"];
+    // Register built-in TTS providers — always register edge-tts (free, no config needed)
+    {
+      const edgeConfig = speechConfig.tts?.providers?.["edge-tts"];
       const voice = edgeConfig?.voice as string | undefined;
       this.speechService.registerTTSProvider("edge-tts", new EdgeTTS(voice));
     }
@@ -127,10 +131,9 @@ export class OpenACPCore {
               new GroqSTT(groqCfg.apiKey, groqCfg.model),
             );
           }
-          // Re-register TTS providers on config change
-          const ttsCfg = newSpeechConfig.tts;
-          if (ttsCfg?.provider === "edge-tts") {
-            const edgeConfig = ttsCfg.providers?.["edge-tts"];
+          // Re-register TTS providers on config change — always keep edge-tts available
+          {
+            const edgeConfig = newSpeechConfig.tts?.providers?.["edge-tts"];
             const voice = edgeConfig?.voice as string | undefined;
             this.speechService.registerTTSProvider("edge-tts", new EdgeTTS(voice));
           }
