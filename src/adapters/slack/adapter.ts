@@ -1,4 +1,5 @@
 // src/adapters/slack/adapter.ts
+import fs from "node:fs";
 import { App } from "@slack/bolt";
 import { WebClient } from "@slack/web-api";
 import {
@@ -9,11 +10,13 @@ import {
   type PermissionRequest,
   type NotificationMessage,
 } from "../../core/index.js";
+import type { Attachment } from "../../core/types.js";
+import type { FileService } from "../../core/file-service.js";
 import { createChildLogger } from "../../core/log.js";
 const log = createChildLogger({ module: "slack" });
 
 import type { SlackChannelConfig } from "./types.js";
-import type { SlackSessionMeta } from "./types.js";
+import type { SlackSessionMeta, SlackFileInfo } from "./types.js";
 import { SlackSendQueue } from "./send-queue.js";
 import { SlackFormatter } from "./formatter.js";
 import { SlackChannelManager } from "./channel-manager.js";
@@ -34,6 +37,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
   private textBuffers = new Map<string, SlackTextBuffer>();
   private botUserId = "";
   private slackConfig: SlackChannelConfig;
+  private fileService!: FileService;
 
   constructor(core: OpenACPCore, config: SlackChannelConfig) {
     super(core, config as unknown as ChannelConfig);
@@ -57,6 +61,7 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
 
     this.webClient = new WebClient(botToken);
     this.queue = new SlackSendQueue(this.webClient);
+    this.fileService = this.core.fileService;
 
     // Resolve bot user ID — required to filter bot's own messages (prevent infinite loop)
     const authResult = await this.webClient.auth.test();
@@ -93,15 +98,38 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
         }
         return undefined;
       },
-      (sessionChannelSlug, text, userId) => {
-        this.core
-          .handleMessage({
-            channelId: "slack",
-            threadId: sessionChannelSlug,
-            userId,
-            text,
+      (sessionChannelSlug, text, userId, files) => {
+        const processFiles = async (): Promise<Attachment[] | undefined> => {
+          if (!files?.length) return undefined;
+          const audioFiles = files.filter((f) => this.isAudioClip(f));
+          if (!audioFiles.length) return undefined;
+
+          const attachments: Attachment[] = [];
+          for (const file of audioFiles) {
+            const buffer = await this.downloadSlackFile(file.url_private);
+            if (!buffer) continue;
+            const mimeType = file.mimetype === "video/mp4" ? "audio/mp4" : file.mimetype;
+            const sessionId = this.core.sessionManager.getSessionByThread("slack", sessionChannelSlug)?.id;
+            if (!sessionId) continue;
+            const att = await this.fileService.saveFile(sessionId, file.name, buffer, mimeType);
+            attachments.push(att);
+          }
+          return attachments.length > 0 ? attachments : undefined;
+        };
+
+        processFiles()
+          .then((attachments) => {
+            this.core
+              .handleMessage({
+                channelId: "slack",
+                threadId: sessionChannelSlug,
+                userId,
+                text,
+                attachments,
+              })
+              .catch((err) => log.error({ err }, "handleMessage error"));
           })
-          .catch((err) => log.error({ err }, "handleMessage error"));
+          .catch((err) => log.error({ err }, "Failed to process audio files"));
       },
       this.botUserId,
       this.slackConfig.notificationChannelId,
@@ -126,6 +154,36 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
     if (this.slackConfig.autoCreateSession !== false) {
       await this._createStartupSession();
     }
+  }
+
+  private isAudioClip(file: SlackFileInfo): boolean {
+    return (file.mimetype === "video/mp4" && file.name?.startsWith("audio_message")) ||
+           file.mimetype?.startsWith("audio/");
+  }
+
+  private async downloadSlackFile(url: string): Promise<Buffer | null> {
+    try {
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.slackConfig.botToken}` },
+      });
+      if (!resp.ok) {
+        log.warn({ status: resp.status }, "Failed to download Slack file");
+        return null;
+      }
+      return Buffer.from(await resp.arrayBuffer());
+    } catch (err) {
+      log.error({ err }, "Error downloading Slack file");
+      return null;
+    }
+  }
+
+  private async uploadAudioFile(channelId: string, att: Attachment): Promise<void> {
+    const fileBuffer = await fs.promises.readFile(att.filePath);
+    await this.webClient.files.uploadV2({
+      channel_id: channelId,
+      file: fileBuffer,
+      filename: att.fileName,
+    });
   }
 
   private async _createStartupSession(): Promise<void> {
@@ -239,6 +297,19 @@ export class SlackAdapter extends ChannelAdapter<OpenACPCore> {
         buf.destroy();
         this.textBuffers.delete(sessionId);
       }
+    }
+
+    if (content.type === "attachment" && content.attachment) {
+      if (content.attachment.type === "audio") {
+        try {
+          await this.uploadAudioFile(meta.channelId, content.attachment);
+          const buf = this.textBuffers.get(sessionId);
+          if (buf) await buf.stripTtsBlock();
+        } catch (err) {
+          log.error({ err, sessionId }, "Failed to upload audio to Slack");
+        }
+      }
+      return;
     }
 
     const blocks = this.formatter.formatOutgoing(content);

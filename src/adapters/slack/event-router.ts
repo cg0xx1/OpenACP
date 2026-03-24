@@ -1,6 +1,6 @@
 // src/adapters/slack/event-router.ts
 import type { App } from "@slack/bolt";
-import type { SlackSessionMeta } from "./types.js";
+import type { SlackSessionMeta, SlackFileInfo } from "./types.js";
 import type { SlackChannelConfig } from "./types.js";
 import { createChildLogger } from "../../core/log.js";
 const log = createChildLogger({ module: "slack-event-router" });
@@ -9,7 +9,7 @@ const log = createChildLogger({ module: "slack-event-router" });
 export type SessionLookup = (channelId: string) => SlackSessionMeta | undefined;
 
 // Callback to dispatch an incoming message to core
-export type IncomingMessageCallback = (sessionId: string, text: string, userId: string) => void;
+export type IncomingMessageCallback = (sessionId: string, text: string, userId: string, files?: SlackFileInfo[]) => void;
 
 // Callback to create a new session when user messages the notification channel
 export type NewSessionCallback = (text: string, userId: string) => void;
@@ -40,11 +40,20 @@ export class SlackEventRouter implements ISlackEventRouter {
 
       // Ignore bot messages (including our own)
       if ((message as any).bot_id) return;
-      if ((message as any).subtype) return;  // edited, deleted, etc.
+      const subtype = (message as any).subtype;
+      if (subtype && subtype !== "file_share") return;  // edited, deleted, etc.
 
       const channelId = (message as any).channel as string;
       const text: string = (message as any).text ?? "";
       const userId: string = (message as any).user ?? "";
+
+      const files: SlackFileInfo[] | undefined = (message as any).files?.map((f: any) => ({
+        id: f.id,
+        name: f.name,
+        mimetype: f.mimetype,
+        size: f.size,
+        url_private: f.url_private,
+      }));
 
       log.debug({ channelId, userId, text }, "Slack message received");
 
@@ -61,7 +70,7 @@ export class SlackEventRouter implements ISlackEventRouter {
       if (session) {
         // Message to an existing session channel
         log.debug({ channelId, sessionSlug: session.channelSlug }, "Routing to session");
-        this.onIncoming(session.channelSlug, text, userId);
+        this.onIncoming(session.channelSlug, text, userId, files);
         return;
       }
 

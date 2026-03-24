@@ -120,8 +120,51 @@ describe("SlackEventRouter", () => {
 
     await app._trigger("message", { message: { channel: "C123", user: "U1", text: "hello" } });
 
-    expect(onIncoming).toHaveBeenCalledWith("openacp-session-abc1", "hello", "U1");
+    expect(onIncoming).toHaveBeenCalledWith("openacp-session-abc1", "hello", "U1", undefined);
     expect(onNewSession).not.toHaveBeenCalled();
+  });
+
+  it("routes file_share messages with audio clips", async () => {
+    const onIncoming = vi.fn();
+    const onNewSession = vi.fn();
+    const sessionLookup = vi.fn().mockReturnValue({ channelId: "C123", channelSlug: "openacp-session-abc1" });
+    const router = new SlackEventRouter(sessionLookup, onIncoming, "BOT1", "NOTIF", onNewSession, makeConfig());
+    const app = createMockApp();
+    router.register(app as any);
+
+    await app._trigger("message", {
+      message: {
+        channel: "C123",
+        user: "U1",
+        text: "",
+        subtype: "file_share",
+        files: [
+          { id: "F1", name: "audio_message_abc.mp4", mimetype: "video/mp4", size: 1024, url_private: "https://files.slack.com/F1" },
+        ],
+      },
+    });
+
+    expect(onIncoming).toHaveBeenCalledWith(
+      "openacp-session-abc1",
+      "",
+      "U1",
+      [{ id: "F1", name: "audio_message_abc.mp4", mimetype: "video/mp4", size: 1024, url_private: "https://files.slack.com/F1" }],
+    );
+  });
+
+  it("still blocks edited/deleted subtypes", async () => {
+    const onIncoming = vi.fn();
+    const onNewSession = vi.fn();
+    const sessionLookup = vi.fn().mockReturnValue({ channelId: "C123", channelSlug: "openacp-session-abc1" });
+    const router = new SlackEventRouter(sessionLookup, onIncoming, "BOT1", "NOTIF", onNewSession, makeConfig());
+    const app = createMockApp();
+    router.register(app as any);
+
+    await app._trigger("message", { message: { channel: "C123", user: "U1", text: "edited", subtype: "message_changed" } });
+    expect(onIncoming).not.toHaveBeenCalled();
+
+    await app._trigger("message", { message: { channel: "C123", user: "U1", text: "deleted", subtype: "message_deleted" } });
+    expect(onIncoming).not.toHaveBeenCalled();
   });
 
   it("routes to onNewSession when message is in notification channel and no session match", async () => {

@@ -34,6 +34,7 @@
 | `src/adapters/slack/__tests__/event-router.test.ts` | **New (R2)** | EventRouter unit tests              |
 | `src/adapters/slack/__tests__/permission-handler.test.ts` | **New (R2)** | PermissionHandler unit tests   |
 | `src/adapters/slack/__tests__/channel-manager.test.ts` | **New (R2)** | ChannelManager retry test        |
+| `src/adapters/slack/slack-voice.test.ts` | **New (T14)** | Voice STT/TTS integration tests |
 
 
 ---
@@ -2483,6 +2484,513 @@ Expected: All tests pass.
 git add src/adapters/slack/__tests__/event-router.test.ts src/adapters/slack/__tests__/permission-handler.test.ts
 git commit -m "test(slack): add unit tests for EventRouter and PermissionHandler"
 ```
+
+---
+
+---
+
+## Task 14: Voice/Speech Integration — STT + TTS for Slack adapter
+
+**Spec section:** "Voice/Speech Integration (STT + TTS)" in `docs/superpowers/specs/2026-03-23-slack-adapter-design.md`
+
+**Goal:** Enable Slack users to send audio clips (recorded via native microphone button) and receive TTS audio replies, mirroring Telegram adapter's voice capabilities. All STT/TTS logic already lives in core — this task only wires the Slack adapter to it.
+
+**Files:**
+
+- Modify: `src/adapters/slack/types.ts`
+- Modify: `src/adapters/slack/event-router.ts`
+- Modify: `src/adapters/slack/adapter.ts`
+- Modify: `src/adapters/slack/text-buffer.ts`
+- Modify: `src/adapters/slack/send-queue.ts`
+- Modify: `docs/slack-setup.md`
+- Test: `src/adapters/slack/__tests__/event-router.test.ts` (update existing)
+- New test: `src/adapters/slack/__tests__/slack-voice.test.ts`
+
+### Step 1: Add `SlackFileInfo` type
+
+- [ ] **Add `SlackFileInfo` interface to `types.ts`**
+
+```typescript
+// src/adapters/slack/types.ts — append after existing types
+
+/** Minimal file metadata extracted from Slack message events (subtype: file_share) */
+export interface SlackFileInfo {
+  id: string;
+  name: string;
+  mimetype: string;
+  size: number;
+  url_private: string;
+}
+```
+
+### Step 2: No SendQueue changes needed
+
+`files.uploadV2` is a multi-step convenience wrapper on `WebClient` that internally calls `files.getUploadURLExternal` → upload → `files.completeUploadExternal`. It cannot be routed through `apiCall()`. The adapter calls `webClient.files.uploadV2()` directly. TTS audio uploads are infrequent, so rate limiting is not critical.
+
+**No changes to `send-queue.ts`.**
+
+### Step 3: Add `stripTtsBlock()` with message editing to SlackTextBuffer
+
+The text buffer flushes after 2s idle. By the time TTS audio is ready (synthesis takes seconds), the `[TTS]...[/TTS]` block has likely already been posted to Slack. We need to handle both cases: unflushed buffer and already-posted message.
+
+- [ ] **Update `text-buffer.ts` — add message tracking and TTS block stripping**
+
+Add properties to track the last posted message:
+
+```typescript
+// src/adapters/slack/text-buffer.ts — add to class properties
+private lastMessageTs: string | undefined;
+private lastPostedText: string | undefined;
+```
+
+Update `flush()` to capture the message `ts` and text:
+
+```typescript
+// In flush(), after the chat.postMessage call, capture the response:
+// Replace the existing loop in flush():
+for (const chunk of chunks) {
+  if (!chunk.trim()) continue;
+  const result = await this.queue.enqueue("chat.postMessage", {
+    channel: this.channelId,
+    text: chunk,
+    blocks: [{ type: "section", text: { type: "mrkdwn", text: chunk } }],
+  });
+  // Track last posted message for potential TTS block editing
+  this.lastMessageTs = (result as any).ts;
+  this.lastPostedText = chunk;
+}
+```
+
+Add the `stripTtsBlock()` method after `destroy()`:
+
+```typescript
+/** Remove [TTS]...[/TTS] blocks — from buffer if unflushed, or edit posted message */
+async stripTtsBlock(): Promise<void> {
+  const ttsRegex = /\[TTS\][\s\S]*?\[\/TTS\]/g;
+
+  // Case 1: TTS block still in unflushed buffer
+  if (ttsRegex.test(this.buffer)) {
+    this.buffer = this.buffer.replace(ttsRegex, "").trim();
+    return;
+  }
+
+  // Case 2: Already flushed — edit the posted message via chat.update
+  if (this.lastMessageTs && this.lastPostedText && ttsRegex.test(this.lastPostedText)) {
+    const cleaned = this.lastPostedText.replace(ttsRegex, "").trim();
+    if (cleaned) {
+      await this.queue.enqueue("chat.update", {
+        channel: this.channelId,
+        ts: this.lastMessageTs,
+        text: cleaned,
+        blocks: [{ type: "section", text: { type: "mrkdwn", text: cleaned } }],
+      });
+    }
+    this.lastPostedText = cleaned;
+  }
+}
+```
+
+### Step 4: Update EventRouter — allow `file_share` subtype
+
+- [ ] **Modify `event-router.ts` — expand callback type and allow audio file events through**
+
+Update `IncomingMessageCallback` to accept optional files:
+
+```typescript
+import type { SlackFileInfo } from "./types.js";
+
+export type IncomingMessageCallback = (
+  sessionId: string,
+  text: string,
+  userId: string,
+  files?: SlackFileInfo[],
+) => void;
+```
+
+In `register()`, change the subtype guard and extract files:
+
+```typescript
+// BEFORE (line 43):
+if ((message as any).subtype) return;
+
+// AFTER:
+const subtype = (message as any).subtype;
+if (subtype && subtype !== "file_share") return;  // allow audio clips through
+```
+
+Extract and pass files to callback:
+
+```typescript
+const files: SlackFileInfo[] | undefined = (message as any).files?.map((f: any) => ({
+  id: f.id,
+  name: f.name,
+  mimetype: f.mimetype,
+  size: f.size,
+  url_private: f.url_private,
+}));
+
+// ... existing session lookup ...
+
+this.onIncoming(session.channelSlug, text, userId, files);
+```
+
+### Step 5: Update Adapter — incoming audio download + outgoing audio upload
+
+- [ ] **Modify `adapter.ts` — add audio download, detection, and upload methods**
+
+Add imports at the top:
+
+```typescript
+import fs from "node:fs";
+import type { SlackFileInfo } from "./types.js";
+import type { Attachment } from "../../core/types.js";
+import type { FileService } from "../../core/file-service.js";
+```
+
+Add `fileService` property and initialize in `start()`:
+
+```typescript
+// Add to class properties (alongside existing ones like webClient, queue, etc.):
+private fileService!: FileService;
+
+// In start(), after this.webClient = new WebClient(botToken):
+this.fileService = this.core.fileService;
+```
+
+Add private helper methods:
+
+```typescript
+/** Detect Slack audio clips — MIME type or filename pattern.
+ *  Slack audio clips arrive as video/mp4 (audio-only container).
+ *  Also catches direct audio/* uploads (wav, mp3, etc). */
+private isAudioClip(file: SlackFileInfo): boolean {
+  return (file.mimetype === "video/mp4" && file.name?.startsWith("audio_message")) ||
+         file.mimetype?.startsWith("audio/");
+}
+
+/** Download a file from Slack using url_private + Bearer auth */
+private async downloadSlackFile(url: string): Promise<Buffer | null> {
+  try {
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.slackConfig.botToken}` },
+    });
+    if (!resp.ok) {
+      log.warn({ status: resp.status }, "Failed to download Slack file");
+      return null;
+    }
+    return Buffer.from(await resp.arrayBuffer());
+  } catch (err) {
+    log.error({ err }, "Error downloading Slack file");
+    return null;
+  }
+}
+
+/** Upload an audio file to a Slack channel.
+ *  Calls webClient.files.uploadV2() directly — NOT through SendQueue.
+ *  files.uploadV2 is a multi-step convenience wrapper (getUploadURL + upload + complete)
+ *  that cannot be routed through apiCall(). */
+private async uploadAudioFile(channelId: string, att: Attachment): Promise<void> {
+  const fileBuffer = await fs.promises.readFile(att.filePath);
+  await this.webClient.files.uploadV2({
+    channel_id: channelId,
+    file: fileBuffer,
+    filename: att.fileName,
+  });
+}
+```
+
+- [ ] **Update the incoming message callback to handle audio files**
+
+In the `SlackEventRouter` callback (inside `start()`), update the `onIncoming` callback to accept and process files:
+
+```typescript
+// Updated onIncoming callback — was: (sessionChannelSlug, text, userId)
+// Now: (sessionChannelSlug, text, userId, files?)
+(sessionChannelSlug, text, userId, files) => {
+  // Process audio files if present
+  const processFiles = async () => {
+    if (!files?.length) return undefined;
+
+    const audioFiles = files.filter((f) => this.isAudioClip(f));
+    if (!audioFiles.length) return undefined;
+
+    const attachments: Attachment[] = [];
+    for (const file of audioFiles) {
+      const buffer = await this.downloadSlackFile(file.url_private);
+      if (!buffer) continue;
+
+      // Slack audio clips are video/mp4 but audio-only — correct to audio/mp4
+      const mimeType = file.mimetype === "video/mp4" ? "audio/mp4" : file.mimetype;
+      const sessionId = this.core.sessionManager.getSessionByThread("slack", sessionChannelSlug)?.id;
+      if (!sessionId) continue;
+
+      const att = await this.fileService.saveFile(sessionId, file.name, buffer, mimeType);
+      attachments.push(att);
+    }
+    return attachments.length > 0 ? attachments : undefined;
+  };
+
+  processFiles()
+    .then((attachments) => {
+      this.core
+        .handleMessage({
+          channelId: "slack",
+          threadId: sessionChannelSlug,
+          userId,
+          text,
+          attachments,
+        })
+        .catch((err) => log.error({ err }, "handleMessage error"));
+    })
+    .catch((err) => log.error({ err }, "Failed to process audio files"));
+},
+```
+
+- [ ] **Handle outgoing audio attachments in `sendMessage()`**
+
+Add this block in `sendMessage()` before the formatter fallthrough — after the text buffer handling, before the `const blocks = this.formatter.formatOutgoing(content)` line:
+
+```typescript
+// Handle audio/image attachments from agent (TTS, screenshots, etc.)
+if (content.type === "attachment" && content.attachment) {
+  if (content.attachment.type === "audio") {
+    try {
+      await this.uploadAudioFile(meta.channelId, content.attachment);
+      // Strip [TTS]...[/TTS] from pending text buffer or edit posted message
+      const buf = this.textBuffers.get(sessionId);
+      if (buf) await buf.stripTtsBlock();
+    } catch (err) {
+      log.error({ err, sessionId }, "Failed to upload audio to Slack");
+    }
+  }
+  return;  // other attachment types: no-op for now
+}
+```
+
+### Step 6: Build and verify
+
+- [ ] **Build**
+
+```bash
+pnpm build
+```
+
+Expected: Zero type errors.
+
+### Step 7: Write tests
+
+- [ ] **Update EventRouter test — verify `file_share` messages are not dropped**
+
+Add to `src/adapters/slack/event-router.test.ts` (existing file — tests are flat, no `__tests__/` subdirectory):
+
+```typescript
+it("routes file_share messages with audio clips", async () => {
+  const onIncoming = vi.fn();
+  const sessionLookup = vi.fn().mockReturnValue({ channelSlug: "test-session" });
+
+  const router = new SlackEventRouter(
+    sessionLookup, onIncoming, "BOT_ID", undefined,
+    vi.fn(), { allowedUserIds: [] } as any,
+  );
+
+  let messageHandler: Function;
+  const mockApp = {
+    message: vi.fn((handler: Function) => { messageHandler = handler; }),
+    command: vi.fn(),
+  };
+  router.register(mockApp as any);
+
+  // Simulate file_share message with audio clip
+  await messageHandler!({
+    message: {
+      subtype: "file_share",
+      channel: "C_SESSION",
+      user: "U_ALLOWED",
+      text: "",
+      files: [{
+        id: "F123",
+        name: "audio_message_abc.mp4",
+        mimetype: "video/mp4",
+        size: 12345,
+        url_private: "https://files.slack.com/files-pri/T123/audio_message_abc.mp4",
+      }],
+    },
+  });
+
+  expect(onIncoming).toHaveBeenCalledWith(
+    "test-session", "",  "U_ALLOWED",
+    expect.arrayContaining([
+      expect.objectContaining({ name: "audio_message_abc.mp4", mimetype: "video/mp4" }),
+    ]),
+  );
+});
+
+it("still blocks edited/deleted subtypes", async () => {
+  const onIncoming = vi.fn();
+  const router = new SlackEventRouter(
+    vi.fn(), onIncoming, "BOT_ID", undefined,
+    vi.fn(), { allowedUserIds: [] } as any,
+  );
+
+  let messageHandler: Function;
+  const mockApp = {
+    message: vi.fn((handler: Function) => { messageHandler = handler; }),
+    command: vi.fn(),
+  };
+  router.register(mockApp as any);
+
+  await messageHandler!({
+    message: { subtype: "message_changed", channel: "C1", user: "U1", text: "edited" },
+  });
+
+  expect(onIncoming).not.toHaveBeenCalled();
+});
+```
+
+- [ ] **Create voice-specific test file**
+
+```typescript
+// src/adapters/slack/slack-voice.test.ts (flat — no __tests__/ subdirectory)
+import { describe, it, expect, vi } from "vitest";
+import { SlackTextBuffer } from "./text-buffer.js";
+
+describe("SlackTextBuffer.stripTtsBlock", () => {
+  it("strips TTS block from unflushed buffer", async () => {
+    const queue = { enqueue: vi.fn().mockResolvedValue({}) } as any;
+    const buf = new SlackTextBuffer("C1", "s1", queue);
+
+    buf.append("Here is the answer. [TTS]This is the spoken version.[/TTS] More text.");
+    await buf.stripTtsBlock();
+
+    expect((buf as any).buffer).toBe("Here is the answer.  More text.");
+  });
+
+  it("handles multiline TTS blocks", async () => {
+    const queue = { enqueue: vi.fn().mockResolvedValue({}) } as any;
+    const buf = new SlackTextBuffer("C1", "s1", queue);
+
+    buf.append("Answer.\n[TTS]\nLine 1\nLine 2\n[/TTS]\nMore.");
+    await buf.stripTtsBlock();
+
+    expect((buf as any).buffer).toBe("Answer.\n\nMore.");
+  });
+
+  it("no-ops when no TTS block present", async () => {
+    const queue = { enqueue: vi.fn().mockResolvedValue({}) } as any;
+    const buf = new SlackTextBuffer("C1", "s1", queue);
+
+    buf.append("No TTS here.");
+    await buf.stripTtsBlock();
+
+    expect((buf as any).buffer).toBe("No TTS here.");
+  });
+
+  it("edits already-posted message via chat.update when buffer was flushed", async () => {
+    const queue = { enqueue: vi.fn().mockResolvedValue({ ts: "123.456" }) } as any;
+    const buf = new SlackTextBuffer("C1", "s1", queue);
+
+    buf.append("Answer. [TTS]Spoken text.[/TTS]");
+    await buf.flush(); // posts to Slack, captures ts
+
+    // Now TTS block is in posted message, not buffer
+    queue.enqueue.mockClear();
+    await buf.stripTtsBlock();
+
+    // Should call chat.update to edit the posted message
+    expect(queue.enqueue).toHaveBeenCalledWith("chat.update", expect.objectContaining({
+      channel: "C1",
+      ts: "123.456",
+    }));
+  });
+});
+
+describe("isAudioClip detection", () => {
+  // Test via the adapter's private method — import only for type reference
+  const isAudioClip = (file: { name: string; mimetype: string }): boolean => {
+    return (file.mimetype === "video/mp4" && file.name?.startsWith("audio_message")) ||
+           file.mimetype?.startsWith("audio/");
+  };
+
+  it("detects Slack audio clips (video/mp4 + audio_message filename)", () => {
+    expect(isAudioClip({ name: "audio_message_abc.mp4", mimetype: "video/mp4" })).toBe(true);
+  });
+
+  it("detects direct audio uploads (audio/* MIME)", () => {
+    expect(isAudioClip({ name: "recording.wav", mimetype: "audio/wav" })).toBe(true);
+    expect(isAudioClip({ name: "song.mp3", mimetype: "audio/mpeg" })).toBe(true);
+  });
+
+  it("rejects non-audio video/mp4 files", () => {
+    expect(isAudioClip({ name: "screen_recording.mp4", mimetype: "video/mp4" })).toBe(false);
+  });
+
+  it("rejects non-audio files", () => {
+    expect(isAudioClip({ name: "document.pdf", mimetype: "application/pdf" })).toBe(false);
+    expect(isAudioClip({ name: "photo.jpg", mimetype: "image/jpeg" })).toBe(false);
+  });
+});
+```
+
+### Step 8: Run tests
+
+- [ ] **Run tests**
+
+```bash
+pnpm test event-router slack-voice
+```
+
+Expected: All tests pass.
+
+### Step 9: Update setup docs
+
+- [ ] **Add `files:read` and `files:write` scopes to `docs/slack-setup.md`**
+
+In the "Bot Token Scopes" section, add:
+
+```markdown
+   - `files:read` — read file content (required for voice message transcription)
+   - `files:write` — upload audio files (required for TTS voice replies)
+```
+
+### Step 10: Commit
+
+- [ ] **Commit all changes**
+
+```bash
+git add src/adapters/slack/types.ts src/adapters/slack/event-router.ts \
+  src/adapters/slack/adapter.ts src/adapters/slack/text-buffer.ts \
+  docs/slack-setup.md \
+  src/adapters/slack/event-router.test.ts \
+  src/adapters/slack/slack-voice.test.ts
+git commit -m "feat(slack): add voice/speech support — STT for audio clips, TTS audio replies"
+```
+
+---
+
+### Final verification for Task 14
+
+- [ ] **Full build**
+
+```bash
+pnpm build
+```
+
+Expected: Zero errors.
+
+- [ ] **Full test suite**
+
+```bash
+pnpm test
+```
+
+Expected: All tests pass (new + existing).
+
+- [ ] **Manual verification checklist**
+
+1. Record an audio clip in Slack → verify bot receives and transcribes it
+2. Send a text message → verify existing text routing still works
+3. If TTS is configured, verify audio reply appears as uploaded file in channel
+4. Verify edited/deleted message subtypes are still filtered out (not just `file_share`)
 
 ---
 

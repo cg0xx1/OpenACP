@@ -691,6 +691,239 @@ Issues identified by @0xmrpeter after round 1 fixes were applied. PR #42 review 
 
 ---
 
+## Voice/Speech Integration (STT + TTS)
+
+**Date added:** 2026-03-24
+**Scope:** Add speech-to-text and text-to-speech support to the Slack adapter, mirroring Telegram adapter's voice capabilities.
+**Constraint:** Zero changes to core modules. All STT/TTS logic already lives in core (`SpeechService`, `Session.maybeTranscribeAudio()`, session-bridge `audio_content` events).
+
+### Background
+
+Core already provides:
+- **STT**: Groq Whisper API (`whisper-large-v3-turbo`) via `SpeechService.transcribe()`
+- **TTS**: Microsoft Edge TTS via `SpeechService.synthesize()` — output: MP3
+- **Session integration**: `voiceMode` (off/next/on), `[TTS]...[/TTS]` block extraction, auto-transcribe when agent lacks audio capability
+- **session-bridge**: emits `OutgoingMessage { type: "attachment", attachment: { type: "audio" } }` when TTS completes
+
+Telegram adapter has full voice support. Slack adapter currently has none — `EventRouter` drops `file_share` subtype, `sendMessage()` has no `attachment` handler.
+
+### Slack Audio Clip Behavior
+
+Slack's native "Record audio clip" (microphone icon in message composer) produces:
+- **Event**: `message` with `subtype: "file_share"` and `files[]` array
+- **Format**: MP4 container (audio-only), MIME type `video/mp4`
+- **Filename pattern**: `audio_message_*.mp4`
+- **Download**: `file.url_private` with `Authorization: Bearer <botToken>` header
+- **Required scope**: `files:read` (to access file content)
+
+### Data Flow
+
+```
+INCOMING (STT):
+User records audio clip in Slack
+  → Bolt message event (subtype: "file_share", files[].mimetype: "video/mp4")
+  → EventRouter allows file_share through (currently blocked by subtype guard)
+  → Adapter callback downloads file via url_private + Bearer token
+  → Save via FileService.saveFile() with corrected MIME "audio/mp4"
+  → Pass as IncomingMessage.attachments[] to core.handleMessage()
+  → Session.maybeTranscribeAudio() auto-transcribes via Groq Whisper
+
+OUTGOING (TTS):
+Agent response has [TTS]...[/TTS]
+  → Session extracts & synthesizes via Edge TTS
+  → session-bridge emits OutgoingMessage { type: "attachment", attachment: { type: "audio" } }
+  → SlackAdapter.sendMessage() detects type: "attachment"
+  → Upload MP3 via Slack files.uploadV2 API
+  → Strip [TTS]...[/TTS] from pending text buffer
+```
+
+### Changes Required
+
+#### 1. EventRouter — Allow `file_share` subtype
+
+**Location:** `event-router.ts:43`
+**Current:** `if ((message as any).subtype) return;` — blocks ALL subtypes including `file_share`
+**Change:** Allow `file_share` through, extract `files[]` array
+
+```typescript
+const subtype = (message as any).subtype;
+if (subtype && subtype !== "file_share") return;  // allow file_share through
+
+const files: SlackFileInfo[] | undefined = (message as any).files;
+```
+
+Expand `IncomingMessageCallback` signature to pass raw file metadata:
+
+```typescript
+export type IncomingMessageCallback = (
+  sessionId: string, text: string, userId: string,
+  files?: SlackFileInfo[],
+) => void;
+```
+
+`SlackFileInfo` type (add to `types.ts`):
+```typescript
+export interface SlackFileInfo {
+  id: string;
+  name: string;
+  mimetype: string;
+  size: number;
+  url_private: string;
+}
+```
+
+**Separation of concerns:** EventRouter only extracts metadata from the event. It does NOT download files — adapter handles that in the callback.
+
+#### 2. Adapter — Download incoming audio + pass to core
+
+**Location:** `adapter.ts` — incoming message callback (lines 96-104)
+
+Add private methods:
+
+**Dependency:** Adapter needs `FileService` — access via `this.core.fileService` (same pattern as Telegram adapter at `adapter.ts:148`). Add `private fileService!: FileService` property, assign in `start()`.
+
+Add private methods:
+
+```typescript
+/** Detect Slack audio clips — MIME type or filename pattern.
+ *  Slack audio clips arrive as video/mp4 (audio-only container).
+ *  Also catches direct audio/* uploads (wav, mp3, etc). */
+private isAudioClip(file: SlackFileInfo): boolean {
+  return file.mimetype === "video/mp4" && file.name?.startsWith("audio_message") ||
+         file.mimetype?.startsWith("audio/");
+}
+
+private async downloadSlackFile(url: string): Promise<Buffer | null> {
+  const resp = await fetch(url, {
+    headers: { Authorization: `Bearer ${this.slackConfig.botToken}` },
+  });
+  if (!resp.ok) {
+    log.warn({ status: resp.status }, "Failed to download Slack file");
+    return null;
+  }
+  return Buffer.from(await resp.arrayBuffer());
+}
+```
+
+In the incoming callback, when files are present:
+1. Filter audio files via `isAudioClip()`
+2. Download via `downloadSlackFile()`
+3. Save via `FileService.saveFile()` — use corrected MIME `audio/mp4` (Slack sends `video/mp4` but it's audio-only). This maps to `.m4a` extension via `FileService.MIME_TO_EXT`, which Whisper accepts.
+4. Pass as `IncomingMessage.attachments[]` to `core.handleMessage()`
+5. On download failure: forward text-only (don't drop the entire message)
+
+Pattern mirrors Telegram's `handleIncomingMedia()` at `adapter.ts:851-889`.
+
+#### 3. Adapter — Handle outgoing audio attachments
+
+**Location:** `adapter.ts:sendMessage()` (lines 220-256)
+
+Add handler for `type: "attachment"`:
+
+```typescript
+if (content.type === "attachment" && content.attachment) {
+  if (content.attachment.type === "audio") {
+    await this.uploadAudioFile(meta.channelId, content.attachment);
+    // Strip [TTS]...[/TTS] from text buffer or already-posted message
+    const buf = this.textBuffers.get(sessionId);
+    if (buf) {
+      await buf.stripTtsBlock();
+    }
+    return;
+  }
+  return;  // other attachment types: no-op for now
+}
+```
+
+Upload method — calls `webClient.files.uploadV2()` directly (not through SendQueue) because `files.uploadV2` is a multi-step convenience wrapper that internally calls `files.getUploadURLExternal` + upload + `files.completeUploadExternal`. It cannot be routed through `apiCall()`. TTS audio uploads are infrequent, so rate limiting is not critical here.
+
+```typescript
+private async uploadAudioFile(channelId: string, att: Attachment): Promise<void> {
+  const fileBuffer = await fs.promises.readFile(att.filePath);
+  await this.webClient.files.uploadV2({
+    channel_id: channelId,
+    file: fileBuffer,
+    filename: att.fileName,
+  });
+}
+```
+
+#### 4. SlackTextBuffer — Add `stripTtsBlock()` with message editing
+
+**Location:** `text-buffer.ts`
+
+**Problem:** The text buffer flushes after 2s idle. By the time TTS audio is ready (synthesis takes seconds), the `[TTS]...[/TTS]` block has likely already been posted to Slack. Simply stripping the in-memory buffer does nothing — the user already sees the raw tags.
+
+**Solution:** Track the `ts` (timestamp/ID) of the last flushed message. When `stripTtsBlock()` is called:
+1. If `[TTS]...[/TTS]` is still in the unflushed buffer → strip from buffer
+2. If already posted → use `chat.update` to edit the posted message and remove the TTS block
+
+```typescript
+private lastMessageTs: string | undefined;
+
+// In flush(), capture the message ts from the API response:
+const result = await this.queue.enqueue("chat.postMessage", { ... });
+this.lastMessageTs = (result as any).ts;
+
+// Strip method:
+async stripTtsBlock(): Promise<void> {
+  const ttsRegex = /\[TTS\][\s\S]*?\[\/TTS\]/g;
+
+  // Case 1: TTS block still in unflushed buffer
+  if (ttsRegex.test(this.buffer)) {
+    this.buffer = this.buffer.replace(ttsRegex, "").trim();
+    return;
+  }
+
+  // Case 2: Already flushed — edit the posted message
+  if (this.lastMessageTs) {
+    // Fetch is not needed — we can just post an update with the cleaned text
+    // However, we don't cache the posted text. Use chat.update with blocks.
+    // Best effort: the block text is already in Slack, so we need to re-read
+    // or cache it. Simplest: cache lastPostedText in flush().
+    // See implementation plan for full details.
+  }
+}
+```
+
+**Note:** `chat.update` is already in `SlackMethod` union. The buffer should cache `lastPostedText` during flush for the edit case.
+
+#### 5. Docs — Add `files:read` and `files:write` scopes
+
+**Location:** `docs/slack-setup.md` — Bot Token Scopes section
+
+Add `files:read` and `files:write` to the required scopes list. Also update the spec's OAuth scopes table.
+
+### Files Changed
+
+| File | Action | Change |
+|---|---|---|
+| `src/adapters/slack/event-router.ts` | **Modify** | Allow `file_share` subtype, extract `files[]`, expand callback signature |
+| `src/adapters/slack/adapter.ts` | **Modify** | Add `downloadSlackFile()`, `isAudioClip()`, `uploadAudioFile()`, handle `attachment` in `sendMessage()` |
+| `src/adapters/slack/text-buffer.ts` | **Modify** | Add `stripTtsBlock()` with message editing, track `lastMessageTs` |
+| `src/adapters/slack/types.ts` | **Modify** | Add `SlackFileInfo` interface |
+| `docs/slack-setup.md` | **Modify** | Add `files:read` and `files:write` scopes to setup instructions |
+| `src/core/` | **No change** | All STT/TTS logic already in core |
+| `src/adapters/telegram/` | **No change** | |
+
+### Testing Strategy
+
+- **Unit test for EventRouter**: Verify `file_share` messages with audio files are routed (not dropped)
+- **Unit test for audio detection**: `isAudioClip()` correctly identifies Slack audio clips by filename pattern and MIME type
+- **Integration test**: Mock Slack file download, verify `core.handleMessage()` receives correct `attachments[]`
+- **TTS test**: Verify `type: "attachment"` with `type: "audio"` triggers `files.uploadV2` and `stripTtsBlock()`
+
+### OAuth Scope Addition
+
+Add to bot token scopes:
+
+| Scope | Purpose |
+|---|---|
+| `files:read` | Download audio clip content from `url_private` |
+| `files:write` | Upload TTS audio files via `files.uploadV2` |
+
+---
+
 ## Known Constraints & Mitigations
 
 ### Channel archiving — not deletion
@@ -725,6 +958,8 @@ The Slack App must be configured with these bot token scopes:
 | `groups:write` | Create/rename/archive private channels |
 | `groups:read` | List private channels |
 | `chat:write` | Post messages |
+| `files:read` | Download audio clip content from `url_private` |
+| `files:write` | Upload TTS audio files via `files.uploadV2` |
 | `commands` | Register slash commands |
 | `connections:write` | Socket Mode (App-level token scope) |
 

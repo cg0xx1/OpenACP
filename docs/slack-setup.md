@@ -49,6 +49,8 @@ Keep this token in a secure location.
    - `groups:write` — manage private channels
    - `groups:history` — **required** to receive message events from private channels
    - `groups:read` — list private channels
+   - `files:read` — read file content (required for voice message transcription)
+   - `files:write` — upload audio files (required for TTS voice replies)
 
 > **Important:** Without `channels:history` and `groups:history`, the bot will join channels and receive events via Socket Mode but will silently drop all incoming messages — no errors, no logs. These scopes are required for the bot to receive `message` events.
 

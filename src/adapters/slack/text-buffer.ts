@@ -15,6 +15,8 @@ export class SlackTextBuffer {
   private buffer = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
   private flushing = false;
+  private lastMessageTs: string | undefined;
+  private lastPostedText: string | undefined;
 
   constructor(
     private channelId: string,
@@ -49,11 +51,14 @@ export class SlackTextBuffer {
       const chunks = splitSafe(converted);
       for (const chunk of chunks) {
         if (!chunk.trim()) continue;
-        await this.queue.enqueue("chat.postMessage", {
+        const result = await this.queue.enqueue("chat.postMessage", {
           channel: this.channelId,
           text: chunk,
           blocks: [{ type: "section", text: { type: "mrkdwn", text: chunk } }],
         });
+        // Track last posted message for potential TTS block editing
+        this.lastMessageTs = (result as any).ts;
+        this.lastPostedText = chunk;
       }
     } finally {
       this.flushing = false;
@@ -67,5 +72,30 @@ export class SlackTextBuffer {
   destroy(): void {
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
     this.buffer = "";
+  }
+
+  /** Remove [TTS]...[/TTS] blocks — from buffer if unflushed, or edit posted message */
+  async stripTtsBlock(): Promise<void> {
+    const ttsPattern = /\[TTS\][\s\S]*?\[\/TTS\]/g;
+
+    // Case 1: TTS block still in unflushed buffer
+    if (ttsPattern.test(this.buffer)) {
+      this.buffer = this.buffer.replace(/\[TTS\][\s\S]*?\[\/TTS\]/g, "").replace(/\s{2,}/g, " ").trim();
+      return;
+    }
+
+    // Case 2: Already flushed — edit the posted message via chat.update
+    if (this.lastMessageTs && this.lastPostedText && /\[TTS\][\s\S]*?\[\/TTS\]/.test(this.lastPostedText)) {
+      const cleaned = this.lastPostedText.replace(/\[TTS\][\s\S]*?\[\/TTS\]/g, "").replace(/\s{2,}/g, " ").trim();
+      if (cleaned) {
+        await this.queue.enqueue("chat.update", {
+          channel: this.channelId,
+          ts: this.lastMessageTs,
+          text: cleaned,
+          blocks: [{ type: "section", text: { type: "mrkdwn", text: cleaned } }],
+        });
+      }
+      this.lastPostedText = cleaned;
+    }
   }
 }
