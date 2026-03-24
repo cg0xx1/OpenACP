@@ -350,6 +350,7 @@ export class OpenACPCore {
     agentName: string,
     agentSessionId: string,
     cwd: string,
+    channelId?: string,
   ): Promise<
     | {
         ok: true;
@@ -402,40 +403,42 @@ export class OpenACPCore {
     const existingRecord =
       this.sessionManager.getRecordByAgentSessionId(agentSessionId);
     if (existingRecord) {
-      const platform = existingRecord.platform as
-        | { topicId?: number }
-        | undefined;
-      if (platform?.topicId) {
-        const adapter = this.adapters.values().next().value;
+      const platform = existingRecord.platform as { topicId?: number; threadId?: string } | undefined;
+      const existingThreadId = platform?.topicId ? String(platform.topicId) : platform?.threadId;
+      if (existingThreadId) {
+        const adapter = this.adapters.get(existingRecord.channelId) ?? this.adapters.values().next().value;
         if (adapter) {
           try {
             await adapter.sendMessage(existingRecord.sessionId, {
               type: "text",
               text: "Session resumed from CLI.",
             });
-          } catch {
-            /* Topic may be deleted */
-          }
+          } catch { /* Topic/thread may be deleted */ }
         }
         return {
           ok: true,
           sessionId: existingRecord.sessionId,
-          threadId: String(platform.topicId),
+          threadId: existingThreadId,
           status: "existing",
         };
       }
     }
 
-    // 5. Find default adapter
-    const firstEntry = this.adapters.entries().next().value;
-    if (!firstEntry) {
-      return {
-        ok: false,
-        error: "no_adapter",
-        message: "No channel adapter registered",
-      };
+    // 5. Find adapter (explicit channel or default first)
+    let adapterChannelId: string;
+    if (channelId) {
+      if (!this.adapters.has(channelId)) {
+        const available = Array.from(this.adapters.keys()).join(", ") || "none";
+        return { ok: false, error: "adapter_not_found", message: `Adapter '${channelId}' is not connected. Available: ${available}` };
+      }
+      adapterChannelId = channelId;
+    } else {
+      const firstEntry = this.adapters.entries().next().value;
+      if (!firstEntry) {
+        return { ok: false, error: "no_adapter", message: "No channel adapter registered" };
+      }
+      adapterChannelId = firstEntry[0];
     }
-    const [adapterChannelId] = firstEntry;
 
     // 6. Create session via unified pipeline
     let session: Session;
@@ -457,9 +460,15 @@ export class OpenACPCore {
     }
 
     // 7. Update store with adopt-specific fields
+    const adoptPlatform: Record<string, unknown> = {};
+    if (adapterChannelId === 'telegram') {
+      adoptPlatform.topicId = Number(session.threadId);
+    } else {
+      adoptPlatform.threadId = session.threadId;
+    }
     await this.sessionManager.patchRecord(session.id, {
       originalAgentSessionId: agentSessionId,
-      platform: { topicId: Number(session.threadId) },
+      platform: adoptPlatform,
     });
 
     return {
