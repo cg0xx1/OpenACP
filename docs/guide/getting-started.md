@@ -62,7 +62,7 @@ Config is saved to `~/.openacp/config.json`. Edit it anytime — see [Configurat
 3. Session store loaded (`~/.openacp/sessions.json`)
 4. Tunnel service started (if enabled — default: Cloudflare)
 5. Channel adapters registered and started
-6. System topics created in Telegram (Notifications + Assistant)
+6. System topics/channels created (Notifications + Assistant)
 7. Ready for messages
 
 ## Running as a Daemon
