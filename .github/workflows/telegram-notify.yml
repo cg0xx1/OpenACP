@@ -28,7 +28,7 @@ jobs:
             MSG=$(echo "$row" | base64 -d | jq -r '.message' | head -1)
             AUTHOR=$(echo "$row" | base64 -d | jq -r '.author.username')
             SHORT=$(echo "$row" | base64 -d | jq -r '.id' | cut -c1-7)
-            COMMITS="${COMMITS}• <code>${SHORT}</code> ${MSG} — ${AUTHOR}"$'\n'
+            COMMITS="${COMMITS}• <code>${SHORT}</code> ${MSG} — <a href=\"https://github.com/${AUTHOR}\"><b>${AUTHOR}</b></a>"$'\n'
           done
           {
             echo "list<<${DELIMITER}"
@@ -92,7 +92,7 @@ jobs:
             ${{ steps.status.outputs.emoji }} <b>PR #${{ github.event.pull_request.number }} ${{ steps.status.outputs.text }}</b>
 
             <a href="${{ github.event.pull_request.html_url }}">${{ github.event.pull_request.title }}</a>
-            by ${{ github.event.pull_request.user.login }}
+            by <a href="https://github.com/${{ github.event.pull_request.user.login }}"><b>${{ github.event.pull_request.user.login }}</b></a>
 
   notify-release:
     name: Release published
@@ -131,6 +131,6 @@ jobs:
             🔴 <b>CI Failed: ${{ github.event.workflow_run.name }}</b>
 
             Branch: <code>${{ github.event.workflow_run.head_branch }}</code>
-            Triggered by: ${{ github.event.workflow_run.actor.login }}
+            Triggered by: <a href="https://github.com/${{ github.event.workflow_run.actor.login }}"><b>${{ github.event.workflow_run.actor.login }}</b></a>
 
             <a href="${{ github.event.workflow_run.html_url }}">View run</a>
