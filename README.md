@@ -12,7 +12,7 @@ One message, any channel, any agent.
 [![npm](https://img.shields.io/npm/v/@openacp/cli.svg)](https://www.npmjs.com/package/@openacp/cli)
 [![Twitter Follow](https://img.shields.io/twitter/follow/Open_ACP?style=social)](https://x.com/Open_ACP)
 
-[Getting Started](docs/guide/getting-started.md) | [Agents](docs/guide/agents.md) | [Usage](docs/guide/usage.md) | [Configuration](docs/guide/configuration.md) | [Plugins](docs/guide/plugins.md) | [Development](docs/guide/development.md)
+[Getting Started](docs/gitbook/getting-started/for-developers.md) | [Agents](docs/gitbook/using-openacp/agents.md) | [Usage](docs/gitbook/using-openacp/chat-commands.md) | [Configuration](docs/gitbook/self-hosting/configuration.md) | [Plugins](docs/gitbook/extending/plugin-system.md) | [Development](docs/gitbook/extending/contributing.md)
 
 </div>
 
@@ -86,7 +86,7 @@ OpenACP follows the [Agent Client Protocol (ACP)](https://agentclientprotocol.co
 - **Structured logging** — Pino with rotation, per-session log files
 - **Self-hosted** — Your keys, your data, your machine
 
-### [Tunnel & Port Forwarding](docs/guide/tunnel.md)
+### [Tunnel & Port Forwarding](docs/gitbook/features/tunnel.md)
 
 Expose any local port to the internet — dev servers, APIs, static sites. Tunnel is enabled by default with Cloudflare (free, no account needed).
 
@@ -232,7 +232,7 @@ Sessions are not locked after transfer — you can continue from either side.
 
 ## Contributing
 
-See [development guide](docs/guide/development.md).
+See [development guide](docs/gitbook/extending/contributing.md).
 
 ## Follow Us
 
