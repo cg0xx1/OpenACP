@@ -82,14 +82,9 @@ export class ToolCallTracker {
     if (update.kind) toolState.kind = update.kind;
 
     // Only edit on terminal status — minimizes API calls to avoid rate limits
-    const TERMINAL_STATUSES = new Set([
-      "completed",
-      "failed",
-      "done",
-      "error",
-      "cancelled",
-    ]);
-    if (!TERMINAL_STATUSES.has(update.status)) return;
+    const isTerminal =
+      update.status === "completed" || update.status === "failed";
+    if (!isTerminal) return;
 
     // Wait for initial send to complete before editing
     await toolState.ready;

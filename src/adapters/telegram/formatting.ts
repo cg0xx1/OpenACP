@@ -16,6 +16,7 @@ import {
   extractContentText,
   formatToolSummary,
   formatToolTitle,
+  resolveToolIcon,
 } from "../shared/message-formatter.js";
 import type { DisplayVerbosity } from "../shared/format-types.js";
 
@@ -79,15 +80,45 @@ export function markdownToTelegramHtml(md: string): string {
   return text;
 }
 
-function resolveToolIcon(tool: ToolCallMeta): string {
-  const statusIcon = STATUS_ICONS[tool.status || ""];
-  if (statusIcon) return statusIcon;
-  const kind = tool.displayKind ?? tool.kind;
-  if (kind && KIND_ICONS[kind]) return KIND_ICONS[kind];
-  return "🔧";
+export function formatToolCall(
+  tool: ToolCallMeta,
+  verbosity: DisplayVerbosity = "medium",
+): string {
+  const si = resolveToolIcon(tool);
+  const name = tool.name || "Tool";
+  const label =
+    verbosity === "low"
+      ? formatToolTitle(name, tool.rawInput, tool.displayTitle)
+      : formatToolSummary(name, tool.rawInput, tool.displaySummary);
+  let text = `${si} <b>${escapeHtml(label)}</b>`;
+  // viewer links always shown regardless of verbosity
+  text += formatViewerLinks(tool.viewerLinks, tool.viewerFilePath);
+  // high only: rawInput + content
+  if (verbosity === "high") {
+    text += formatHighDetails(tool.rawInput, tool.content, 3800);
+  }
+  return text;
 }
 
-function formatHighVerbosityDetails(
+export function formatToolUpdate(
+  update: ToolUpdateMeta,
+  verbosity: DisplayVerbosity = "medium",
+): string {
+  const si = resolveToolIcon(update);
+  const name = update.name || "Tool";
+  const label =
+    verbosity === "low"
+      ? formatToolTitle(name, update.rawInput, update.displayTitle)
+      : formatToolSummary(name, update.rawInput, update.displaySummary);
+  let text = `${si} <b>${escapeHtml(label)}</b>`;
+  text += formatViewerLinks(update.viewerLinks, update.viewerFilePath);
+  if (verbosity === "high") {
+    text += formatHighDetails(update.rawInput, update.content, 3800);
+  }
+  return text;
+}
+
+function formatHighDetails(
   rawInput: unknown,
   content: unknown,
   maxLen: number,
@@ -109,42 +140,6 @@ function formatHighVerbosityDetails(
   return text;
 }
 
-export function formatToolCall(
-  tool: ToolCallMeta,
-  verbosity: DisplayVerbosity = "medium",
-): string {
-  const si = resolveToolIcon(tool);
-  const name = tool.name || "Tool";
-  const label =
-    verbosity === "low"
-      ? formatToolTitle(name, tool.rawInput, tool.displayTitle)
-      : formatToolSummary(name, tool.rawInput, tool.displaySummary);
-  let text = `${si} <b>${escapeHtml(label)}</b>`;
-  text += formatViewerLinks(tool.viewerLinks, tool.viewerFilePath);
-  if (verbosity === "high") {
-    text += formatHighVerbosityDetails(tool.rawInput, tool.content, 3800);
-  }
-  return text;
-}
-
-export function formatToolUpdate(
-  update: ToolUpdateMeta,
-  verbosity: DisplayVerbosity = "medium",
-): string {
-  const si = resolveToolIcon(update);
-  const name = update.name || "Tool";
-  const label =
-    verbosity === "low"
-      ? formatToolTitle(name, update.rawInput, update.displayTitle)
-      : formatToolSummary(name, update.rawInput, update.displaySummary);
-  let text = `${si} <b>${escapeHtml(label)}</b>`;
-  text += formatViewerLinks(update.viewerLinks, update.viewerFilePath);
-  if (verbosity === "high") {
-    text += formatHighVerbosityDetails(update.rawInput, update.content, 3800);
-  }
-  return text;
-}
-
 function formatViewerLinks(links?: ViewerLinks, filePath?: string): string {
   if (!links) return "";
   const fileName = filePath ? filePath.split("/").pop() || filePath : "";
@@ -158,14 +153,15 @@ function formatViewerLinks(links?: ViewerLinks, filePath?: string): string {
 
 export function formatPlan(
   plan: { entries: Array<{ content: string; status: string }> },
-  verbosity: DisplayVerbosity = "high",
+  verbosity: DisplayVerbosity = "medium",
 ): string {
   const { entries } = plan;
+  // medium: summary count only
   if (verbosity === "medium") {
     const done = entries.filter((e) => e.status === "completed").length;
-    const total = entries.length;
-    return `📋 <b>Plan:</b> ${done}/${total} steps completed`;
+    return `📋 <b>Plan:</b> ${done}/${entries.length} steps completed`;
   }
+  // high: full entries
   const statusIcon: Record<string, string> = {
     pending: "⬜",
     in_progress: "🔄",
@@ -180,11 +176,12 @@ export function formatPlan(
 
 export function formatUsage(
   usage: { tokensUsed?: number; contextSize?: number; cost?: number },
-  verbosity: DisplayVerbosity = "high",
+  verbosity: DisplayVerbosity = "medium",
 ): string {
   const { tokensUsed, contextSize, cost } = usage;
   if (tokensUsed == null) return "📊 Usage data unavailable";
 
+  // medium: compact one-line
   if (verbosity === "medium") {
     const costStr = cost != null ? ` · $${cost.toFixed(2)}` : "";
     return `📊 ${formatTokens(tokensUsed)} tokens${costStr}`;

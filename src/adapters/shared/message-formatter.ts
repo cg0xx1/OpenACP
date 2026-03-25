@@ -65,50 +65,45 @@ export function formatToolSummary(
   }
 
   const args = parseRawInput(rawInput);
-  // Normalize: "Read File" → "readfile", "read_file" → "readfile"
-  const normalized = name.toLowerCase().replace(/[\s_-]+/g, "");
+  const lowerName = name.toLowerCase();
 
-  if (normalized === "read" || normalized === "readfile") {
-    const fp = args.file_path ?? args.filePath ?? args.path ?? "";
+  if (lowerName === "read") {
+    const fp = args.file_path ?? args.filePath ?? "";
     const limit = args.limit ? ` (${args.limit} lines)` : "";
     return fp ? `📖 Read ${fp}${limit}` : `🔧 ${name}`;
   }
-  if (normalized === "edit" || normalized === "editfile") {
+  if (lowerName === "edit") {
     const fp = args.file_path ?? args.filePath ?? "";
     return fp ? `✏️ Edit ${fp}` : `🔧 ${name}`;
   }
-  if (normalized === "write" || normalized === "writefile") {
+  if (lowerName === "write") {
     const fp = args.file_path ?? args.filePath ?? "";
     return fp ? `📝 Write ${fp}` : `🔧 ${name}`;
   }
-  if (
-    normalized === "bash" ||
-    normalized === "execute" ||
-    normalized === "shell"
-  ) {
+  if (lowerName === "bash") {
     const cmd = String(args.command ?? "").slice(0, 60);
     return cmd ? `▶️ Run: ${cmd}` : `🔧 ${name}`;
   }
-  if (normalized === "grep") {
+  if (lowerName === "grep") {
     const pattern = args.pattern ?? "";
     const path = args.path ?? "";
     return pattern
       ? `🔍 Grep "${pattern}"${path ? ` in ${path}` : ""}`
       : `🔧 ${name}`;
   }
-  if (normalized === "glob") {
+  if (lowerName === "glob") {
     const pattern = args.pattern ?? "";
     return pattern ? `🔍 Glob ${pattern}` : `🔧 ${name}`;
   }
-  if (normalized === "agent" || normalized === "task") {
-    const desc = String(args.description ?? args.prompt ?? "").slice(0, 60);
+  if (lowerName === "agent") {
+    const desc = String(args.description ?? "").slice(0, 60);
     return desc ? `🧠 Agent: ${desc}` : `🔧 ${name}`;
   }
-  if (normalized === "webfetch" || normalized === "web_fetch") {
+  if (lowerName === "webfetch" || lowerName === "web_fetch") {
     const url = String(args.url ?? "").slice(0, 60);
     return url ? `🌐 Fetch ${url}` : `🔧 ${name}`;
   }
-  if (normalized === "websearch" || normalized === "web_search") {
+  if (lowerName === "websearch" || lowerName === "web_search") {
     const query = String(args.query ?? "").slice(0, 60);
     return query ? `🌐 Search "${query}"` : `🔧 ${name}`;
   }
@@ -128,40 +123,50 @@ export function formatToolTitle(
   }
 
   const args = parseRawInput(rawInput);
-  const normalized = name.toLowerCase().replace(/[\s_-]+/g, "");
+  const lowerName = name.toLowerCase();
 
-  if (
-    ["read", "readfile", "edit", "editfile", "write", "writefile"].includes(
-      normalized,
-    )
-  ) {
-    return String(args.file_path ?? args.filePath ?? args.path ?? name);
+  if (["read", "edit", "write"].includes(lowerName)) {
+    return String(args.file_path ?? args.filePath ?? name);
   }
-  if (["bash", "execute", "shell"].includes(normalized)) {
+  if (lowerName === "bash") {
     return String(args.command ?? name).slice(0, 60);
   }
-  if (normalized === "grep") {
+  if (lowerName === "grep") {
     const pattern = args.pattern ?? "";
     const path = args.path ?? "";
     return pattern ? `"${pattern}"${path ? ` in ${path}` : ""}` : name;
   }
-  if (normalized === "glob") {
+  if (lowerName === "glob") {
     return String(args.pattern ?? name);
   }
-  if (normalized === "agent" || normalized === "task") {
-    return String(args.description ?? args.prompt ?? name).slice(0, 60);
+  if (lowerName === "agent") {
+    return String(args.description ?? name).slice(0, 60);
   }
-  if (["webfetch", "web_fetch"].includes(normalized)) {
+  if (["webfetch", "web_fetch"].includes(lowerName)) {
     return String(args.url ?? name).slice(0, 60);
   }
-  if (["websearch", "web_search"].includes(normalized)) {
+  if (["websearch", "web_search"].includes(lowerName)) {
     return String(args.query ?? name).slice(0, 60);
   }
 
   return name;
 }
 
-// --- Step 7: Noise filtering ---
+// --- Step 7: resolveToolIcon ---
+
+export function resolveToolIcon(tool: {
+  status?: string;
+  displayKind?: string;
+  kind?: string;
+}): string {
+  const statusIcon = STATUS_ICONS[tool.status || ""];
+  if (statusIcon) return statusIcon;
+  const kind = tool.displayKind ?? tool.kind;
+  if (kind && KIND_ICONS[kind]) return KIND_ICONS[kind];
+  return "🔧";
+}
+
+// --- Step 8: Noise filtering ---
 
 const NOISE_RULES: NoiseRule[] = [
   {

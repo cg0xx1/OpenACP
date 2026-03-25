@@ -67,7 +67,6 @@ interface PlanMetadata {
 interface UsageMetadata {
   tokensUsed?: number;
   contextSize?: number;
-  cost?: number;
 }
 
 /**
@@ -665,9 +664,6 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           rawInput: meta.rawInput,
           viewerLinks: meta.viewerLinks,
           viewerFilePath: meta.viewerFilePath,
-          displaySummary: meta.displaySummary as string | undefined,
-          displayTitle: meta.displayTitle as string | undefined,
-          displayKind: meta.displayKind as string | undefined,
         },
         this.verbosity,
       );
@@ -686,9 +682,6 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           rawInput: meta.rawInput,
           viewerLinks: meta.viewerLinks,
           viewerFilePath: meta.viewerFilePath,
-          displaySummary: meta.displaySummary as string | undefined,
-          displayTitle: meta.displayTitle as string | undefined,
-          displayKind: meta.displayKind as string | undefined,
         },
         this.verbosity,
       );

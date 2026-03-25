@@ -66,7 +66,7 @@ export class UsageMessage {
 
   async send(
     usage: { tokensUsed?: number; contextSize?: number; cost?: number },
-    verbosity: DisplayVerbosity = "high",
+    verbosity: DisplayVerbosity = "medium",
   ): Promise<void> {
     const text = formatUsage(usage, verbosity);
     const embed = new EmbedBuilder().setDescription(text);
@@ -110,8 +110,7 @@ export class PlanCard {
   private latestEntries?: PlanEntry[];
   private lastSentText?: string;
   private flushTimer?: ReturnType<typeof setTimeout>;
-
-  private verbosity: DisplayVerbosity = "high";
+  private verbosity: DisplayVerbosity = "medium";
 
   constructor(
     private thread: TextChannel | ThreadChannel,
@@ -232,9 +231,8 @@ export class ActivityTracker {
 
   async sendUsage(
     usage: { tokensUsed?: number; contextSize?: number; cost?: number },
-    verbosity: DisplayVerbosity = "high",
+    verbosity: DisplayVerbosity = "medium",
   ): Promise<void> {
-    this.planCard.setVerbosity(verbosity);
     await this.usage.send(usage, verbosity);
   }
 

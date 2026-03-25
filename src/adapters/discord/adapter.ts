@@ -70,14 +70,10 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
 
   private get verbosity(): DisplayVerbosity {
-    const live = this.core.configManager.get().channels?.discord as
-      | Record<string, unknown>
-      | undefined;
-    const v =
-      live?.displayVerbosity ??
-      (this.discordConfig as Record<string, unknown>).displayVerbosity;
-    if (v === "low" || v === "high") return v;
-    return "medium";
+    return (
+      ((this.discordConfig as Record<string, unknown>)
+        .displayVerbosity as DisplayVerbosity) ?? "medium"
+    );
   }
 
   private guild!: Guild;
@@ -556,14 +552,10 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
           kind: meta.kind as string | undefined,
           status: String(meta.status ?? "running"),
           content: meta.content,
-          rawInput: meta.rawInput,
           viewerLinks: meta.viewerLinks as
             | { file?: string; diff?: string }
             | undefined,
           viewerFilePath: meta.viewerFilePath as string | undefined,
-          displaySummary: meta.displaySummary as string | undefined,
-          displayTitle: meta.displayTitle as string | undefined,
-          displayKind: meta.displayKind as string | undefined,
         },
         this.verbosity,
       );
@@ -579,14 +571,10 @@ export class DiscordAdapter extends ChannelAdapter<OpenACPCore> {
           kind: meta.kind as string | undefined,
           status: String(meta.status ?? "completed"),
           content: meta.content,
-          rawInput: meta.rawInput,
           viewerLinks: meta.viewerLinks as
             | { file?: string; diff?: string }
             | undefined,
           viewerFilePath: meta.viewerFilePath as string | undefined,
-          displaySummary: meta.displaySummary as string | undefined,
-          displayTitle: meta.displayTitle as string | undefined,
-          displayKind: meta.displayKind as string | undefined,
         },
         this.verbosity,
       );

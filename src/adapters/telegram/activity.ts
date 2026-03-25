@@ -118,7 +118,7 @@ export class UsageMessage {
 
   async send(
     usage: { tokensUsed?: number; contextSize?: number; cost?: number },
-    verbosity: DisplayVerbosity = "high",
+    verbosity: DisplayVerbosity = "medium",
   ): Promise<void> {
     const text = formatUsage(usage, verbosity);
     try {
@@ -165,25 +165,24 @@ export class UsageMessage {
 
 function formatPlanCard(
   entries: PlanEntry[],
-  verbosity: DisplayVerbosity = "high",
+  verbosity: DisplayVerbosity = "medium",
 ): string {
-  const total = entries.length;
-  const done = entries.filter((e) => e.status === "completed").length;
-  const ratio = total > 0 ? done / total : 0;
-  const filled = Math.round(ratio * 10);
-  const bar = "▓".repeat(filled) + "░".repeat(10 - filled);
-  const pct = Math.round(ratio * 100);
-
   if (verbosity === "medium") {
-    return `📋 <b>Plan:</b> ${done}/${total} steps completed\n${bar} ${pct}%`;
+    const done = entries.filter((e) => e.status === "completed").length;
+    return `📋 <b>Plan:</b> ${done}/${entries.length} steps completed`;
   }
-
   const statusIcon: Record<string, string> = {
     completed: "✅",
     in_progress: "🔄",
     pending: "⬜",
     failed: "❌",
   };
+  const total = entries.length;
+  const done = entries.filter((e) => e.status === "completed").length;
+  const ratio = total > 0 ? done / total : 0;
+  const filled = Math.round(ratio * 10);
+  const bar = "▓".repeat(filled) + "░".repeat(10 - filled);
+  const pct = Math.round(ratio * 100);
   const header = `📋 <b>Plan</b>\n${bar} ${pct}% · ${done}/${total}`;
   const lines = entries.map((e, i) => {
     const icon = statusIcon[e.status] ?? "⬜";
@@ -198,7 +197,7 @@ export class PlanCard {
   private latestEntries?: PlanEntry[];
   private lastSentText?: string;
   private flushTimer?: ReturnType<typeof setTimeout>;
-  private verbosity: DisplayVerbosity = "high";
+  private verbosity: DisplayVerbosity = "medium";
 
   constructor(
     private api: Bot["api"],
@@ -326,9 +325,8 @@ export class ActivityTracker {
 
   async sendUsage(
     data: { tokensUsed?: number; contextSize?: number; cost?: number },
-    verbosity: DisplayVerbosity = "high",
+    verbosity: DisplayVerbosity = "medium",
   ): Promise<void> {
-    this.planCard.setVerbosity(verbosity);
     await this.usage.send(data, verbosity);
   }
 
