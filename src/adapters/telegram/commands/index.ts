@@ -9,6 +9,7 @@ import { handleEnableDangerous, handleDisableDangerous, handleUpdate, handleRest
 import { handleMenu, handleHelp, handleClear, buildMenuKeyboard } from "./menu.js";
 import { handleAgents, handleInstall, handleAgentCallback } from "./agents.js";
 import { handleIntegrate } from "./integrate.js";
+import { handleResume, setupResumeCallbacks, handlePendingResumeInput } from "./resume.js";
 import { handleSettings, setupSettingsCallbacks } from "./settings.js";
 import { handleDoctor, setupDoctorCallbacks } from "./doctor.js";
 import { handleTunnel, handleTunnels, setupTunnelCallbacks } from "./tunnel.js";
@@ -40,6 +41,7 @@ export function setupCommands(
   bot.command("tunnels", (ctx) => handleTunnels(ctx, core));
   bot.command("archive", (ctx) => handleArchive(ctx, core));
   bot.command("text_to_speech", (ctx) => handleTTS(ctx, core));
+  bot.command("resume", (ctx) => handleResume(ctx, core, chatId, assistant));
 }
 
 export function setupAllCallbacks(
@@ -51,6 +53,7 @@ export function setupAllCallbacks(
 ): void {
   // Register specific prefix handlers FIRST (grammY middleware order matters)
   setupNewSessionCallbacks(bot, core, chatId);
+  setupResumeCallbacks(bot, core, chatId);
   setupSessionCallbacks(bot, core, chatId, systemTopicIds);
 
   // Settings handlers — must be before broad m: handler
@@ -127,6 +130,7 @@ export { setupTTSCallbacks, buildTTSKeyboard, buildSessionControlKeyboard, handl
 export { setupIntegrateCallbacks } from "./integrate.js";
 export { setupSettingsCallbacks } from "./settings.js";
 export { setupDoctorCallbacks } from "./doctor.js";
+export { handlePendingResumeInput, setupResumeCallbacks } from "./resume.js";
 
 export const STATIC_COMMANDS = [
   { command: "new", description: "Create new session" },
@@ -151,4 +155,5 @@ export const STATIC_COMMANDS = [
   { command: "tunnels", description: "List active tunnels" },
   { command: "archive", description: "Archive session topic (recreate with clean history)" },
   { command: "text_to_speech", description: "Toggle Text to Speech (/text_to_speech on, /text_to_speech off)" },
+  { command: "resume", description: "Resume with conversation history from Entire checkpoints" },
 ];

@@ -27,6 +27,7 @@ import {
   setupIntegrateCallbacks,
   buildMenuKeyboard,
   handlePendingWorkspaceInput,
+  handlePendingResumeInput,
   STATIC_COMMANDS,
 } from "./commands/index.js";
 import { PermissionHandler } from "./permissions.js";
@@ -408,6 +409,11 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
 
       // Check for pending workspace input from interactive /new flow
       if (await handlePendingWorkspaceInput(ctx, this.core, this.telegramConfig.chatId, this.assistantTopicId)) {
+        return;
+      }
+
+      // Check for pending workspace input from interactive /resume flow
+      if (await handlePendingResumeInput(ctx, this.core, this.telegramConfig.chatId, this.assistantTopicId)) {
         return;
       }
 
