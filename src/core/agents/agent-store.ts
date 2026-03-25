@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { z } from "zod";
-import type { InstalledAgent } from "./types.js";
-import { createChildLogger } from "./log.js";
+import type { InstalledAgent } from "../types.js";
+import { createChildLogger } from "../log.js";
 
 const log = createChildLogger({ module: "agent-store" });
 

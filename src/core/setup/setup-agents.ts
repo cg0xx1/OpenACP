@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import * as clack from "@clack/prompts";
-import { commandExists } from "../agent-dependencies.js";
+import { commandExists } from "../agents/agent-dependencies.js";
 import { guardCancel, ok, warn, c } from "./helpers.js";
 
 const KNOWN_AGENTS: Array<{ name: string; commands: string[] }> = [
@@ -42,7 +42,7 @@ export async function validateAgentCommand(command: string): Promise<boolean> {
 export async function setupAgents(): Promise<{
   defaultAgent: string;
 }> {
-  const { AgentCatalog } = await import("../agent-catalog.js");
+  const { AgentCatalog } = await import("../agents/agent-catalog.js");
   const { muteLogger, unmuteLogger } = await import("../log.js");
 
   muteLogger();
@@ -60,7 +60,7 @@ export async function setupAgents(): Promise<{
       await catalog.install("claude-acp");
     } else {
       // Fallback: register bundled claude-agent-acp directly
-      const { AgentStore } = await import("../agent-store.js");
+      const { AgentStore } = await import("../agents/agent-store.js");
       const store = new AgentStore();
       store.load();
       store.addAgent("claude", {

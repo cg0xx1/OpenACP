@@ -1,5 +1,5 @@
 import { createChildLogger } from "./log.js";
-import { commandExists } from "./agent-dependencies.js";
+import { commandExists } from "./agents/agent-dependencies.js";
 import type { Config } from "./config.js";
 
 const log = createChildLogger({ module: "post-upgrade" });
@@ -71,7 +71,7 @@ export async function runPostUpgradeChecks(config: Config): Promise<void> {
 
   // 4. uvx (needed for Python-based agents)
   try {
-    const { AgentStore } = await import("./agent-store.js");
+    const { AgentStore } = await import("./agents/agent-store.js");
     const store = new AgentStore();
     store.load();
     const entries = store.getInstalled();

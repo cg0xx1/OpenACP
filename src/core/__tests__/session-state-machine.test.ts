@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { Session } from "../session.js";
-import type { AgentInstance } from "../agent-instance.js";
+import type { AgentInstance } from "../agents/agent-instance.js";
 import type { AgentEvent, SessionStatus } from "../types.js";
 import { TypedEmitter } from "../typed-emitter.js";
 

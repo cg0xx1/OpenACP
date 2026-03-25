@@ -4,7 +4,7 @@ import {
   getPlatformKey,
   buildInstalledAgent,
 } from "../agent-installer.js";
-import type { RegistryAgent } from "../types.js";
+import type { RegistryAgent } from "../../types.js";
 
 describe("agent-installer", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });

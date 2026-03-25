@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AgentInstance } from "../agent-instance.js";
-import { TypedEmitter } from "../typed-emitter.js";
+import { TypedEmitter } from "../../typed-emitter.js";
 
 describe("AgentInstance extends TypedEmitter", () => {
   it("has on/off/emit from TypedEmitter prototype", () => {

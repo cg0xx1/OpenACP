@@ -1,4 +1,4 @@
-import type { AgentDefinition } from "./types.js";
+import type { AgentDefinition } from "../types.js";
 import { AgentInstance } from "./agent-instance.js";
 import type { AgentCatalog } from "./agent-catalog.js";
 

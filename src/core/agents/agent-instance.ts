@@ -10,16 +10,16 @@ import type {
   PromptResponse,
   PermissionOption as SdkPermissionOption,
 } from "@agentclientprotocol/sdk";
-import { nodeToWebWritable, nodeToWebReadable } from "./streams.js";
-import { StderrCapture } from "./stderr-capture.js";
-import { TypedEmitter } from "./typed-emitter.js";
+import { nodeToWebWritable, nodeToWebReadable } from "../streams.js";
+import { StderrCapture } from "../stderr-capture.js";
+import { TypedEmitter } from "../typed-emitter.js";
 import type {
   AgentDefinition,
   AgentEvent,
   Attachment,
   PermissionRequest,
-} from "./types.js";
-import { createChildLogger } from "./log.js";
+} from "../types.js";
+import { createChildLogger } from "../log.js";
 const log = createChildLogger({ module: "agent-instance" });
 
 /** Find the nearest ancestor directory containing package.json */

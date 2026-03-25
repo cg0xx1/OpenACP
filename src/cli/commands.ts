@@ -1467,7 +1467,7 @@ bypassing the normal staleness check.
 }
 
 async function agentsList(): Promise<void> {
-  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const { AgentCatalog } = await import("../core/agents/agent-catalog.js");
   const catalog = new AgentCatalog();
   catalog.load();
   await catalog.refreshRegistryIfStale();
@@ -1540,7 +1540,7 @@ Run 'openacp agents' to see available agents.
     return;
   }
 
-  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const { AgentCatalog } = await import("../core/agents/agent-catalog.js");
   const catalog = new AgentCatalog();
   catalog.load();
   await catalog.refreshRegistryIfStale();
@@ -1579,7 +1579,7 @@ Run 'openacp agents' to see available agents.
   }
 
   // Auto-integrate handoff if agent supports it
-  const { getAgentCapabilities } = await import("../core/agent-dependencies.js");
+  const { getAgentCapabilities } = await import("../core/agents/agent-dependencies.js");
   const caps = getAgentCapabilities(result.agentKey);
   if (caps.integration) {
     const { installIntegration } = await import("./integrate.js");
@@ -1618,14 +1618,14 @@ async function agentsUninstall(name: string | undefined, help = false): Promise<
     return;
   }
 
-  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const { AgentCatalog } = await import("../core/agents/agent-catalog.js");
   const catalog = new AgentCatalog();
   catalog.load();
 
   const result = await catalog.uninstall(name);
   if (result.ok) {
     // Auto-uninstall handoff integration if exists
-    const { getAgentCapabilities } = await import("../core/agent-dependencies.js");
+    const { getAgentCapabilities } = await import("../core/agents/agent-dependencies.js");
     const caps = getAgentCapabilities(name);
     if (caps.integration) {
       const { uninstallIntegration } = await import("./integrate.js");
@@ -1646,7 +1646,7 @@ async function agentsUninstall(name: string | undefined, help = false): Promise<
 }
 
 async function agentsRefresh(): Promise<void> {
-  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const { AgentCatalog } = await import("../core/agents/agent-catalog.js");
   const catalog = new AgentCatalog();
   catalog.load();
   console.log("\n  Updating agent list...");
@@ -1675,11 +1675,11 @@ whether the agent is installed or available from the registry.
     return;
   }
 
-  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const { AgentCatalog } = await import("../core/agents/agent-catalog.js");
   const catalog = new AgentCatalog();
   catalog.load();
 
-  const { getAgentSetup } = await import("../core/agent-dependencies.js");
+  const { getAgentSetup } = await import("../core/agents/agent-dependencies.js");
 
   const installed = catalog.getInstalledAgent(nameOrId);
   if (installed) {
@@ -1757,7 +1757,7 @@ ACP-specific flags are automatically stripped.
     return;
   }
 
-  const { AgentCatalog } = await import("../core/agent-catalog.js");
+  const { AgentCatalog } = await import("../core/agents/agent-catalog.js");
   const catalog = new AgentCatalog();
   catalog.load();
 

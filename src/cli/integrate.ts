@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, rmdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { getAgentCapabilities, commandExists, listAgentsWithIntegration } from "../core/agent-dependencies.js";
-import type { AgentIntegrationSpec } from "../core/agent-dependencies.js";
+import { getAgentCapabilities, commandExists, listAgentsWithIntegration } from "../core/agents/agent-dependencies.js";
+import type { AgentIntegrationSpec } from "../core/agents/agent-dependencies.js";
 
 export interface IntegrationResult {
   success: boolean;

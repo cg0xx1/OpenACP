@@ -4,7 +4,7 @@ import https from 'node:https'
 import os from 'node:os'
 import { execSync } from 'node:child_process'
 import { createChildLogger } from './log.js'
-import { commandExists } from './agent-dependencies.js'
+import { commandExists } from './agents/agent-dependencies.js'
 
 const log = createChildLogger({ module: 'binary-installer' })
 

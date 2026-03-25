@@ -26,8 +26,8 @@ export {
   type UsageConfig,
   PLUGINS_DIR,
 } from "./config.js";
-export { AgentInstance } from "./agent-instance.js";
-export { AgentManager } from "./agent-manager.js";
+export { AgentInstance } from "./agents/agent-instance.js";
+export { AgentManager } from "./agents/agent-manager.js";
 export { Session, type SessionEvents } from "./session.js";
 export { TypedEmitter } from "./typed-emitter.js";
 export { PromptQueue } from "./prompt-queue.js";

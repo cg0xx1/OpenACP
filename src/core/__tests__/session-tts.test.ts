@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Session, TTS_PROMPT_INSTRUCTION, TTS_MAX_LENGTH } from "../session.js";
-import type { AgentInstance } from "../agent-instance.js";
+import type { AgentInstance } from "../agents/agent-instance.js";
 import type { SpeechService } from "../speech/index.js";
 import type { AgentEvent } from "../types.js";
 

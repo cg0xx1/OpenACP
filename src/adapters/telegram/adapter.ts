@@ -349,7 +349,7 @@ export class TelegramAdapter extends MessagingAdapter {
       }
 
       const { getAgentCapabilities } =
-        await import("../../core/agent-registry.js");
+        await import("../../core/agents/agent-registry.js");
       const caps = getAgentCapabilities(agentName);
 
       if (!caps.supportsResume || !caps.resumeCommand) {

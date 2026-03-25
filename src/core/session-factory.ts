@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { AgentManager } from "./agent-manager.js";
+import type { AgentManager } from "./agents/agent-manager.js";
 import type { SessionManager } from "./session-manager.js";
 import type { SpeechService } from "./speech/index.js";
 import type { EventBus } from "./event-bus.js";

@@ -12,8 +12,8 @@ import type {
   InstallProgress,
   InstallResult,
   InstalledAgent,
-} from "./types.js";
-import { createChildLogger } from "./log.js";
+} from "../types.js";
+import { createChildLogger } from "../log.js";
 
 const log = createChildLogger({ module: "agent-catalog" });
 

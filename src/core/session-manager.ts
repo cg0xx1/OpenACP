@@ -1,4 +1,4 @@
-import type { AgentManager } from "./agent-manager.js";
+import type { AgentManager } from "./agents/agent-manager.js";
 import { Session } from "./session.js";
 import type { SessionStore } from "./session-store.js";
 import type { EventBus } from "./event-bus.js";

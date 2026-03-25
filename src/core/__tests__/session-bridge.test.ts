@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SessionBridge } from "../session-bridge.js";
 import { Session } from "../session.js";
-import type { AgentInstance } from "../agent-instance.js";
+import type { AgentInstance } from "../agents/agent-instance.js";
 import type { IChannelAdapter } from "../channel.js";
 import type { MessageTransformer } from "../message-transformer.js";
 import type { NotificationManager } from "../notification.js";

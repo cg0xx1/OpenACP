@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Session } from "../session.js";
 import { EventBus } from "../event-bus.js";
-import type { AgentInstance } from "../agent-instance.js";
+import type { AgentInstance } from "../agents/agent-instance.js";
 import type { IChannelAdapter } from "../channel.js";
 import { TypedEmitter } from "../typed-emitter.js";
 import type { AgentEvent } from "../types.js";

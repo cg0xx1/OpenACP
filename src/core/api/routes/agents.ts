@@ -1,6 +1,6 @@
 import type { Router } from "../router.js";
 import type { RouteDeps } from "../index.js";
-import { getAgentCapabilities } from "../../agent-registry.js";
+import { getAgentCapabilities } from "../../agents/agent-registry.js";
 
 export function registerAgentRoutes(router: Router, deps: RouteDeps): void {
   router.get("/api/agents", async (_req, res) => {
