@@ -91,8 +91,14 @@ export class ToolCallTracker {
     if (meta.kind) toolState.kind = meta.kind;
 
     // Only edit on terminal status — minimizes API calls to avoid rate limits
-    const isTerminal = meta.status === "completed" || meta.status === "failed";
-    if (!isTerminal) return;
+    const TERMINAL_STATUSES = new Set([
+      "completed",
+      "failed",
+      "done",
+      "error",
+      "cancelled",
+    ]);
+    if (!TERMINAL_STATUSES.has(meta.status)) return;
 
     await toolState.ready;
 

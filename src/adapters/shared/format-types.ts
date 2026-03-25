@@ -87,6 +87,9 @@ export interface ToolCallMeta {
   rawInput?: unknown;
   viewerLinks?: ViewerLinks;
   viewerFilePath?: string;
+  displaySummary?: string;
+  displayTitle?: string;
+  displayKind?: string;
 }
 
 export interface ToolUpdateMeta extends ToolCallMeta {

@@ -3,6 +3,7 @@ import {
   splitMessage,
   formatUsage,
   formatToolCall,
+  formatToolUpdate,
   formatPlan,
 } from "./formatting.js";
 import type { PlanEntry } from "../../core/types.js";
@@ -251,5 +252,119 @@ describe("formatPlan", () => {
     ];
     const result = formatPlan(entries);
     expect(result).toContain("⬜ 1. Unknown");
+  });
+});
+
+describe("displayKind icon resolution", () => {
+  it("uses displayKind icon when status has no icon", () => {
+    const result = formatToolCall({
+      id: "1",
+      name: "custom_read",
+      status: "",
+      displayKind: "read",
+    });
+    expect(result).toContain("📖");
+  });
+
+  it("prefers displayKind over kind", () => {
+    const result = formatToolCall({
+      id: "1",
+      name: "tool",
+      status: "",
+      kind: "execute",
+      displayKind: "search",
+    });
+    expect(result).toContain("🔍");
+  });
+
+  it("status icon takes precedence", () => {
+    const result = formatToolCall({
+      id: "1",
+      name: "tool",
+      status: "completed",
+      displayKind: "read",
+    });
+    expect(result).toContain("✅");
+  });
+});
+
+describe("formatToolCall rawInput on high verbosity", () => {
+  it("shows rawInput and content on high", () => {
+    const result = formatToolCall(
+      {
+        id: "1",
+        name: "Read",
+        status: "completed",
+        rawInput: { file_path: "src/main.ts" },
+        content: "const x = 1;",
+      },
+      "high",
+    );
+    expect(result).toContain("**Input:**");
+    expect(result).toContain("file_path");
+    expect(result).toContain("**Output:**");
+    expect(result).toContain("const x = 1;");
+  });
+
+  it("hides rawInput when empty object", () => {
+    const result = formatToolCall(
+      {
+        id: "1",
+        name: "Tool",
+        status: "completed",
+        rawInput: {},
+        content: "output",
+      },
+      "high",
+    );
+    expect(result).not.toContain("**Input:**");
+    expect(result).toContain("**Output:**");
+  });
+});
+
+describe("formatPlan verbosity", () => {
+  const entries: PlanEntry[] = [
+    { content: "Step 1", status: "completed", priority: "high" },
+    { content: "Step 2", status: "in_progress", priority: "medium" },
+    { content: "Step 3", status: "pending", priority: "low" },
+  ];
+
+  it("medium shows summary count only", () => {
+    const result = formatPlan(entries, "medium");
+    expect(result).toContain("1/3 steps completed");
+    expect(result).not.toContain("Step 1");
+  });
+
+  it("high shows full entries", () => {
+    const result = formatPlan(entries, "high");
+    expect(result).toContain("Step 1");
+    expect(result).toContain("Step 2");
+  });
+});
+
+describe("formatUsage verbosity", () => {
+  it("medium shows compact one-line", () => {
+    const result = formatUsage(
+      { tokensUsed: 5000, contextSize: 200000 },
+      "medium",
+    );
+    expect(result).toBe("📊 5k tokens");
+  });
+
+  it("medium includes cost", () => {
+    const result = formatUsage(
+      { tokensUsed: 5000, contextSize: 200000, cost: 0.15 },
+      "medium",
+    );
+    expect(result).toContain("$0.15");
+  });
+
+  it("high shows progress bar and cost", () => {
+    const result = formatUsage(
+      { tokensUsed: 28000, contextSize: 200000, cost: 0.25 },
+      "high",
+    );
+    expect(result).toContain("▓");
+    expect(result).toContain("💰 $0.25");
   });
 });

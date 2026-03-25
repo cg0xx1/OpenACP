@@ -65,45 +65,50 @@ export function formatToolSummary(
   }
 
   const args = parseRawInput(rawInput);
-  const lowerName = name.toLowerCase();
+  // Normalize: "Read File" → "readfile", "read_file" → "readfile"
+  const normalized = name.toLowerCase().replace(/[\s_-]+/g, "");
 
-  if (lowerName === "read") {
-    const fp = args.file_path ?? args.filePath ?? "";
+  if (normalized === "read" || normalized === "readfile") {
+    const fp = args.file_path ?? args.filePath ?? args.path ?? "";
     const limit = args.limit ? ` (${args.limit} lines)` : "";
     return fp ? `📖 Read ${fp}${limit}` : `🔧 ${name}`;
   }
-  if (lowerName === "edit") {
+  if (normalized === "edit" || normalized === "editfile") {
     const fp = args.file_path ?? args.filePath ?? "";
     return fp ? `✏️ Edit ${fp}` : `🔧 ${name}`;
   }
-  if (lowerName === "write") {
+  if (normalized === "write" || normalized === "writefile") {
     const fp = args.file_path ?? args.filePath ?? "";
     return fp ? `📝 Write ${fp}` : `🔧 ${name}`;
   }
-  if (lowerName === "bash") {
+  if (
+    normalized === "bash" ||
+    normalized === "execute" ||
+    normalized === "shell"
+  ) {
     const cmd = String(args.command ?? "").slice(0, 60);
     return cmd ? `▶️ Run: ${cmd}` : `🔧 ${name}`;
   }
-  if (lowerName === "grep") {
+  if (normalized === "grep") {
     const pattern = args.pattern ?? "";
     const path = args.path ?? "";
     return pattern
       ? `🔍 Grep "${pattern}"${path ? ` in ${path}` : ""}`
       : `🔧 ${name}`;
   }
-  if (lowerName === "glob") {
+  if (normalized === "glob") {
     const pattern = args.pattern ?? "";
     return pattern ? `🔍 Glob ${pattern}` : `🔧 ${name}`;
   }
-  if (lowerName === "agent") {
-    const desc = String(args.description ?? "").slice(0, 60);
+  if (normalized === "agent" || normalized === "task") {
+    const desc = String(args.description ?? args.prompt ?? "").slice(0, 60);
     return desc ? `🧠 Agent: ${desc}` : `🔧 ${name}`;
   }
-  if (lowerName === "webfetch" || lowerName === "web_fetch") {
+  if (normalized === "webfetch" || normalized === "web_fetch") {
     const url = String(args.url ?? "").slice(0, 60);
     return url ? `🌐 Fetch ${url}` : `🔧 ${name}`;
   }
-  if (lowerName === "websearch" || lowerName === "web_search") {
+  if (normalized === "websearch" || normalized === "web_search") {
     const query = String(args.query ?? "").slice(0, 60);
     return query ? `🌐 Search "${query}"` : `🔧 ${name}`;
   }
@@ -123,29 +128,33 @@ export function formatToolTitle(
   }
 
   const args = parseRawInput(rawInput);
-  const lowerName = name.toLowerCase();
+  const normalized = name.toLowerCase().replace(/[\s_-]+/g, "");
 
-  if (["read", "edit", "write"].includes(lowerName)) {
-    return String(args.file_path ?? args.filePath ?? name);
+  if (
+    ["read", "readfile", "edit", "editfile", "write", "writefile"].includes(
+      normalized,
+    )
+  ) {
+    return String(args.file_path ?? args.filePath ?? args.path ?? name);
   }
-  if (lowerName === "bash") {
+  if (["bash", "execute", "shell"].includes(normalized)) {
     return String(args.command ?? name).slice(0, 60);
   }
-  if (lowerName === "grep") {
+  if (normalized === "grep") {
     const pattern = args.pattern ?? "";
     const path = args.path ?? "";
     return pattern ? `"${pattern}"${path ? ` in ${path}` : ""}` : name;
   }
-  if (lowerName === "glob") {
+  if (normalized === "glob") {
     return String(args.pattern ?? name);
   }
-  if (lowerName === "agent") {
-    return String(args.description ?? name).slice(0, 60);
+  if (normalized === "agent" || normalized === "task") {
+    return String(args.description ?? args.prompt ?? name).slice(0, 60);
   }
-  if (["webfetch", "web_fetch"].includes(lowerName)) {
+  if (["webfetch", "web_fetch"].includes(normalized)) {
     return String(args.url ?? name).slice(0, 60);
   }
-  if (["websearch", "web_search"].includes(lowerName)) {
+  if (["websearch", "web_search"].includes(normalized)) {
     return String(args.query ?? name).slice(0, 60);
   }
 

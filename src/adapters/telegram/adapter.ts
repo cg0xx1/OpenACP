@@ -67,6 +67,7 @@ interface PlanMetadata {
 interface UsageMetadata {
   tokensUsed?: number;
   contextSize?: number;
+  cost?: number;
 }
 
 /**
@@ -664,6 +665,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           rawInput: meta.rawInput,
           viewerLinks: meta.viewerLinks,
           viewerFilePath: meta.viewerFilePath,
+          displaySummary: meta.displaySummary as string | undefined,
+          displayTitle: meta.displayTitle as string | undefined,
+          displayKind: meta.displayKind as string | undefined,
         },
         this.verbosity,
       );
@@ -682,6 +686,9 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           rawInput: meta.rawInput,
           viewerLinks: meta.viewerLinks,
           viewerFilePath: meta.viewerFilePath,
+          displaySummary: meta.displaySummary as string | undefined,
+          displayTitle: meta.displayTitle as string | undefined,
+          displayKind: meta.displayKind as string | undefined,
         },
         this.verbosity,
       );
@@ -697,6 +704,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
           status: e.status as "pending" | "in_progress" | "completed",
           priority: (e.priority ?? "medium") as "high" | "medium" | "low",
         })),
+        this.verbosity,
       );
     },
 
@@ -707,7 +715,7 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
         this.assistantSession?.id,
       );
       const tracker = this.getOrCreateTracker(ctx.sessionId, ctx.threadId);
-      await tracker.sendUsage(meta ?? {});
+      await tracker.sendUsage(meta ?? {}, this.verbosity);
 
       // Notify the Notifications topic that a prompt has completed
       if (
@@ -939,9 +947,19 @@ export class TelegramAdapter extends ChannelAdapter<OpenACPCore> {
     }
 
     // Add Summary button for completed sessions
-    const replyMarkup = notification.type === "completed"
-      ? { inline_keyboard: [[{ text: "📋 Summary", callback_data: `sm:summary:${notification.sessionId}` }]] }
-      : undefined;
+    const replyMarkup =
+      notification.type === "completed"
+        ? {
+            inline_keyboard: [
+              [
+                {
+                  text: "📋 Summary",
+                  callback_data: `sm:summary:${notification.sessionId}`,
+                },
+              ],
+            ],
+          }
+        : undefined;
 
     await this.sendQueue.enqueue(() =>
       this.bot.api.sendMessage(this.telegramConfig.chatId, text, {

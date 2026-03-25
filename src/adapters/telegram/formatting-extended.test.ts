@@ -5,6 +5,7 @@ import {
   formatToolCall,
   formatToolUpdate,
   formatPlan,
+  formatUsage,
   splitMessage,
 } from "./formatting.js";
 
@@ -418,5 +419,166 @@ describe("splitMessage", () => {
     const text = "hello world this is a test";
     const result = splitMessage(text, 10);
     expect(result.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("displayKind icon resolution", () => {
+  it("uses displayKind icon when status has no icon", () => {
+    const result = formatToolCall({
+      id: "tc-1",
+      name: "custom_read",
+      status: "",
+      displayKind: "read",
+    });
+    expect(result).toContain("📖");
+  });
+
+  it("uses kind icon when displayKind not provided", () => {
+    const result = formatToolCall({
+      id: "tc-1",
+      name: "custom_tool",
+      status: "",
+      kind: "execute",
+    });
+    expect(result).toContain("▶️");
+  });
+
+  it("prefers displayKind over kind", () => {
+    const result = formatToolCall({
+      id: "tc-1",
+      name: "tool",
+      status: "",
+      kind: "execute",
+      displayKind: "search",
+    });
+    expect(result).toContain("🔍");
+  });
+
+  it("status icon takes precedence over displayKind", () => {
+    const result = formatToolCall({
+      id: "tc-1",
+      name: "tool",
+      status: "completed",
+      displayKind: "read",
+    });
+    expect(result).toContain("✅");
+    expect(result).not.toContain("📖");
+  });
+});
+
+describe("formatToolCall rawInput on high verbosity", () => {
+  it("shows rawInput and content on high", () => {
+    const result = formatToolCall(
+      {
+        id: "tc-1",
+        name: "Read",
+        status: "completed",
+        rawInput: { file_path: "src/main.ts", limit: 50 },
+        content: "const x = 1;",
+      },
+      "high",
+    );
+    expect(result).toContain("<b>Input:</b>");
+    expect(result).toContain("file_path");
+    expect(result).toContain("<b>Output:</b>");
+    expect(result).toContain("const x = 1;");
+  });
+
+  it("hides rawInput when empty object", () => {
+    const result = formatToolCall(
+      {
+        id: "tc-1",
+        name: "Tool",
+        status: "completed",
+        rawInput: {},
+        content: "output text",
+      },
+      "high",
+    );
+    expect(result).not.toContain("<b>Input:</b>");
+    expect(result).toContain("<b>Output:</b>");
+  });
+
+  it("no rawInput or content on medium", () => {
+    const result = formatToolCall(
+      {
+        id: "tc-1",
+        name: "Read",
+        status: "completed",
+        rawInput: { file_path: "test.ts" },
+        content: "file content",
+      },
+      "medium",
+    );
+    expect(result).not.toContain("<b>Input:</b>");
+    expect(result).not.toContain("<b>Output:</b>");
+  });
+});
+
+describe("formatPlan verbosity", () => {
+  const entries = [
+    { content: "Step 1", status: "completed" },
+    { content: "Step 2", status: "in_progress" },
+    { content: "Step 3", status: "pending" },
+  ];
+
+  it("medium shows summary count only", () => {
+    const result = formatPlan({ entries }, "medium");
+    expect(result).toContain("1/3 steps completed");
+    expect(result).not.toContain("Step 1");
+    expect(result).not.toContain("Step 2");
+  });
+
+  it("high shows full entries", () => {
+    const result = formatPlan({ entries }, "high");
+    expect(result).toContain("Step 1");
+    expect(result).toContain("Step 2");
+    expect(result).toContain("Step 3");
+  });
+
+  it("defaults to high", () => {
+    const result = formatPlan({ entries });
+    expect(result).toContain("Step 1");
+  });
+});
+
+describe("formatUsage verbosity", () => {
+  it("medium shows compact one-line", () => {
+    const result = formatUsage(
+      { tokensUsed: 5000, contextSize: 200000 },
+      "medium",
+    );
+    expect(result).toBe("📊 5k tokens");
+    expect(result).not.toContain("▓");
+  });
+
+  it("medium includes cost when provided", () => {
+    const result = formatUsage(
+      { tokensUsed: 5000, contextSize: 200000, cost: 0.15 },
+      "medium",
+    );
+    expect(result).toContain("$0.15");
+  });
+
+  it("high shows progress bar", () => {
+    const result = formatUsage(
+      { tokensUsed: 28000, contextSize: 200000 },
+      "high",
+    );
+    expect(result).toContain("▓");
+    expect(result).toContain("14%");
+  });
+
+  it("high shows cost when provided", () => {
+    const result = formatUsage(
+      { tokensUsed: 5000, contextSize: 200000, cost: 0.25 },
+      "high",
+    );
+    expect(result).toContain("💰 $0.25");
+  });
+
+  it("defaults to high", () => {
+    const result = formatUsage({ tokensUsed: 28000, contextSize: 200000 });
+    expect(result).toContain("▓");
   });
 });
