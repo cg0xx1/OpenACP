@@ -24,7 +24,7 @@ Rewrite the entire OpenACP documentation from scratch as a GitBook-hosted site (
 
 - Single `docs/gitbook/` directory with GitBook.com-compatible structure
 - `SUMMARY.md` defines sidebar navigation
-- 38 markdown files organized by task (what you want to do), not audience (who you are)
+- 39 content pages + 8 section READMEs + 1 landing page + 1 SUMMARY.md (49 files total), organized by task (what you want to do), not audience (who you are)
 - Getting Started section provides 3 entry points per audience
 - All content in English (i18n planned for later)
 - `docs/acp-guide.md` and `docs/superpowers/` preserved untouched
@@ -140,6 +140,7 @@ docs/
 
 ## Getting Started
 
+* [Overview](getting-started/README.md)
 * [What is OpenACP?](getting-started/what-is-openacp.md)
 * [For Users](getting-started/for-users.md)
 * [For Developers](getting-started/for-developers.md)
@@ -244,7 +245,7 @@ docs/
 | Page | Content | ~Words |
 |------|---------|--------|
 | `installation` | System requirements, npm install, verify, first run, data directories (~/.openacp/) | 400 |
-| `configuration` | Full config.json walkthrough per section, env var overrides, hot-reload, migration notes | 1000 |
+| `configuration` | Full config.json walkthrough per section, interactive config editor CLI (`openacp config`), env var overrides, hot-reload, migration notes | 1000 |
 | `daemon-mode` | start/stop/status/logs, PID file, autostart on boot, foreground vs background | 500 |
 | `security` | allowedUserIds, maxConcurrentSessions, API auth (bearer token), sessionTimeout, best practices | 500 |
 | `logging` | Log levels, file rotation, session logs, log directory, debugging tips | 400 |
@@ -255,7 +256,7 @@ docs/
 | Page | Content | ~Words |
 |------|---------|--------|
 | `tunnel` | What/why tunnel, providers (Cloudflare/ngrok/bore/Tailscale), config, file viewer, per-user tunnels | 600 |
-| `context-resume` | Resume with history, Entire.io integration, checkpoint reading, adaptive modes | 500 |
+| `context-resume` | Resume with history, context providers (Entire.io checkpoints, git commits), checkpoint reading, adaptive modes (full/balanced/compact) | 500 |
 | `usage-and-budget` | Token tracking, monthly budget, warning threshold, usage.json, CLI check | 400 |
 | `session-persistence` | Sessions survive restarts, sessions.json, TTL cleanup, platform metadata | 400 |
 | `session-handoff` | Transfer terminal ↔ chat, `openacp integrate`, adopt flow | 400 |
@@ -275,7 +276,7 @@ docs/
 
 | Page | Content | ~Words |
 |------|---------|--------|
-| `cli-commands` | Every command + subcommand + flags, organized alphabetically, with examples | 800 |
+| `cli-commands` | Every command + subcommand + flags, organized alphabetically, with examples. Includes: start, stop, status, logs, config, reset, onboard, agents (install/uninstall/info/run/refresh), install, uninstall, plugins, integrate, adopt, tunnel (add/list/stop), doctor, api, update, --version, --help | 800 |
 | `rest-api` | Every endpoint: method, path, auth, request/response body, curl examples | 1000 |
 | `configuration-schema` | Full JSON schema, every field with type, default, description | 800 |
 | `environment-variables` | Table: var name, config equivalent, default, description | 300 |
@@ -290,7 +291,13 @@ docs/
 | `agent-issues` | Agent not found, crashes on start, dependency missing, timeout | 500 |
 | `faq` | General Q&A: supported OS, multiple bots, data privacy, costs | 500 |
 
-**Total estimated: ~20,000 words across 38 files.**
+### Landing Page
+
+| Page | Content | ~Words |
+|------|---------|--------|
+| `README.md` (root) | Product tagline, key value props (multi-agent, multi-platform, self-hosted), quick links to Getting Started for each audience (Users / Developers / Contributors), badge links (npm, license, GitHub), hero screenshot | 200 |
+
+**Total estimated: ~20,200 words across 49 files (39 content pages + 8 section READMEs + 1 landing page + 1 SUMMARY.md).**
 
 ## Cleanup Plan
 
@@ -300,22 +307,8 @@ docs/
 docs/setup-guide.md
 docs/slack-setup.md
 docs/refactoring-spec.md
-docs/guide/getting-started.md
-docs/guide/usage.md
-docs/guide/configuration.md
-docs/guide/telegram-setup.md
-docs/guide/discord-setup.md
-docs/guide/agents.md
-docs/guide/plugins.md
-docs/guide/development.md
-docs/guide/tunnel.md
-docs/guide/resume-context.md
-docs/specs/00-overview.md
-docs/specs/01-roadmap.md
-docs/specs/02-core-architecture.md
-docs/specs/03-config.md
-docs/specs/phase1/ (entire directory)
-docs/specs/features/ (entire directory)
+docs/guide/                       (entire directory)
+docs/specs/                       (entire directory)
 ```
 
 ### README.md Link Updates
