@@ -43,11 +43,6 @@ export interface FormattedMessage {
   metadata?: MessageMetadata;
 }
 
-export interface MessageRenderer<T = string> {
-  render(msg: FormattedMessage, expanded: boolean): T;
-  renderFull(msg: FormattedMessage): T;
-}
-
 export const STATUS_ICONS: Record<string, string> = {
   pending: "⏳",
   in_progress: "🔄",

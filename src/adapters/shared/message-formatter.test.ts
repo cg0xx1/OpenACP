@@ -52,6 +52,14 @@ describe("extractContentText", () => {
     expect(extractContentText({ input: "some input" })).toBe("some input");
     expect(extractContentText({ output: "some output" })).toBe("some output");
   });
+  it("falls back to JSON.stringify for unrecognized objects", () => {
+    const obj = { foo: "bar", count: 42 };
+    const result = extractContentText(obj);
+    expect(result).toContain('"foo"');
+    expect(result).toContain('"bar"');
+    expect(result).toContain("42");
+  });
+
   it("respects depth limit", () => {
     let nested: Record<string, unknown> = { text: "deep" };
     for (let i = 0; i < 10; i++) nested = { content: nested };

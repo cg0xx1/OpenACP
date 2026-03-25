@@ -34,7 +34,13 @@ export function extractContentText(content: unknown, depth = 0): string {
   }
   if (obj.input && typeof obj.input === "string") return obj.input;
   if (obj.output && typeof obj.output === "string") return obj.output;
-  return "";
+
+  // Fallback: serialize unrecognized objects so edge-case agent responses are not silently dropped
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return "";
+  }
 }
 
 function parseRawInput(rawInput: unknown): Record<string, unknown> {

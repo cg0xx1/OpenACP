@@ -1,7 +1,5 @@
 import type { UsageSummary } from "../../core/types.js";
 import type {
-  FormattedMessage,
-  MessageRenderer,
   ToolCallMeta,
   ToolUpdateMeta,
   ViewerLinks,
@@ -213,21 +211,3 @@ export function formatUsageReport(
 export function splitMessage(text: string, maxLength = 3800): string[] {
   return sharedSplitMessage(text, maxLength);
 }
-
-export const telegramRenderer: MessageRenderer = {
-  render(msg: FormattedMessage, _expanded: boolean): string {
-    if (msg.style === "tool") {
-      const detail = msg.detail
-        ? `\n<pre>${escapeHtml(truncateContent(stripCodeFences(msg.detail), 3800))}</pre>`
-        : "";
-      return `<b>${escapeHtml(msg.summary)}</b>${detail}`;
-    }
-    if (msg.style === "thought") {
-      return `💭 <i>${escapeHtml(msg.summary)}</i>`;
-    }
-    return msg.summary;
-  },
-  renderFull(msg: FormattedMessage): string {
-    return msg.summary;
-  },
-};

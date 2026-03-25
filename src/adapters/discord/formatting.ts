@@ -1,7 +1,5 @@
 import type { PlanEntry } from "../../core/types.js";
 import type {
-  FormattedMessage,
-  MessageRenderer,
   ToolCallMeta,
   ToolUpdateMeta,
   ViewerLinks,
@@ -89,21 +87,3 @@ export function formatUsage(usage: {
 export function splitMessage(text: string, maxLength = 1800): string[] {
   return sharedSplitMessage(text, maxLength);
 }
-
-export const discordRenderer: MessageRenderer = {
-  render(msg: FormattedMessage, _expanded: boolean): string {
-    if (msg.style === "tool") {
-      const detail = msg.detail
-        ? `\n\`\`\`\n${truncateContent(stripCodeFences(msg.detail), 500)}\n\`\`\``
-        : "";
-      return `**${msg.summary}**${detail}`;
-    }
-    if (msg.style === "thought") {
-      return `💭 _${msg.summary}_`;
-    }
-    return msg.summary;
-  },
-  renderFull(msg: FormattedMessage): string {
-    return msg.summary;
-  },
-};
