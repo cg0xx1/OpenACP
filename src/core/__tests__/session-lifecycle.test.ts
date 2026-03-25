@@ -1,15 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Session } from '../session.js'
+import { TypedEmitter } from '../typed-emitter.js'
+import type { AgentEvent } from '../types.js'
 
 function mockAgentInstance() {
-  return {
+  const emitter = new TypedEmitter<{ agent_event: (event: AgentEvent) => void }>()
+  return Object.assign(emitter, {
     sessionId: 'agent-sess-1',
     prompt: vi.fn().mockResolvedValue(undefined),
     cancel: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn().mockResolvedValue(undefined),
-    onSessionUpdate: vi.fn(),
     onPermissionRequest: vi.fn(),
-  } as any
+  }) as any
 }
 
 function createTestSession(agentInstance?: any) {
@@ -63,7 +65,7 @@ describe('Session - Lifecycle & Prompt Processing', () => {
 
       await session.enqueuePrompt('hello')
 
-      expect(agent.prompt).toHaveBeenCalledWith('hello')
+      expect(agent.prompt).toHaveBeenCalledWith('hello', undefined)
     })
 
     it('activates session on first user prompt from initializing', async () => {
@@ -82,9 +84,8 @@ describe('Session - Lifecycle & Prompt Processing', () => {
       // Simulate agent responding with title during auto-name prompt
       agent.prompt.mockImplementation(async (text: string) => {
         if (text.includes('Summarize')) {
-          // Simulate the onSessionUpdate being intercepted
-          // The auto-name intercepts onSessionUpdate, so we need to call it
-          agent.onSessionUpdate({ type: 'text', content: 'Test Title' })
+          // Simulate agent emitting a text event during auto-name prompt
+          agent.emit('agent_event', { type: 'text', content: 'Test Title' })
         }
       })
 
@@ -264,7 +265,7 @@ describe('Session - Lifecycle & Prompt Processing', () => {
       const longTitle = 'A'.repeat(100)
       agent.prompt.mockImplementation(async (text: string) => {
         if (text.includes('Summarize')) {
-          agent.onSessionUpdate({ type: 'text', content: longTitle })
+          agent.emit('agent_event', { type: 'text', content: longTitle })
         }
       })
 
@@ -288,15 +289,59 @@ describe('Session - Lifecycle & Prompt Processing', () => {
       expect(session.name).toContain('Session')
     })
 
-    it('restores original onSessionUpdate after auto-name', async () => {
+    it('cleans up capture listener after auto-name', async () => {
       const agent = mockAgentInstance()
-      const originalHandler = agent.onSessionUpdate
       const session = createTestSession(agent)
-      session.name = 'skip' // skip auto-name on first call
 
-      // After processing, the handler should be the original
+      // After auto-name, the agent emitter should not be paused
+      // and no lingering capture listeners should remain
       await session.enqueuePrompt('hello')
-      expect(agent.onSessionUpdate).toBe(originalHandler)
+      expect(agent.isPaused).toBe(false)
     })
   })
 })
+
+describe("Session - Context Injection", () => {
+  it("prepends context to first prompt only", async () => {
+    const agent = mockAgentInstance();
+    const session = createTestSession(agent);
+    session.name = "skip-autoname";
+    session.setContext("Previous conversation context here");
+
+    await session.enqueuePrompt("fix the bug");
+    await vi.waitFor(() => expect(agent.prompt).toHaveBeenCalledTimes(1));
+
+    const promptText = agent.prompt.mock.calls[0][0];
+    expect(promptText).toContain("[CONVERSATION HISTORY");
+    expect(promptText).toContain("Previous conversation context here");
+    expect(promptText).toContain("[END CONVERSATION HISTORY]");
+    expect(promptText).toContain("fix the bug");
+  });
+
+  it("does not inject context on second prompt", async () => {
+    const agent = mockAgentInstance();
+    const session = createTestSession(agent);
+    session.setContext("context");
+    session.name = "skip-autoname";
+
+    await session.enqueuePrompt("first");
+    await vi.waitFor(() => expect(agent.prompt).toHaveBeenCalledTimes(1));
+
+    await session.enqueuePrompt("second");
+    await vi.waitFor(() => expect(agent.prompt).toHaveBeenCalledTimes(2));
+
+    const secondPrompt = agent.prompt.mock.calls[1][0];
+    expect(secondPrompt).not.toContain("[CONVERSATION HISTORY");
+    expect(secondPrompt).toBe("second");
+  });
+
+  it("works without context set (no injection)", async () => {
+    const agent = mockAgentInstance();
+    const session = createTestSession(agent);
+    session.name = "skip-autoname";
+
+    await session.enqueuePrompt("hello");
+    await vi.waitFor(() => expect(agent.prompt).toHaveBeenCalledTimes(1));
+    expect(agent.prompt.mock.calls[0][0]).toBe("hello");
+  });
+});
