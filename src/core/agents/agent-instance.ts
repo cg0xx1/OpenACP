@@ -349,6 +349,43 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               // ACP SDK types don't expose data/mimeType fields for audio content
               const c = update.content as unknown as { data: string; mimeType: string };
               event = { type: "audio_content", data: c.data, mimeType: c.mimeType };
+            } else if (update.content.type === "resource") {
+              // EmbeddedResource: content.resource is TextResourceContents or BlobResourceContents
+              // TextResourceContents has { uri, text, mimeType? }
+              // BlobResourceContents has { uri, blob, mimeType? }
+              const c = update.content as unknown as {
+                resource: { uri: string; text?: string; blob?: string; mimeType?: string };
+                annotations?: { audience?: string[]; priority?: number };
+              };
+              // The EmbeddedResource content block doesn't carry a top-level name field —
+              // use the uri as a fallback name since AgentEvent.resource_content requires one.
+              event = {
+                type: "resource_content",
+                uri: c.resource.uri,
+                name: c.resource.uri,
+                text: c.resource.text ?? undefined,
+                blob: c.resource.blob ?? undefined,
+                mimeType: c.resource.mimeType ?? undefined,
+              };
+            } else if (update.content.type === "resource_link") {
+              // ResourceLink: { uri, name, mimeType?, title?, description?, size? }
+              const c = update.content as unknown as {
+                uri: string;
+                name: string;
+                mimeType?: string | null;
+                title?: string | null;
+                description?: string | null;
+                size?: number | null;
+              };
+              event = {
+                type: "resource_link",
+                uri: c.uri,
+                name: c.name,
+                mimeType: c.mimeType ?? undefined,
+                title: c.title ?? undefined,
+                description: c.description ?? undefined,
+                size: c.size ?? undefined,
+              };
             }
             break;
           case "agent_thought_chunk":
@@ -425,6 +462,12 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               content: (update as any).content?.text ?? "",
             };
             break;
+          // NOTE: model_update is NOT a session update type in the ACP SDK schema.
+          // Model changes are applied via the unstable_setSessionModel() method and
+          // the response is synchronous — the SDK does not push a model_update
+          // notification to the client. Therefore AgentEvent "model_update" cannot
+          // originate from sessionUpdate and must be emitted by callers of setModel()
+          // if they need to propagate the change downstream.
           default:
             // Unknown update type — ignore
             return;
