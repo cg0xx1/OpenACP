@@ -125,8 +125,8 @@ export async function startServer() {
       core.registerAdapter('slack', new SlackAdapter(core, slackConfig))
       log.info({ adapter: 'slack' }, 'Adapter registered')
     } else if (channelName === 'discord') {
-      const { DiscordAdapter } = await import('./adapters/discord/index.js')
-      const discordConfig = channelConfig as import('./adapters/discord/types.js').DiscordChannelConfig
+      const { DiscordAdapter } = await import('./plugins/discord/adapter.js')
+      const discordConfig = channelConfig as import('./plugins/discord/types.js').DiscordChannelConfig
       core.registerAdapter('discord', new DiscordAdapter(core, discordConfig))
       log.info({ adapter: 'discord' }, 'Adapter registered')
     } else if (channelConfig.adapter) {

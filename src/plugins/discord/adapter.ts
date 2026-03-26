@@ -44,7 +44,7 @@ import {
 } from "./commands/index.js";
 import { spawnAssistant, buildWelcomeMessage } from "./assistant.js";
 import type { Attachment } from "../../core/types.js";
-import type { FileService } from "../../plugins/file-service/file-service.js";
+import type { FileService } from "../file-service/file-service.js";
 import {
   buildFallbackText,
   downloadDiscordAttachment,
