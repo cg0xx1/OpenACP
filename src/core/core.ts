@@ -25,8 +25,8 @@ import { MiddlewareChain } from "./plugin/middleware-chain.js";
 import { ErrorTracker } from "./plugin/error-tracker.js";
 import { createChildLogger } from "./utils/log.js";
 import type { SpeechService } from "../speech/index.js";
-import type { ContextManager } from "./context/context-manager.js";
-import type { ContextQuery, ContextOptions, ContextResult } from "./context/context-provider.js";
+import type { ContextManager } from "../plugins/context/context-manager.js";
+import type { ContextQuery, ContextOptions, ContextResult } from "../plugins/context/context-provider.js";
 const log = createChildLogger({ module: "core" });
 
 export class OpenACPCore {

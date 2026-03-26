@@ -1,6 +1,6 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
-import { ContextManager } from '../../core/context/context-manager.js'
-import { EntireProvider } from '../../core/context/entire/entire-provider.js'
+import { ContextManager } from './context-manager.js'
+import { EntireProvider } from './entire/entire-provider.js'
 
 const contextPlugin: OpenACPPlugin = {
   name: '@openacp/context',
