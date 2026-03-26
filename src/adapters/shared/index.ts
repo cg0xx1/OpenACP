@@ -4,6 +4,4 @@ export { type IRenderer, BaseRenderer, type RenderedMessage, type RenderedPermis
 export { SendQueue, DraftManager, Draft, ToolCallTracker, ActivityTracker } from './primitives/index.js'
 export type { SendQueueConfig, DraftConfig, TrackedToolCall, ActivityConfig, ActivityCallbacks } from './primitives/index.js'
 
-// Legacy exports — kept for backward compat during migration
-export { dispatchMessage, shouldDispatch, type MessageHandlers } from './message-dispatcher.js'
 export type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta, FormattedMessage, MessageMetadata, ViewerLinks } from './format-types.js'
