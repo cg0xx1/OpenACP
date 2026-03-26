@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { OpenACPCore } from "../core.js";
 import type { IChannelAdapter } from "../channel.js";
 import type { IncomingMessage } from "../types.js";
-import { SecurityGuard } from "../security-guard.js";
+import { SecurityGuard } from "../../plugins/security/security-guard.js";
 import { NotificationManager } from "../notification.js";
 
 // Mock heavy dependencies

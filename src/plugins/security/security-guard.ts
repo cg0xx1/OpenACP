@@ -1,6 +1,6 @@
-import type { ConfigManager } from "./config/config.js";
-import type { SessionManager } from "./sessions/session-manager.js";
-import type { IncomingMessage } from "./types.js";
+import type { ConfigManager } from "../../core/config/config.js";
+import type { SessionManager } from "../../core/sessions/session-manager.js";
+import type { IncomingMessage } from "../../core/types.js";
 
 export class SecurityGuard {
   constructor(

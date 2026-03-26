@@ -1,5 +1,5 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
-import { SecurityGuard } from '../../core/security-guard.js'
+import { SecurityGuard } from './security-guard.js'
 
 // Factory function pattern (closure for state)
 function createSecurityPlugin(): OpenACPPlugin {

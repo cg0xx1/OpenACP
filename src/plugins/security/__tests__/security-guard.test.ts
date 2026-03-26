@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { SecurityGuard } from "../security-guard.js";
-import type { IncomingMessage } from "../types.js";
+import type { IncomingMessage } from "../../../core/types.js";
 
 function makeMessage(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
   return {

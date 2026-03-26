@@ -12,7 +12,7 @@ import type { FileService } from "./utils/file-service.js";
 import { JsonFileSessionStore, type SessionStore } from "./sessions/session-store.js";
 import type { UsageStore } from "./sessions/usage-store.js";
 import type { UsageBudget } from "./sessions/usage-budget.js";
-import type { SecurityGuard } from "./security-guard.js";
+import type { SecurityGuard } from "../plugins/security/security-guard.js";
 import { SessionFactory } from "./sessions/session-factory.js";
 import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../tunnel/tunnel-service.js";
