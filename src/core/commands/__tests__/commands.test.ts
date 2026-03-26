@@ -74,7 +74,7 @@ describe('System Commands', () => {
     expect(response.type).toBe('silent')
   })
 
-  it('/status returns text when no session', async () => {
+  it('/status returns silent (handled by adapter)', async () => {
     const registry = createRegistry()
     const response = await registry.execute('/status', {
       sessionId: null,
@@ -83,7 +83,7 @@ describe('System Commands', () => {
       raw: '',
       reply: async () => {},
     })
-    expect(response.type).toBe('text')
+    expect(response.type).toBe('silent')
   })
 
   it('/agents returns text', async () => {

@@ -138,7 +138,8 @@ export class CommandRegistry {
     // Parse command name and raw args
     const trimmed = commandString.trim()
     const spaceIdx = trimmed.indexOf(' ')
-    const cmdName = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx)
+    const rawCmd = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx)
+    const cmdName = rawCmd.split("@")[0]
     const rawArgs = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1)
 
     // Check for adapter-specific override first

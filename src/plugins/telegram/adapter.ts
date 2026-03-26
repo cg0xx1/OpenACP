@@ -272,7 +272,13 @@ export class TelegramAdapter extends MessagingAdapter {
       if (!registry) return next();
 
       // Extract command name (remove / and @botname suffix)
-      const commandName = text.split(" ")[0].slice(1).split("@")[0];
+      const rawCommand = text.split(" ")[0].slice(1);
+      const atIdx = rawCommand.indexOf("@");
+      // If command is directed at another bot, ignore it
+      if (atIdx !== -1 && rawCommand.slice(atIdx + 1).toLowerCase() !== ctx.me.username.toLowerCase()) {
+        return next();
+      }
+      const commandName = atIdx === -1 ? rawCommand : rawCommand.slice(0, atIdx);
       const def = registry.get(commandName);
       if (!def) return next(); // not in registry, fall through to existing handlers
 
@@ -299,9 +305,12 @@ export class TelegramAdapter extends MessagingAdapter {
           },
         });
 
-        if (response.type !== "silent") {
-          await this.renderCommandResponse(response, chatId, topicId);
+        if (response.type === "silent") {
+          // Silent means the registry has no UI for this command — pass through
+          // to adapter-specific handlers (e.g. handleNewChat, handleCancel).
+          return next();
         }
+        await this.renderCommandResponse(response, chatId, topicId);
       } catch (err) {
         await ctx.reply(`\u26a0\ufe0f Command failed: ${String(err)}`);
       }

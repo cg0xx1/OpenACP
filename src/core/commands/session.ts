@@ -1,18 +1,20 @@
 import type { CommandRegistry } from '../command-registry.js'
 import type { CommandResponse } from '../plugin/types.js'
 
+/**
+ * System session commands — these are placeholder registrations for discovery
+ * (autocomplete, help text, etc.). The actual logic lives in adapter-specific
+ * handlers. Handlers return 'silent' so the generic dispatch passes through
+ * to the adapter's dedicated handler via next().
+ */
 export function registerSessionCommands(registry: CommandRegistry, _core: unknown): void {
   registry.register({
     name: 'new',
     description: 'Start a new session',
     usage: '[agent-name]',
     category: 'system',
-    handler: async (args) => {
-      const agent = args.raw.trim()
-      if (agent) {
-        return { type: 'text', text: `Starting new session with agent: ${agent}` } satisfies CommandResponse
-      }
-      return { type: 'text', text: 'Starting new session...' } satisfies CommandResponse
+    handler: async () => {
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 
@@ -30,7 +32,7 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Show current session status',
     category: 'system',
     handler: async () => {
-      return { type: 'text', text: 'No active session.' } satisfies CommandResponse
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 
@@ -39,7 +41,7 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'List all active sessions',
     category: 'system',
     handler: async () => {
-      return { type: 'text', text: 'No active sessions.' } satisfies CommandResponse
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 
@@ -54,10 +56,10 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
 
   registry.register({
     name: 'newchat',
-    description: 'End current session and start a new one',
+    description: 'New chat, same agent & workspace',
     category: 'system',
     handler: async () => {
-      return { type: 'text', text: 'Ending session and starting a new one...' } satisfies CommandResponse
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 
@@ -66,12 +68,8 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Resume a previous session',
     usage: '<session-number>',
     category: 'system',
-    handler: async (args) => {
-      const id = args.raw.trim()
-      if (!id) {
-        return { type: 'error', message: 'Usage: /resume <session-number>' } satisfies CommandResponse
-      }
-      return { type: 'text', text: `Resuming session ${id}...` } satisfies CommandResponse
+    handler: async () => {
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 
@@ -80,7 +78,7 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Show session summary',
     category: 'system',
     handler: async () => {
-      return { type: 'text', text: 'No session summary available.' } satisfies CommandResponse
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 
@@ -89,12 +87,8 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Hand off session to another agent',
     usage: '<agent-name>',
     category: 'system',
-    handler: async (args) => {
-      const agent = args.raw.trim()
-      if (!agent) {
-        return { type: 'error', message: 'Usage: /handoff <agent-name>' } satisfies CommandResponse
-      }
-      return { type: 'text', text: `Handing off to ${agent}...` } satisfies CommandResponse
+    handler: async () => {
+      return { type: 'silent' } satisfies CommandResponse
     },
   })
 }
