@@ -3,7 +3,9 @@ import { ServiceRegistry } from './service-registry.js'
 import { MiddlewareChain } from './middleware-chain.js'
 import { ErrorTracker } from './error-tracker.js'
 import { createPluginContext } from './plugin-context.js'
-import type { OpenACPPlugin, EventBus, Logger } from './types.js'
+import type { OpenACPPlugin, EventBus, Logger, MigrateContext } from './types.js'
+import type { SettingsManager } from './settings-manager.js'
+import type { PluginRegistry } from './plugin-registry.js'
 
 const SETUP_TIMEOUT_MS = 30_000
 const TEARDOWN_TIMEOUT_MS = 10_000
@@ -65,6 +67,8 @@ export interface LifecycleManagerOpts {
   config?: unknown
   core?: unknown
   log?: Logger
+  settingsManager?: SettingsManager
+  pluginRegistry?: PluginRegistry
 }
 
 export class LifecycleManager {
@@ -78,6 +82,8 @@ export class LifecycleManager {
   private config: unknown
   private core: unknown
   private log: Logger | undefined
+  private settingsManager: SettingsManager | undefined
+  private pluginRegistry: PluginRegistry | undefined
 
   private contexts = new Map<string, ReturnType<typeof createPluginContext>>()
   private loadOrder: OpenACPPlugin[] = []
@@ -106,6 +112,8 @@ export class LifecycleManager {
     this.config = opts?.config ?? {}
     this.core = opts?.core
     this.log = opts?.log
+    this.settingsManager = opts?.settingsManager
+    this.pluginRegistry = opts?.pluginRegistry
   }
 
   async boot(plugins: OpenACPPlugin[]): Promise<void> {
@@ -138,8 +146,46 @@ export class LifecycleManager {
         }
       }
 
+      // Check if disabled in registry
+      const registryEntry = this.pluginRegistry?.get(plugin.name)
+      if (registryEntry && registryEntry.enabled === false) {
+        this.eventBus?.emit('plugin:disabled', { name: plugin.name })
+        continue
+      }
+
+      // Check version mismatch → migrate
+      if (registryEntry && plugin.migrate && registryEntry.version !== plugin.version && this.settingsManager) {
+        try {
+          const oldSettings = await this.settingsManager.loadSettings(plugin.name)
+          const migrateCtx: MigrateContext = {
+            pluginName: plugin.name,
+            settings: this.settingsManager.createAPI(plugin.name),
+            log: ((this.log as any)?.child?.({ plugin: plugin.name }) ?? this.log ?? console) as any,
+          }
+          const newSettings = await plugin.migrate(migrateCtx, oldSettings, registryEntry.version)
+          if (newSettings && typeof newSettings === 'object') {
+            await migrateCtx.settings.setAll(newSettings as Record<string, unknown>)
+          }
+          this.pluginRegistry!.updateVersion(plugin.name, plugin.version)
+          await this.pluginRegistry!.save()
+        } catch (err) {
+          const childLog = (this.log as any)?.child?.({ plugin: plugin.name })
+          ;(childLog ?? this.log ?? console as any).warn?.({ err }, 'Migration failed, continuing with old settings')
+        }
+      }
+
+      // Resolve config: prefer settings.json, fallback to legacy
+      let pluginConfig: Record<string, unknown>
+      if (this.settingsManager) {
+        pluginConfig = await this.settingsManager.loadSettings(plugin.name)
+        if (Object.keys(pluginConfig).length === 0) {
+          pluginConfig = resolvePluginConfig(plugin.name, this.config)
+        }
+      } else {
+        pluginConfig = resolvePluginConfig(plugin.name, this.config)
+      }
+
       // Create context for this plugin
-      const pluginConfig = resolvePluginConfig(plugin.name, this.config)
       const ctx = createPluginContext({
         pluginName: plugin.name,
         pluginConfig,
