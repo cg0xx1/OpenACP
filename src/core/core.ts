@@ -19,6 +19,10 @@ import type { TunnelService } from "../tunnel/tunnel-service.js";
 import { getAgentCapabilities } from "./agents/agent-registry.js";
 import { AgentCatalog } from "./agents/agent-catalog.js";
 import { EventBus } from "./event-bus.js";
+import { LifecycleManager } from "./plugin/lifecycle-manager.js";
+import { ServiceRegistry } from "./plugin/service-registry.js";
+import { MiddlewareChain } from "./plugin/middleware-chain.js";
+import { ErrorTracker } from "./plugin/error-tracker.js";
 import { createChildLogger } from "./utils/log.js";
 import { SpeechService, GroqSTT, EdgeTTS } from "../speech/index.js";
 import { ContextManager } from "./context/context-manager.js";
@@ -47,6 +51,7 @@ export class OpenACPCore {
   readonly usageStore: UsageStore | null = null;
   readonly usageBudget: UsageBudget | null = null;
   readonly contextManager: ContextManager;
+  readonly lifecycleManager: LifecycleManager;
 
   constructor(configManager: ConfigManager) {
     this.configManager = configManager;
@@ -113,6 +118,27 @@ export class OpenACPCore {
       this.speechService,
       this.eventBus,
     );
+
+    // Initialize plugin lifecycle manager
+    this.lifecycleManager = new LifecycleManager({
+      serviceRegistry: new ServiceRegistry(),
+      middlewareChain: new MiddlewareChain(),
+      errorTracker: new ErrorTracker(),
+      eventBus: this.eventBus as any,
+      sessions: this.sessionManager,
+      config: this.configManager,
+      storagePath: path.join(os.homedir(), ".openacp", "plugins", "data"),
+    });
+
+    // Auto-register built-in services
+    this.lifecycleManager.serviceRegistry.register("security", this.securityGuard, "@openacp/security");
+    this.lifecycleManager.serviceRegistry.register("file-service", this.fileService, "@openacp/file-service");
+    this.lifecycleManager.serviceRegistry.register("notifications", this.notificationManager, "@openacp/notifications");
+    if (this.usageStore && this.usageBudget) {
+      this.lifecycleManager.serviceRegistry.register("usage", { store: this.usageStore, budget: this.usageBudget }, "@openacp/usage");
+    }
+    this.lifecycleManager.serviceRegistry.register("context", this.contextManager, "@openacp/context");
+    this.lifecycleManager.serviceRegistry.register("speech", this.speechService, "@openacp/speech");
 
     // Hot-reload: handle config changes that need side effects
     this.configManager.on(

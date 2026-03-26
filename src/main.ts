@@ -132,6 +132,16 @@ export async function startServer() {
     process.exit(1)
   }
 
+  // 4.5 Boot community plugins (if any)
+  try {
+    // Discover community plugins from ~/.openacp/plugins/
+    // For now: empty array until CLI plugin add is implemented
+    await core.lifecycleManager.boot([])
+    core.eventBus.emit('system:ready')
+  } catch (err) {
+    log.error({ err }, 'Plugin boot failed')
+  }
+
   // 5. Start
   let apiServer: ApiServer | undefined
 
