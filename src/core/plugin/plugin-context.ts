@@ -136,6 +136,10 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
     registerCommand(def: CommandDef): void {
       requirePermission(permissions, 'commands:register', 'registerCommand()')
       registeredCommands.push(def)
+      const registry = serviceRegistry.get<{ register(def: CommandDef, pluginName: string): void }>('command-registry')
+      if (registry && typeof registry.register === 'function') {
+        registry.register(def, pluginName)
+      }
     },
 
     async sendMessage(_sessionId: string, _content: OutgoingMessage): Promise<void> {

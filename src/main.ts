@@ -3,13 +3,13 @@
 import { ConfigManager } from './core/config/config.js'
 import { OpenACPCore } from './core/core.js'
 import { initLogger, shutdownLogger, cleanupOldSessionLogs, log, muteLogger, unmuteLogger } from './core/utils/log.js'
-import { TelegramAdapter } from './plugins/telegram/adapter.js'
-import type { TelegramChannelConfig } from './plugins/telegram/types.js'
-import { ApiServer } from './plugins/api-server/api-server.js'
-import { TopicManager } from './plugins/telegram/topic-manager.js'
 import { corePlugins } from './plugins/core-plugins.js'
 import { SettingsManager } from './core/plugin/settings-manager.js'
 import { PluginRegistry } from './core/plugin/plugin-registry.js'
+import { CommandRegistry } from './core/command-registry.js'
+import { registerSystemCommands } from './core/commands/index.js'
+import type { IChannelAdapter } from './core/channel.js'
+import type { TunnelService } from './plugins/tunnel/tunnel-service.js'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -101,48 +101,47 @@ export async function startServer() {
   // 3. Create core
   const core = new OpenACPCore(configManager)
 
-  // 3.5 Start tunnel if configured
-  let tunnelService: import('./plugins/tunnel/tunnel-service.js').TunnelService | undefined
-  if (config.tunnel.enabled) {
-    const { TunnelService } = await import('./plugins/tunnel/tunnel-service.js')
-    tunnelService = new TunnelService(config.tunnel)
-    const publicUrl = await tunnelService.start()
-    core.tunnelService = tunnelService
-    log.info({ publicUrl }, 'Tunnel started')
-  }
+  // 3b. Create CommandRegistry and register as service
+  const commandRegistry = new CommandRegistry()
+  const serviceRegistry = core.lifecycleManager.serviceRegistry
+  serviceRegistry.register('command-registry', commandRegistry, 'core')
 
-  // 4. Register adapters from config
-  for (const [channelName, channelConfig] of Object.entries(config.channels)) {
-    if (!channelConfig.enabled) continue
+  // 3c. Register system commands
+  registerSystemCommands(commandRegistry, core)
 
-    if (channelName === 'telegram') {
-      core.registerAdapter('telegram', new TelegramAdapter(core, channelConfig as TelegramChannelConfig))
-      log.info({ adapter: 'telegram' }, 'Adapter registered')
-    } else if (channelName === 'slack') {
-      const { SlackAdapter } = await import('./plugins/slack/adapter.js')
-      const slackConfig = channelConfig as import('./plugins/slack/types.js').SlackChannelConfig
-      core.registerAdapter('slack', new SlackAdapter(core, slackConfig))
-      log.info({ adapter: 'slack' }, 'Adapter registered')
-    } else if (channelName === 'discord') {
-      const { DiscordAdapter } = await import('./plugins/discord/adapter.js')
-      const discordConfig = channelConfig as import('./plugins/discord/types.js').DiscordChannelConfig
-      core.registerAdapter('discord', new DiscordAdapter(core, discordConfig))
-      log.info({ adapter: 'discord' }, 'Adapter registered')
-    } else if (channelConfig.adapter) {
-      // Plugin adapter
-      const factory = await loadAdapterFactory(channelConfig.adapter)
-      if (factory) {
-        const adapter = factory.createAdapter(core, channelConfig)
-        core.registerAdapter(channelName, adapter)
-        log.info({ adapter: channelName, plugin: channelConfig.adapter }, 'Adapter registered')
-      } else {
-        const name = channelName
-        const err = channelConfig.adapter
-        log.error({ adapter: name, err }, 'Failed to load adapter')
+  // 4. Boot all plugins (services, infrastructure, adapters)
+  try {
+    // Emit kernel:booted before plugin boot
+    core.eventBus.emit('kernel:booted')
+
+    // Pass settingsManager and pluginRegistry to LifecycleManager
+    ;(core.lifecycleManager as any).settingsManager = settingsManager
+    ;(core.lifecycleManager as any).pluginRegistry = pluginRegistry
+
+    // Boot all built-in plugins in dependency order
+    await core.lifecycleManager.boot(corePlugins)
+
+    // Wire adapters from service registry into core
+    for (const adapterName of ['telegram', 'discord', 'slack']) {
+      const adapter = serviceRegistry.get<IChannelAdapter>(`adapter:${adapterName}`)
+      if (adapter) {
+        core.registerAdapter(adapterName, adapter)
+        log.info({ adapter: adapterName }, 'Adapter registered')
       }
-    } else {
-      log.error({ adapter: channelName }, 'Channel has no built-in adapter; set "adapter" field to a plugin package')
     }
+
+    // Wire tunnel service from service registry into core
+    const tunnelSvc = serviceRegistry.get<TunnelService>('tunnel')
+    if (tunnelSvc) {
+      core.tunnelService = tunnelSvc
+    }
+
+    // Emit system:commands-ready with all registered commands
+    core.eventBus.emit('system:commands-ready', { commands: commandRegistry.getAll() })
+
+    core.eventBus.emit('system:ready')
+  } catch (err) {
+    log.error({ err }, 'Plugin boot failed')
   }
 
   if (core.adapters.size === 0) {
@@ -150,42 +149,16 @@ export async function startServer() {
     process.exit(1)
   }
 
-  // 4.5 Boot community plugins (if any)
-  try {
-    // Emit kernel:booted before plugin boot
-    core.eventBus.emit('kernel:booted')
-
-    // Pass settingsManager and pluginRegistry to LifecycleManager
-    // (LifecycleManager already accepts these in its constructor opts,
-    //  but core creates it without them — patch them in before boot)
-    ;(core.lifecycleManager as any).settingsManager = settingsManager
-    ;(core.lifecycleManager as any).pluginRegistry = pluginRegistry
-
-    // Boot core built-in plugins (security, file-service, context, usage, speech, notifications)
-    // plus any community plugins discovered from ~/.openacp/plugins/
-    await core.lifecycleManager.boot(corePlugins)
-
-    // Collect registered commands and emit system:commands-ready
-    const commands = core.lifecycleManager.serviceRegistry.get<import('./core/plugin/types.js').CommandDef[]>('registered-commands') ?? []
-    core.eventBus.emit('system:commands-ready', { commands })
-
-    core.eventBus.emit('system:ready')
-  } catch (err) {
-    log.error({ err }, 'Plugin boot failed')
-  }
-
-  // 5. Start
-  let apiServer: ApiServer | undefined
-
+  // 5. Setup shutdown handler
   const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
     log.info({ signal, exitCode }, 'Signal received, shutting down')
 
     try {
-      if (apiServer) await apiServer.stop()
+      // Lifecycle teardown stops all plugins (adapters, api-server, tunnel, etc.)
+      await core.lifecycleManager.shutdown()
       await core.stop()
-      if (tunnelService) await tunnelService.stop()
     } catch (err) {
       log.error({ err }, 'Error during shutdown')
     }
@@ -256,33 +229,17 @@ export async function startServer() {
 
   await core.start()
 
-  const updatedConfig = core.configManager.get()
-  const telegramAdapter = core.adapters.get('telegram') ?? null
-  let topicManager: TopicManager | undefined
-  if (telegramAdapter) {
-    const telegramCfg = updatedConfig.channels?.telegram as TelegramChannelConfig | undefined
-    topicManager = new TopicManager(
-      core.sessionManager,
-      telegramAdapter,
-      {
-        notificationTopicId: telegramCfg?.notificationTopicId ?? null,
-        assistantTopicId: telegramCfg?.assistantTopicId ?? null,
-      },
-    )
-  }
-
-  apiServer = new ApiServer(core, config.api, undefined, topicManager)
-  await apiServer.start()
-
   // 6. Log ready
   if (isForegroundTTY) {
     if (spinner) spinner.stop()
     const ok = (msg: string) => console.log(`\x1b[32m✓\x1b[0m ${msg}`)
     ok('Config loaded')
     ok('Dependencies checked')
-    if (tunnelService) ok(`Tunnel ready → ${tunnelService.getPublicUrl()}`)
+    const tunnelSvc = core.lifecycleManager.serviceRegistry.get<TunnelService>('tunnel')
+    if (tunnelSvc) ok(`Tunnel ready → ${tunnelSvc.getPublicUrl()}`)
     for (const [name] of core.adapters) ok(`${name.charAt(0).toUpperCase() + name.slice(1)} connected`)
-    if (apiServer) ok(`API server on port ${config.api.port}`)
+    const apiPort = config.api?.port ?? 21420
+    if (core.lifecycleManager.serviceRegistry.get('api-server')) ok(`API server on port ${apiPort}`)
     console.log(`\nOpenACP is running. Press Ctrl+C to stop.\n`)
     unmuteLogger()
   }
@@ -394,33 +351,6 @@ function createSilentTerminal(): import('./core/plugin/types.js').TerminalIO {
     spinner: () => ({ start: noop, stop: noop, fail: noop }),
     note: noop,
     cancel: noop,
-  }
-}
-
-interface AdapterFactory {
-  name: string
-  createAdapter(core: OpenACPCore, config: import('./core/channel.js').ChannelConfig): import('./core/channel.js').IChannelAdapter
-}
-
-async function loadAdapterFactory(packageName: string): Promise<AdapterFactory | null> {
-  try {
-    const { createRequire } = await import('node:module')
-    const { PLUGINS_DIR } = await import('./core/config/config.js')
-    const pathMod = await import('node:path')
-    const require = createRequire(pathMod.join(PLUGINS_DIR, 'package.json'))
-    const resolved = require.resolve(packageName)
-    const mod = await import(resolved)
-
-    const factory: AdapterFactory | undefined = mod.adapterFactory || mod.default
-    if (!factory || typeof factory.createAdapter !== 'function') {
-      log.error({ packageName }, 'Plugin does not export a valid AdapterFactory (needs .createAdapter())')
-      return null
-    }
-    return factory
-  } catch (err) {
-    log.error({ packageName, err }, 'Failed to load plugin')
-    log.error({ packageName }, 'Run: npx openacp install <packageName>')
-    return null
   }
 }
 
