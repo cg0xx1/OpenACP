@@ -1,4 +1,4 @@
-import { readApiPort, removeStalePortFile, apiCall } from '../../core/api-client.js'
+import { readApiPort, removeStalePortFile, apiCall } from '../api-client.js'
 import { wantsHelp } from './helpers.js'
 
 function printApiHelp(): void {

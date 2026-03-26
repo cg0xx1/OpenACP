@@ -838,7 +838,7 @@ export async function runConfigEditor(
 }
 
 async function sendConfigViaApi(port: number, updates: ConfigUpdates): Promise<void> {
-  const { apiCall: call } = await import('../api-client.js')
+  const { apiCall: call } = await import('../../cli/api-client.js')
 
   const paths = flattenToPaths(updates)
   for (const { path, value } of paths) {
