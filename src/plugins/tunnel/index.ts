@@ -1,4 +1,5 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
+import type { TunnelConfig } from '../../core/config/config.js'
 
 function createTunnelPlugin(): OpenACPPlugin {
   let service: { stop(): Promise<void> } | null = null
@@ -17,7 +18,7 @@ function createTunnelPlugin(): OpenACPPlugin {
       }
 
       const { TunnelService } = await import('./tunnel-service.js')
-      const tunnelSvc = new TunnelService(config as any)
+      const tunnelSvc = new TunnelService(config as unknown as TunnelConfig)
       const publicUrl = await tunnelSvc.start()
       service = tunnelSvc
 

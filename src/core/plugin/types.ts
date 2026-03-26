@@ -101,6 +101,17 @@ export interface EventBus {
   [key: string]: unknown
 }
 
+/**
+ * Typed view of the OpenACPCore instance exposed to plugins via ctx.core.
+ * Plugins that need kernel:access should cast ctx.core to this interface
+ * instead of using `as any`. Only includes fields plugins actually need.
+ */
+export interface CoreAccess {
+  configManager: ConfigManager
+  sessionManager: SessionManager
+  adapters: Map<string, IChannelAdapter>
+}
+
 export interface Logger {
   trace(msg: string, ...args: unknown[]): void
   debug(msg: string, ...args: unknown[]): void

@@ -1,4 +1,4 @@
-import type { OpenACPPlugin } from '../../core/plugin/types.js'
+import type { OpenACPPlugin, CoreAccess } from '../../core/plugin/types.js'
 import { NotificationManager } from './notification.js'
 
 function createNotificationsPlugin(): OpenACPPlugin {
@@ -11,8 +11,8 @@ function createNotificationsPlugin(): OpenACPPlugin {
 
     async setup(ctx) {
       // NotificationManager needs the live adapters Map from core
-      const core = ctx.core as { adapters: Map<string, unknown> }
-      const manager = new NotificationManager(core.adapters as any)
+      const core = ctx.core as CoreAccess
+      const manager = new NotificationManager(core.adapters)
       ctx.registerService('notifications', manager)
       ctx.log.info('Notifications service ready')
     },

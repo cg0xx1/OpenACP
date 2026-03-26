@@ -1,4 +1,5 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
+import type { UsageConfig } from '../../core/config/config.js'
 import { UsageStore } from './usage-store.js'
 import { UsageBudget } from './usage-budget.js'
 import path from 'node:path'
@@ -18,7 +19,7 @@ function createUsagePlugin(): OpenACPPlugin {
       const usagePath = path.join(os.homedir(), '.openacp', 'usage.json')
       const retentionDays = (config.retentionDays as number) ?? 30
       store = new UsageStore(usagePath, retentionDays)
-      const budget = new UsageBudget(store, config as any)
+      const budget = new UsageBudget(store, config as unknown as UsageConfig)
 
       ctx.registerService('usage', { store, budget })
       ctx.log.info('Usage tracking ready')

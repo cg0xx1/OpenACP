@@ -1,7 +1,9 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
+import type { OpenACPCore } from '../../core/core.js'
+import type { TelegramChannelConfig } from '../../adapters/telegram/types.js'
 
 function createTelegramPlugin(): OpenACPPlugin {
-  let adapter: any = null
+  let adapter: { stop(): Promise<void> } | null = null
 
   return {
     name: '@openacp/telegram',
@@ -24,12 +26,13 @@ function createTelegramPlugin(): OpenACPPlugin {
       }
 
       const { TelegramAdapter } = await import('../../adapters/telegram/adapter.js')
-      const core = ctx.core as any
-      adapter = new TelegramAdapter(core, {
+      // config is a Record<string, unknown> from pluginConfig; at runtime it
+      // contains all TelegramChannelConfig fields populated from the migrated config.
+      adapter = new TelegramAdapter(ctx.core as OpenACPCore, {
         ...config,
         enabled: true,
         maxMessageLength: 4096,
-      } as any)
+      } as unknown as TelegramChannelConfig)
 
       ctx.registerService('adapter:telegram', adapter)
       ctx.log.info('Telegram adapter registered')

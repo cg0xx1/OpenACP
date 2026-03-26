@@ -1,7 +1,9 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
+import type { OpenACPCore } from '../../core/core.js'
+import type { DiscordChannelConfig } from '../../adapters/discord/types.js'
 
 function createDiscordPlugin(): OpenACPPlugin {
-  let adapter: any = null
+  let adapter: { stop(): Promise<void> } | null = null
 
   return {
     name: '@openacp/discord',
@@ -24,12 +26,13 @@ function createDiscordPlugin(): OpenACPPlugin {
       }
 
       const { DiscordAdapter } = await import('../../adapters/discord/adapter.js')
-      const core = ctx.core as any
-      adapter = new DiscordAdapter(core, {
+      // config is a Record<string, unknown> from pluginConfig; at runtime it
+      // contains all DiscordChannelConfig fields populated from the migrated config.
+      adapter = new DiscordAdapter(ctx.core as OpenACPCore, {
         ...config,
         enabled: true,
         maxMessageLength: 2000,
-      } as any)
+      } as unknown as DiscordChannelConfig)
 
       ctx.registerService('adapter:discord', adapter)
       ctx.log.info('Discord adapter registered')
