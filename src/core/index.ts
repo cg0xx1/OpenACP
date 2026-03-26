@@ -99,3 +99,17 @@ export type {
 } from "../plugins/context/context-provider.js";
 export { ContextManager } from "../plugins/context/context-manager.js";
 export { EntireProvider } from "../plugins/context/entire/entire-provider.js";
+
+// ─── Adapter primitives ─────────────────────────────────────────────────────
+export { MessagingAdapter, StreamAdapter } from './adapter-primitives/index.js'
+export { BaseRenderer } from './adapter-primitives/index.js'
+export { SendQueue, DraftManager, ToolCallTracker, ActivityTracker } from './adapter-primitives/index.js'
+
+// ─── Plugin types (for SDK re-exports) ──────────────────────────────────────
+export type {
+  OpenACPPlugin, PluginContext, PluginPermission, PluginStorage,
+  InstallContext, MigrateContext, TerminalIO, SettingsAPI,
+  CommandDef, CommandArgs, CommandResponse, MenuOption, ListItem,
+  SecurityService, NotificationService, UsageService,
+  SpeechServiceInterface, TunnelServiceInterface, ContextService,
+} from './plugin/types.js'
