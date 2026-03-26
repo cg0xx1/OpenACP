@@ -436,6 +436,7 @@ export interface FileServiceInterface {
   saveFile(sessionId: string, fileName: string, data: Buffer, mimeType: string): Promise<Attachment>
   resolveFile(filePath: string): Promise<Attachment | null>
   readTextFileWithRange(path: string, opts?: { line?: number; limit?: number }): Promise<string>
+  extensionFromMime(mimeType: string): string
   convertOggToWav(oggData: Buffer): Promise<Buffer>
 }
 

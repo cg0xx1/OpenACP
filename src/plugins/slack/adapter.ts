@@ -10,7 +10,7 @@ import type {
   Attachment,
 } from "../../core/types.js";
 import type { AdapterCapabilities } from "../../core/channel.js";
-import type { FileService } from "../file-service/file-service.js";
+import type { FileServiceInterface } from "../../core/plugin/types.js";
 import { createChildLogger } from "../../core/utils/log.js";
 import { MessagingAdapter, type MessagingAdapterConfig } from "../../core/adapter-primitives/messaging-adapter.js";
 import type { DisplayVerbosity } from "../../core/adapter-primitives/format-types.js";
@@ -49,7 +49,7 @@ export class SlackAdapter extends MessagingAdapter {
   private textBuffers = new Map<string, SlackTextBuffer>();
   private botUserId = "";
   private slackConfig: SlackChannelConfig;
-  private fileService!: FileService;
+  private fileService!: FileServiceInterface;
 
   constructor(core: OpenACPCore, config: SlackChannelConfig) {
     super(

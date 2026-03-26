@@ -34,6 +34,7 @@ export { PromptQueue } from "./sessions/prompt-queue.js";
 export { PermissionGate } from "./sessions/permission-gate.js";
 export { MessageTransformer } from "./message-transformer.js";
 export { FileService } from "../plugins/file-service/file-service.js";
+export type { FileServiceInterface } from "./plugin/types.js";
 export { SessionManager } from "./sessions/session-manager.js";
 export { SecurityGuard } from "../plugins/security/security-guard.js";
 export { SessionBridge, type BridgeDeps } from "./sessions/session-bridge.js";

@@ -8,7 +8,7 @@ import type { NotificationManager } from "../plugins/notifications/notification.
 import type { IChannelAdapter } from "./channel.js";
 import { Session } from "./sessions/session.js";
 import { MessageTransformer } from "./message-transformer.js";
-import type { FileService } from "../plugins/file-service/file-service.js";
+import type { FileServiceInterface } from "./plugin/types.js";
 import { JsonFileSessionStore, type SessionStore } from "./sessions/session-store.js";
 import type { UsageStore } from "../plugins/usage/usage-store.js";
 import type { UsageBudget } from "../plugins/usage/usage-budget.js";
@@ -55,8 +55,8 @@ export class OpenACPCore {
     return this.lifecycleManager.serviceRegistry.get<NotificationManager>('notifications')!;
   }
 
-  get fileService(): FileService {
-    return this.lifecycleManager.serviceRegistry.get<FileService>('file-service')!;
+  get fileService(): FileServiceInterface {
+    return this.lifecycleManager.serviceRegistry.get<FileServiceInterface>('file-service')!;
   }
 
   get speechService(): SpeechService {

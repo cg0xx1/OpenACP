@@ -7,7 +7,7 @@ import type {
   NotificationMessage,
   Session,
   AgentCommand,
-  FileService,
+  FileServiceInterface,
 } from "../../core/index.js";
 import { createChildLogger } from "../../core/utils/log.js";
 const log = createChildLogger({ module: "telegram" });
@@ -110,7 +110,7 @@ export class TelegramAdapter extends MessagingAdapter {
   private toolTracker!: TelegramToolCallTracker;
   private draftManager!: DraftManager;
   private skillManager!: SkillCommandManager;
-  private fileService!: FileService;
+  private fileService!: FileServiceInterface;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
 
   private getThreadId(sessionId: string): number {

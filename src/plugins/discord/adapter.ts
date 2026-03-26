@@ -44,7 +44,7 @@ import {
 } from "./commands/index.js";
 import { spawnAssistant, buildWelcomeMessage } from "./assistant.js";
 import type { Attachment } from "../../core/types.js";
-import type { FileService } from "../file-service/file-service.js";
+import type { FileServiceInterface } from "../../core/plugin/types.js";
 import {
   buildFallbackText,
   downloadDiscordAttachment,
@@ -74,7 +74,7 @@ export class DiscordAdapter extends MessagingAdapter {
   private notificationChannel!: TextChannel;
   private assistantSession: Session | null = null;
   private assistantInitializing = false;
-  private fileService: FileService;
+  private fileService: FileServiceInterface;
 
   // Per-session thread context for concurrency safety in sendMessage handlers
   private _sessionContexts = new Map<string, { thread: ThreadChannel; isAssistant: boolean }>();
