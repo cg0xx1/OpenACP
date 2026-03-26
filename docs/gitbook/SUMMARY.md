@@ -45,6 +45,15 @@
 * [Doctor Diagnostics](features/doctor.md)
 * [Assistant Mode](features/assistant-mode.md)
 
+## Architecture
+
+* [Overview](architecture/README.md)
+* [Core Design](architecture/core-design.md)
+* [Plugin System](architecture/plugin-system.md)
+* [Command System](architecture/command-system.md)
+* [Built-in Plugins](architecture/built-in-plugins.md)
+* [Writing Plugins](architecture/writing-plugins.md)
+
 ## Extending
 
 * [Overview](extending/README.md)
