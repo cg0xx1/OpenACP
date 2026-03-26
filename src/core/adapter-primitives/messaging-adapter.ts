@@ -2,12 +2,12 @@ import type {
   IChannelAdapter,
   ChannelConfig,
   AdapterCapabilities,
-} from '../../core/channel.js'
+} from '../channel.js'
 import type {
   OutgoingMessage,
   PermissionRequest,
   NotificationMessage,
-} from '../../core/types.js'
+} from '../types.js'
 import type { DisplayVerbosity, ToolCallMeta } from './format-types.js'
 import type { IRenderer } from './rendering/renderer.js'
 import { evaluateNoise } from './message-formatter.js'

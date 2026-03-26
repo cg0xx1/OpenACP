@@ -1,6 +1,6 @@
 import type { Bot } from "grammy";
 import { MessageDraft } from "./streaming.js";
-import type { SendQueue } from "../shared/primitives/send-queue.js";
+import type { SendQueue } from "../../core/adapter-primitives/primitives/send-queue.js";
 import {
   detectAction,
   storeAction,

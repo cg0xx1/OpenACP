@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ThinkingIndicator, UsageMessage, PlanCard, ActivityTracker } from '../activity.js'
-import type { SendQueue } from '../../shared/primitives/send-queue.js'
+import type { SendQueue } from '../../../core/adapter-primitives/primitives/send-queue.js'
 
 // Minimal mock for SendQueue: runs the fn immediately, returns result
 function makeMockQueue(): SendQueue {

@@ -1,12 +1,12 @@
 import type {
   IChannelAdapter,
   AdapterCapabilities,
-} from '../../core/channel.js'
+} from '../channel.js'
 import type {
   OutgoingMessage,
   PermissionRequest,
   NotificationMessage,
-} from '../../core/types.js'
+} from '../types.js'
 
 export interface StreamEvent {
   type: string

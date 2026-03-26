@@ -1,7 +1,7 @@
-import { BaseRenderer } from '../shared/rendering/renderer.js'
-import type { RenderedMessage, RenderedPermission } from '../shared/rendering/renderer.js'
+import { BaseRenderer } from '../../core/adapter-primitives/rendering/renderer.js'
+import type { RenderedMessage, RenderedPermission } from '../../core/adapter-primitives/rendering/renderer.js'
 import type { OutgoingMessage, PermissionRequest, NotificationMessage } from '../../core/types.js'
-import type { DisplayVerbosity } from '../shared/format-types.js'
+import type { DisplayVerbosity } from '../../core/adapter-primitives/format-types.js'
 import { SlackFormatter, markdownToMrkdwn } from './formatter.js'
 
 /**

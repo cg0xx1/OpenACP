@@ -17,13 +17,13 @@ import type {
 import type { OpenACPCore } from "../../core/core.js";
 import type { Session } from "../../core/sessions/session.js";
 import { log } from "../../core/utils/log.js";
-import type { DisplayVerbosity } from "../shared/format-types.js";
-import { MessagingAdapter, type MessagingAdapterConfig } from "../shared/messaging-adapter.js";
-import type { IRenderer } from "../shared/rendering/renderer.js";
+import type { DisplayVerbosity } from "../../core/adapter-primitives/format-types.js";
+import { MessagingAdapter, type MessagingAdapterConfig } from "../../core/adapter-primitives/messaging-adapter.js";
+import type { IRenderer } from "../../core/adapter-primitives/rendering/renderer.js";
 import { DiscordRenderer } from "./renderer.js";
 import type { AdapterCapabilities } from "../../core/channel.js";
 import type { DiscordChannelConfig } from "./types.js";
-import { SendQueue } from "../shared/primitives/send-queue.js";
+import { SendQueue } from "../../core/adapter-primitives/primitives/send-queue.js";
 import { DiscordToolCallTracker } from "./tool-call-tracker.js";
 import { DiscordDraftManager } from "./draft-manager.js";
 import { ActivityTracker } from "./activity.js";

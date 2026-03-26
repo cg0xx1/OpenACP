@@ -1,4 +1,4 @@
-import type { OutgoingMessage, PermissionRequest, NotificationMessage } from '../../../core/types.js'
+import type { OutgoingMessage, PermissionRequest, NotificationMessage } from '../../types.js'
 import type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta } from '../format-types.js'
 import {
   formatToolSummary,

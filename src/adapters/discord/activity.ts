@@ -3,8 +3,8 @@ import { EmbedBuilder } from "discord.js";
 import { log } from "../../core/utils/log.js";
 import type { PlanEntry } from "../../core/types.js";
 import { formatUsage, formatPlan } from "./formatting.js";
-import type { DisplayVerbosity } from "../shared/format-types.js";
-import type { SendQueue } from "../shared/primitives/send-queue.js";
+import type { DisplayVerbosity } from "../../core/adapter-primitives/format-types.js";
+import type { SendQueue } from "../../core/adapter-primitives/primitives/send-queue.js";
 
 // ─── ThinkingIndicator ────────────────────────────────────────────────────────
 

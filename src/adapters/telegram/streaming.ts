@@ -1,6 +1,6 @@
 import type { Bot } from 'grammy'
 import { markdownToTelegramHtml, splitMessage } from './formatting.js'
-import type { SendQueue } from '../shared/primitives/send-queue.js'
+import type { SendQueue } from '../../core/adapter-primitives/primitives/send-queue.js'
 
 const FLUSH_INTERVAL = 5000
 

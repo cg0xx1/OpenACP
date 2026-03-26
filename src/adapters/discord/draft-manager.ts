@@ -1,6 +1,6 @@
 import type { TextChannel, ThreadChannel } from 'discord.js'
 import { MessageDraft } from './streaming.js'
-import type { SendQueue } from '../shared/primitives/send-queue.js'
+import type { SendQueue } from '../../core/adapter-primitives/primitives/send-queue.js'
 import { detectAction, storeAction, buildActionKeyboard } from './action-detect.js'
 
 /**

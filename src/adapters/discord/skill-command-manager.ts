@@ -3,7 +3,7 @@ import { log } from '../../core/utils/log.js'
 import type { AgentCommand } from '../../core/types.js'
 import type { SessionManager } from '../../core/sessions/session-manager.js'
 import type { DiscordPlatformData } from '../../core/types.js'
-import type { SendQueue } from '../shared/primitives/send-queue.js'
+import type { SendQueue } from '../../core/adapter-primitives/primitives/send-queue.js'
 
 const DISCORD_MSG_LIMIT = 1900
 

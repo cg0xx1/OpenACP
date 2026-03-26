@@ -1,6 +1,6 @@
 import type { TextChannel, ThreadChannel, Message } from 'discord.js'
 import { splitMessage } from './formatting.js'
-import type { SendQueue } from '../shared/primitives/send-queue.js'
+import type { SendQueue } from '../../core/adapter-primitives/primitives/send-queue.js'
 
 const FLUSH_INTERVAL = 5000
 const MAX_DISPLAY_LENGTH = 1900

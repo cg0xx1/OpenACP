@@ -3,22 +3,22 @@ import type {
   ToolCallMeta,
   ToolUpdateMeta,
   ViewerLinks,
-} from "../shared/format-types.js";
-import { STATUS_ICONS, KIND_ICONS } from "../shared/format-types.js";
+} from "../../core/adapter-primitives/format-types.js";
+import { STATUS_ICONS, KIND_ICONS } from "../../core/adapter-primitives/format-types.js";
 import {
   progressBar,
   formatTokens,
   truncateContent,
   stripCodeFences,
   splitMessage as sharedSplitMessage,
-} from "../shared/format-utils.js";
+} from "../../core/adapter-primitives/format-utils.js";
 import {
   extractContentText,
   formatToolSummary,
   formatToolTitle,
   resolveToolIcon,
-} from "../shared/message-formatter.js";
-import type { DisplayVerbosity } from "../shared/format-types.js";
+} from "../../core/adapter-primitives/message-formatter.js";
+import type { DisplayVerbosity } from "../../core/adapter-primitives/format-types.js";
 
 export function escapeHtml(text: string | undefined | null): string {
   if (!text) return "";

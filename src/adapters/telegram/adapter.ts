@@ -40,16 +40,16 @@ import {
 } from "./assistant.js";
 import { escapeHtml } from "./formatting.js";
 import { ActivityTracker } from "./activity.js";
-import { SendQueue } from "../shared/primitives/send-queue.js";
+import { SendQueue } from "../../core/adapter-primitives/primitives/send-queue.js";
 import { setupActionCallbacks } from "./action-detect.js";
 import { TelegramToolCallTracker } from "./tool-call-tracker.js";
 import { DraftManager } from "./draft-manager.js";
 import { SkillCommandManager } from "./skill-command-manager.js";
-import { MessagingAdapter, type MessagingAdapterConfig } from "../shared/messaging-adapter.js";
-import type { IRenderer } from "../shared/rendering/renderer.js";
+import { MessagingAdapter, type MessagingAdapterConfig } from "../../core/adapter-primitives/messaging-adapter.js";
+import type { IRenderer } from "../../core/adapter-primitives/rendering/renderer.js";
 import { TelegramRenderer } from "./renderer.js";
 import type { AdapterCapabilities } from "../../core/channel.js";
-import type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta } from "../shared/format-types.js";
+import type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta } from "../../core/adapter-primitives/format-types.js";
 // evaluateNoise is handled by MessagingAdapter.shouldDisplay()
 
 interface PlanMetadata {

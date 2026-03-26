@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import type { IChannelAdapter } from '../../../core/channel.js'
+import type { IChannelAdapter } from '../../channel.js'
 
 export function runAdapterConformanceTests(
   createAdapter: () => IChannelAdapter | Promise<IChannelAdapter>,

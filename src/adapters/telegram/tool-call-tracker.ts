@@ -1,12 +1,12 @@
 import type { Bot } from "grammy";
-import type { SendQueue } from "../shared/primitives/send-queue.js";
-import { ToolCallTracker as SharedToolCallTracker } from "../shared/primitives/tool-call-tracker.js";
+import type { SendQueue } from "../../core/adapter-primitives/primitives/send-queue.js";
+import { ToolCallTracker as SharedToolCallTracker } from "../../core/adapter-primitives/primitives/tool-call-tracker.js";
 import { formatToolCall, formatToolUpdate } from "./formatting.js";
 import { createChildLogger } from "../../core/utils/log.js";
 import type {
   ToolCallMeta,
   DisplayVerbosity,
-} from "../shared/format-types.js";
+} from "../../core/adapter-primitives/format-types.js";
 
 const log = createChildLogger({ module: "tool-call-tracker" });
 

@@ -1,7 +1,7 @@
-import { BaseRenderer } from '../shared/rendering/renderer.js'
-import type { RenderedMessage } from '../shared/rendering/renderer.js'
+import { BaseRenderer } from '../../core/adapter-primitives/rendering/renderer.js'
+import type { RenderedMessage } from '../../core/adapter-primitives/rendering/renderer.js'
 import type { OutgoingMessage, NotificationMessage } from '../../core/types.js'
-import type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta } from '../shared/format-types.js'
+import type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta } from '../../core/adapter-primitives/format-types.js'
 import { escapeHtml, formatToolCall, formatToolUpdate, formatPlan, formatUsage } from './formatting.js'
 
 export class TelegramRenderer extends BaseRenderer {

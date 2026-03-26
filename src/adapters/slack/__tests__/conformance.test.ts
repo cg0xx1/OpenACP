@@ -1,6 +1,6 @@
-import { runAdapterConformanceTests } from '../../shared/__tests__/adapter-conformance.js'
-import { MessagingAdapter } from '../../shared/messaging-adapter.js'
-import { BaseRenderer } from '../../shared/rendering/renderer.js'
+import { runAdapterConformanceTests } from '../../../core/adapter-primitives/__tests__/adapter-conformance.js'
+import { MessagingAdapter } from '../../../core/adapter-primitives/messaging-adapter.js'
+import { BaseRenderer } from '../../../core/adapter-primitives/rendering/renderer.js'
 import type { AdapterCapabilities } from '../../../core/channel.js'
 
 class TestAdapter extends MessagingAdapter {
