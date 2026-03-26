@@ -177,6 +177,55 @@ export class SessionBridge {
             this.deps.messageTransformer.transform(event),
           );
           break;
+
+        case "session_info_update":
+          if (event.title) {
+            this.session.setName(event.title);
+          }
+          this.adapter.sendMessage(
+            this.session.id,
+            this.deps.messageTransformer.transform(event),
+          );
+          break;
+
+        case "current_mode_update":
+          this.session.updateMode(event.modeId);
+          this.adapter.sendMessage(
+            this.session.id,
+            this.deps.messageTransformer.transform(event),
+          );
+          break;
+
+        case "config_option_update":
+          this.session.updateConfigOptions(event.options);
+          this.adapter.sendMessage(
+            this.session.id,
+            this.deps.messageTransformer.transform(event),
+          );
+          break;
+
+        case "model_update":
+          this.session.updateModel(event.modelId);
+          this.adapter.sendMessage(
+            this.session.id,
+            this.deps.messageTransformer.transform(event),
+          );
+          break;
+
+        case "user_message_chunk":
+          this.adapter.sendMessage(
+            this.session.id,
+            this.deps.messageTransformer.transform(event),
+          );
+          break;
+
+        case "resource_content":
+        case "resource_link":
+          this.adapter.sendMessage(
+            this.session.id,
+            this.deps.messageTransformer.transform(event),
+          );
+          break;
       }
 
       this.deps.eventBus?.emit("agent:event", {

@@ -439,6 +439,12 @@ export class Session extends TypedEmitter<SessionEvents> {
     }
   }
 
+  /** Set session name explicitly and emit 'named' event */
+  setName(name: string): void {
+    this.name = name;
+    this.emit("named", name);
+  }
+
   updateMode(modeId: string): void {
     this.currentMode = modeId;
   }
