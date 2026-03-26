@@ -5,7 +5,7 @@ import type { NotificationManager } from "../../plugins/notifications/notificati
 import type { SessionManager } from "./session-manager.js";
 import type { AgentEvent, PermissionRequest, SessionStatus } from "../types.js";
 import type { EventBus } from "../event-bus.js";
-import { FileService } from "../utils/file-service.js";
+import { FileService } from "../../plugins/file-service/file-service.js";
 import type { MiddlewareChain } from "../plugin/middleware-chain.js";
 import { createChildLogger } from "../utils/log.js";
 

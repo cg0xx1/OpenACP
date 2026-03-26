@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { OggOpusDecoder } from "ogg-opus-decoder";
 import wav from "node-wav";
-import type { Attachment } from "../types.js";
+import type { Attachment } from "../../core/types.js";
 
 const MIME_TO_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",

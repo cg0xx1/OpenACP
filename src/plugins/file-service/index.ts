@@ -1,5 +1,5 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
-import { FileService } from '../../core/utils/file-service.js'
+import { FileService } from './file-service.js'
 import path from 'node:path'
 import os from 'node:os'
 

@@ -7,7 +7,7 @@ import type { MessageTransformer } from "../../message-transformer.js";
 import type { NotificationManager } from "../../../plugins/notifications/notification.js";
 import type { SessionManager } from "../session-manager.js";
 import type { EventBus } from "../../event-bus.js";
-import type { FileService } from "../../utils/file-service.js";
+import type { FileService } from "../../../plugins/file-service/file-service.js";
 import type { AgentEvent, PermissionRequest } from "../../types.js";
 import { TypedEmitter } from "../../utils/typed-emitter.js";
 

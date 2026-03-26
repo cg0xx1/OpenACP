@@ -22,7 +22,7 @@ import type {
   PermissionRequest,
   SetConfigOptionValue,
 } from "../types.js";
-import { FileService } from "../utils/file-service.js";
+import { FileService } from "../../plugins/file-service/file-service.js";
 import type { MiddlewareChain } from "../plugin/middleware-chain.js";
 import { PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type {

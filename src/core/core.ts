@@ -8,7 +8,7 @@ import type { NotificationManager } from "../plugins/notifications/notification.
 import type { IChannelAdapter } from "./channel.js";
 import { Session } from "./sessions/session.js";
 import { MessageTransformer } from "./message-transformer.js";
-import type { FileService } from "./utils/file-service.js";
+import type { FileService } from "../plugins/file-service/file-service.js";
 import { JsonFileSessionStore, type SessionStore } from "./sessions/session-store.js";
 import type { UsageStore } from "./sessions/usage-store.js";
 import type { UsageBudget } from "./sessions/usage-budget.js";
