@@ -1,4 +1,3 @@
-import { listPlugins } from '../../core/plugin-manager.js'
 import { wantsHelp } from './helpers.js'
 
 export async function cmdPlugins(args: string[] = []): Promise<void> {
@@ -9,18 +8,27 @@ export async function cmdPlugins(args: string[] = []): Promise<void> {
 \x1b[1mUsage:\x1b[0m
   openacp plugins
 
-Shows all plugins installed in ~/.openacp/plugins/.
+Shows all plugins registered in the plugin registry.
 `)
     return
   }
-  const plugins = listPlugins()
-  const entries = Object.entries(plugins)
-  if (entries.length === 0) {
+
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
+
+  const registryPath = path.join(os.homedir(), '.openacp', 'plugins.json')
+  const registry = new PluginRegistry(registryPath)
+  await registry.load()
+
+  const plugins = registry.list()
+  if (plugins.size === 0) {
     console.log("No plugins installed.")
   } else {
     console.log("Installed plugins:")
-    for (const [name, version] of entries) {
-      console.log(`  ${name}@${version}`)
+    for (const [name, entry] of plugins) {
+      const status = entry.enabled ? '' : ' (disabled)'
+      console.log(`  ${name}@${entry.version}${status}`)
     }
   }
 }

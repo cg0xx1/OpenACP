@@ -2,7 +2,6 @@
 
 import { ConfigManager } from './core/config/config.js'
 import { OpenACPCore } from './core/core.js'
-import { loadAdapterFactory } from './core/plugin-manager.js'
 import { initLogger, shutdownLogger, cleanupOldSessionLogs, log, muteLogger, unmuteLogger } from './core/utils/log.js'
 import { TelegramAdapter } from './plugins/telegram/adapter.js'
 import type { TelegramChannelConfig } from './plugins/telegram/types.js'
@@ -395,6 +394,33 @@ function createSilentTerminal(): import('./core/plugin/types.js').TerminalIO {
     spinner: () => ({ start: noop, stop: noop, fail: noop }),
     note: noop,
     cancel: noop,
+  }
+}
+
+interface AdapterFactory {
+  name: string
+  createAdapter(core: OpenACPCore, config: import('./core/channel.js').ChannelConfig): import('./core/channel.js').IChannelAdapter
+}
+
+async function loadAdapterFactory(packageName: string): Promise<AdapterFactory | null> {
+  try {
+    const { createRequire } = await import('node:module')
+    const { PLUGINS_DIR } = await import('./core/config/config.js')
+    const pathMod = await import('node:path')
+    const require = createRequire(pathMod.join(PLUGINS_DIR, 'package.json'))
+    const resolved = require.resolve(packageName)
+    const mod = await import(resolved)
+
+    const factory: AdapterFactory | undefined = mod.adapterFactory || mod.default
+    if (!factory || typeof factory.createAdapter !== 'function') {
+      log.error({ packageName }, 'Plugin does not export a valid AdapterFactory (needs .createAdapter())')
+      return null
+    }
+    return factory
+  } catch (err) {
+    log.error({ packageName, err }, 'Failed to load plugin')
+    log.error({ packageName }, 'Run: npx openacp install <packageName>')
+    return null
   }
 }
 

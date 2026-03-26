@@ -45,13 +45,6 @@ export {
 export { OpenACPCore } from "./core.js";
 export { UsageStore } from "../plugins/usage/usage-store.js";
 export { UsageBudget } from "../plugins/usage/usage-budget.js";
-export {
-  AdapterFactory,
-  installPlugin,
-  uninstallPlugin,
-  listPlugins,
-  loadAdapterFactory,
-} from "./plugin-manager.js";
 export { startDaemon, stopDaemon, getStatus, getPidPath } from "../cli/daemon.js";
 export {
   installAutoStart,
