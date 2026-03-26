@@ -112,6 +112,43 @@ interface TerminalState {
   exitStatus: { exitCode: number | null; signal: string | null } | null;
 }
 
+// Local types for ACP session update shapes not fully typed by SDK
+interface SdkToolCallFields {
+  rawInput?: unknown;
+  rawOutput?: unknown;
+  _meta?: Record<string, unknown>;
+}
+
+interface SdkSessionInfoUpdate {
+  sessionUpdate: 'session_info_update';
+  title?: string | null;
+  updatedAt?: string | null;
+  _meta?: Record<string, unknown>;
+}
+
+interface SdkCurrentModeUpdate {
+  sessionUpdate: 'current_mode_update';
+  currentModeId: string;
+  _meta?: Record<string, unknown>;
+}
+
+interface SdkConfigOptionUpdate {
+  sessionUpdate: 'config_option_update';
+  configOptions: unknown[];
+  _meta?: Record<string, unknown>;
+}
+
+interface SdkUserMessageChunk {
+  sessionUpdate: 'user_message_chunk';
+  content: { type: string; text?: string };
+}
+
+interface SdkReadTextFileParams {
+  path: string;
+  line?: number;
+  limit?: number;
+}
+
 export interface AgentInstanceEvents {
   agent_event: (event: AgentEvent) => void;
 }
@@ -394,7 +431,8 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               event = { type: "thought", content: update.content.text };
             }
             break;
-          case "tool_call":
+          case "tool_call": {
+            const tc = update as unknown as SdkToolCallFields;
             event = {
               type: "tool_call",
               id: update.toolCallId,
@@ -402,12 +440,14 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               kind: update.kind ?? undefined,
               status: update.status ?? "pending",
               content: update.content ?? undefined,
-              rawInput: (update as any).rawInput ?? undefined,
-              rawOutput: (update as any).rawOutput ?? undefined,
-              meta: (update as any)._meta ?? undefined,
+              rawInput: tc.rawInput ?? undefined,
+              rawOutput: tc.rawOutput ?? undefined,
+              meta: tc._meta ?? undefined,
             };
             break;
-          case "tool_call_update":
+          }
+          case "tool_call_update": {
+            const tcu = update as unknown as SdkToolCallFields;
             event = {
               type: "tool_update",
               id: update.toolCallId,
@@ -415,11 +455,12 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               kind: update.kind ?? undefined,
               status: update.status ?? "pending",
               content: update.content ?? undefined,
-              rawInput: (update as any).rawInput ?? undefined,
-              rawOutput: (update as any).rawOutput ?? undefined,
-              meta: (update as any)._meta ?? undefined,
+              rawInput: tcu.rawInput ?? undefined,
+              rawOutput: tcu.rawOutput ?? undefined,
+              meta: tcu._meta ?? undefined,
             };
             break;
+          }
           case "plan":
             event = { type: "plan", entries: update.entries };
             break;
@@ -437,32 +478,40 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
               commands: update.availableCommands,
             };
             break;
-          case "session_info_update":
+          case "session_info_update": {
+            const si = update as unknown as SdkSessionInfoUpdate;
             event = {
               type: "session_info_update",
-              title: (update as any).title ?? undefined,
-              updatedAt: (update as any).updatedAt ?? undefined,
-              _meta: (update as any)._meta ?? undefined,
+              title: si.title ?? undefined,
+              updatedAt: si.updatedAt ?? undefined,
+              _meta: si._meta ?? undefined,
             };
             break;
-          case "current_mode_update":
+          }
+          case "current_mode_update": {
+            const cm = update as unknown as SdkCurrentModeUpdate;
             event = {
               type: "current_mode_update",
-              modeId: (update as any).currentModeId,
+              modeId: cm.currentModeId,
             };
             break;
-          case "config_option_update":
+          }
+          case "config_option_update": {
+            const co = update as unknown as SdkConfigOptionUpdate;
             event = {
               type: "config_option_update",
-              options: ((update as any).configOptions ?? []) as ConfigOption[],
+              options: (co.configOptions ?? []) as ConfigOption[],
             };
             break;
-          case "user_message_chunk":
+          }
+          case "user_message_chunk": {
+            const um = update as unknown as SdkUserMessageChunk;
             event = {
               type: "user_message_chunk",
-              content: (update as any).content?.text ?? "",
+              content: um.content?.text ?? "",
             };
             break;
+          }
           // NOTE: model_update is NOT a session update type in the ACP SDK schema.
           // Model changes are applied via the unstable_setSessionModel() method and
           // the response is synchronous — the SDK does not push a model_update
@@ -500,9 +549,10 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
 
       // ── File operations ──────────────────────────────────────────────────
       async readTextFile(params) {
-        const content = await FileService.readTextFileWithRange(params.path, {
-          line: (params as any).line ?? undefined,
-          limit: (params as any).limit ?? undefined,
+        const p = params as unknown as SdkReadTextFileParams;
+        const content = await FileService.readTextFileWithRange(p.path, {
+          line: p.line ?? undefined,
+          limit: p.limit ?? undefined,
         });
         return { content };
       },
