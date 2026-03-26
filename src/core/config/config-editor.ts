@@ -26,8 +26,8 @@ async function input(opts: { message: string; default?: string; validate?: (val:
   if (clack.isCancel(result)) { clack.cancel('Cancelled.'); process.exit(0) }
   return result as string
 }
-import { validateBotToken, validateChatId } from '../../plugins/telegram/validators.js'
-import { validateDiscordToken } from '../../plugins/discord/validators.js'
+// Validators are lazy-loaded from plugins to avoid static core→plugin dependencies
+// They're only needed when user edits specific config sections
 import { installAutoStart, uninstallAutoStart, isAutoStartInstalled, isAutoStartSupported } from '../../cli/autostart.js'
 import { expandHome } from './config.js'
 
@@ -106,11 +106,16 @@ async function editTelegram(config: Config, updates: ConfigUpdates): Promise<voi
         validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
       })
 
-      const result = await validateBotToken(token.trim())
-      if (result.ok) {
-        console.log(ok(`Connected to @${result.botUsername}`))
-      } else {
-        console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+      try {
+        const { validateBotToken } = await import('../../plugins/telegram/validators.js')
+        const result = await validateBotToken(token.trim())
+        if (result.ok) {
+          console.log(ok(`Connected to @${result.botUsername}`))
+        } else {
+          console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+        }
+      } catch {
+        console.log(warn('Telegram validator not available — skipping validation'))
       }
 
       const tgUp = ensureTelegramUpdates()
@@ -139,11 +144,16 @@ async function editTelegram(config: Config, updates: ConfigUpdates): Promise<voi
         return currentToken
       })()
 
-      const result = await validateChatId(tokenForValidation, chatId)
-      if (result.ok) {
-        console.log(ok(`Group: ${result.title}${result.isForum ? '' : warn(' (topics not enabled)')}`))
-      } else {
-        console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+      try {
+        const { validateChatId } = await import('../../plugins/telegram/validators.js')
+        const result = await validateChatId(tokenForValidation, chatId)
+        if (result.ok) {
+          console.log(ok(`Group: ${result.title}${result.isForum ? '' : warn(' (topics not enabled)')}`))
+        } else {
+          console.log(warn(`Validation failed: ${result.error} — saving anyway`))
+        }
+      } catch {
+        console.log(warn('Telegram validator not available — skipping validation'))
       }
 
       const tgUp = ensureTelegramUpdates()
@@ -232,11 +242,20 @@ async function editDiscord(config: Config, updates: ConfigUpdates): Promise<void
         validate: (val) => val.trim().length > 0 || 'Token cannot be empty',
       })
 
-      const tokenResult = await validateDiscordToken(token.trim())
-      if (tokenResult.ok) {
-        console.log(ok(`Connected as @${tokenResult.username}`))
-      } else {
-        console.log(warn(`Token validation failed: ${tokenResult.error}`))
+      let tokenValid = true
+      try {
+        const { validateDiscordToken } = await import('../../plugins/discord/validators.js')
+        const tokenResult = await validateDiscordToken(token.trim())
+        if (tokenResult.ok) {
+          console.log(ok(`Connected as @${tokenResult.username}`))
+        } else {
+          console.log(warn(`Token validation failed: ${tokenResult.error}`))
+          tokenValid = false
+        }
+      } catch {
+        console.log(warn('Discord validator not available — skipping validation'))
+      }
+      if (!tokenValid) {
         const action = await select({
           message: 'What to do?',
           choices: [
