@@ -24,7 +24,7 @@ import { ServiceRegistry } from "./plugin/service-registry.js";
 import { MiddlewareChain } from "./plugin/middleware-chain.js";
 import { ErrorTracker } from "./plugin/error-tracker.js";
 import { createChildLogger } from "./utils/log.js";
-import type { SpeechService } from "../speech/index.js";
+import type { SpeechService } from "../plugins/speech/exports.js";
 import type { ContextManager } from "../plugins/context/context-manager.js";
 import type { ContextQuery, ContextOptions, ContextResult } from "../plugins/context/context-provider.js";
 const log = createChildLogger({ module: "core" });
@@ -130,7 +130,7 @@ export class OpenACPCore {
         if (configPath.startsWith("speech.")) {
           const speechSvc = this.speechService;
           if (speechSvc) {
-            const { GroqSTT, EdgeTTS } = await import("../speech/index.js");
+            const { GroqSTT, EdgeTTS } = await import("../plugins/speech/exports.js");
             const newConfig = this.configManager.get();
             const newSpeechConfig = newConfig.speech ?? {
               stt: { provider: null, providers: {} },

@@ -1,4 +1,4 @@
-import type { STTProvider, STTOptions, STTResult } from '../types.js';
+import type { STTProvider, STTOptions, STTResult } from '../speech-types.js';
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 

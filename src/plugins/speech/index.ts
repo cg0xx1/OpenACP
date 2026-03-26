@@ -1,6 +1,6 @@
 import type { OpenACPPlugin } from '../../core/plugin/types.js'
-import { SpeechService, GroqSTT, EdgeTTS } from '../../speech/index.js'
-import type { SpeechServiceConfig } from '../../speech/index.js'
+import { SpeechService, GroqSTT, EdgeTTS } from './exports.js'
+import type { SpeechServiceConfig } from './exports.js'
 
 const speechPlugin: OpenACPPlugin = {
   name: '@openacp/speech',

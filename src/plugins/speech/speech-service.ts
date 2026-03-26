@@ -1,4 +1,4 @@
-import type { STTProvider, TTSProvider, STTOptions, STTResult, TTSOptions, TTSResult, SpeechServiceConfig } from './types.js';
+import type { STTProvider, TTSProvider, STTOptions, STTResult, TTSOptions, TTSResult, SpeechServiceConfig } from './speech-types.js';
 
 export class SpeechService {
   private sttProviders = new Map<string, STTProvider>();

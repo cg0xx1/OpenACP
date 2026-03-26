@@ -1,4 +1,4 @@
-import type { TTSProvider, TTSOptions, TTSResult } from '../types.js';
+import type { TTSProvider, TTSOptions, TTSResult } from '../speech-types.js';
 
 const DEFAULT_VOICE = "en-US-AriaNeural";
 
