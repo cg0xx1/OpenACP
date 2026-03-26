@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Session } from '../session.js'
 import type { AgentInstance } from '../../agents/agent-instance.js'
-import type { ConfigOption, SessionModeState, SessionModelState } from '../../types.js'
+import type { AgentCapabilities, ConfigOption, SessionModeState, SessionModelState } from '../../types.js'
 
 function mockAgentInstance() {
   return {
@@ -91,5 +91,24 @@ describe('Session ACP state', () => {
   it('updateModel changes current model', () => {
     session.updateModel('opus')
     expect(session.currentModel).toBe('opus')
+  })
+
+  it('stores agentCapabilities via setInitialAcpState', () => {
+    session.setInitialAcpState({
+      agentCapabilities: { name: 'claude', loadSession: true } as any,
+    })
+    expect(session.agentCapabilities?.name).toBe('claude')
+  })
+
+  it('initializes with undefined agentCapabilities', () => {
+    expect(session.agentCapabilities).toBeUndefined()
+  })
+
+  it('does not overwrite agentCapabilities when not provided', () => {
+    session.setInitialAcpState({
+      agentCapabilities: { name: 'claude' } as AgentCapabilities,
+    })
+    session.setInitialAcpState({ modes: null })
+    expect(session.agentCapabilities?.name).toBe('claude')
   })
 })

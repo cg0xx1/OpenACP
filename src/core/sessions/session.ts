@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import type { AgentInstance } from "../agents/agent-instance.js";
-import type { AgentEvent, Attachment, PermissionRequest, SessionStatus, SessionMode, ConfigOption, ModelInfo, SessionModeState, SessionModelState } from "../types.js";
+import type { AgentCapabilities, AgentEvent, Attachment, PermissionRequest, SessionStatus, SessionMode, ConfigOption, ModelInfo, SessionModeState, SessionModelState } from "../types.js";
 import { TypedEmitter } from "../utils/typed-emitter.js";
 import { PromptQueue } from "./prompt-queue.js";
 import { PermissionGate } from "./permission-gate.js";
@@ -51,6 +51,7 @@ export class Session extends TypedEmitter<SessionEvents> {
   configOptions: ConfigOption[] = [];
   currentModel?: string;
   availableModels: ModelInfo[] = [];
+  agentCapabilities?: AgentCapabilities;
   archiving: boolean = false;
   promptCount: number = 0;
   log: Logger;
@@ -425,6 +426,7 @@ export class Session extends TypedEmitter<SessionEvents> {
     modes?: SessionModeState | null;
     configOptions?: ConfigOption[] | null;
     models?: SessionModelState | null;
+    agentCapabilities?: AgentCapabilities | null;
   }): void {
     if (state.modes) {
       this.currentMode = state.modes.currentModeId;
@@ -436,6 +438,9 @@ export class Session extends TypedEmitter<SessionEvents> {
     if (state.models) {
       this.currentModel = state.models.currentModelId;
       this.availableModels = state.models.availableModels;
+    }
+    if (state.agentCapabilities) {
+      this.agentCapabilities = state.agentCapabilities;
     }
   }
 
