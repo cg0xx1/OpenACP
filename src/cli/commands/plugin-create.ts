@@ -1,7 +1,7 @@
 import * as p from '@clack/prompts'
 import fs from 'node:fs'
 import path from 'node:path'
-import { createRequire } from 'node:module'
+import { getCurrentVersion } from '../version.js'
 
 export async function cmdPluginCreate(): Promise<void> {
   p.intro('Create a new OpenACP plugin')
@@ -65,12 +65,7 @@ export async function cmdPluginCreate(): Promise<void> {
   fs.mkdirSync(path.join(targetDir, 'src', '__tests__'), { recursive: true })
 
   // Detect CLI version for dependency pinning
-  let cliVersion = '0.6.10'
-  try {
-    const require = createRequire(import.meta.url)
-    const rootPkg = require('../../../package.json')
-    cliVersion = rootPkg.version ?? cliVersion
-  } catch { /* fallback to hardcoded */ }
+  const cliVersion = getCurrentVersion()
 
   // package.json
   const packageJson = {
