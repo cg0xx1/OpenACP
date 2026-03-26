@@ -178,7 +178,15 @@ interface PluginContext {
   /** Plugin-scoped logger. Always available (no permission needed). */
   log: Logger
 
-  /** Send message to a session. Requires 'services:use'. */
+  /**
+   * Send message to a session. Requires 'services:use'.
+   *
+   * Routing: sessionId → lookup session → find adapter for session's channelId
+   *          → [HOOK: message:outgoing] → adapter.sendMessage()
+   *
+   * The message goes through the `message:outgoing` middleware chain,
+   * so other plugins (e.g., translation) can modify it before delivery.
+   */
   sendMessage(sessionId: string, content: OutgoingMessage): Promise<void>
 
   // === Tier 3 — Kernel access (requires 'kernel:access') ===
@@ -363,6 +371,11 @@ interface MiddlewarePayloadMap {
     oldValue: unknown
     newValue: unknown
   }
+  'model:beforeChange': {
+    sessionId: string
+    fromModel: string | undefined
+    toModel: string
+  }
   'agent:beforeCancel': {
     sessionId: string
     reason?: string
@@ -392,6 +405,7 @@ type MiddlewareHook = keyof MiddlewarePayloadMap
 | `session:beforeCreate` | **Yes** | agentName, workingDir | Block — deny session creation |
 | `session:afterDestroy` | **Read-only** | — | — |
 | `mode:beforeChange` | **Yes** | toMode | Block — deny mode change |
+| `model:beforeChange` | **Yes** | toModel | Block — restrict model selection |
 | `config:beforeChange` | **Yes** | newValue | Block — deny config change |
 | `agent:beforeCancel` | **Yes** | — | Block — deny cancellation |
 
@@ -1056,6 +1070,31 @@ FileService.readTextFileWithRange(path, { line, limit })
 Return content to agent subprocess
 ```
 
+### Flow 2b: Agent writes a file
+
+```
+AGENT SUBPROCESS REQUESTS fs/writeTextFile
+  │
+  ▼
+AgentInstance.writeTextFile callback triggered
+  │
+  ▼
+[HOOK: fs:beforeWrite] ────────────────────────────────────
+  │  Payload: { sessionId, path, content }
+  │  Example plugins:
+  │    - Security: block writes outside working directory
+  │    - Security: block writes to .env, .ssh/, etc.
+  │    - Audit: log all file writes with content hash
+  │    - Backup: save copy before overwrite
+  │  If null → deny write, return error to agent
+  │
+  ▼
+fs.writeFile(path, content)
+  │
+  ▼
+Return success to agent subprocess
+```
+
 ### Flow 3: Agent spawns terminal
 
 ```
@@ -1380,14 +1419,57 @@ API server plugin setup():
 
 ### Config Migration
 
-Old config (no `plugins` field) → auto-migrate on first boot:
+Old config (no `plugins` field) → auto-migrate on first boot.
 
-1. Read existing config fields (`channels.telegram`, `speech`, `tunnel`, etc.)
-2. Map to new `plugins.builtin` structure
-3. Write migrated config
-4. Log: "Config migrated to plugin format"
+**Step 1:** Backup old config to `~/.openacp/config.json.backup`
 
-Old config is backed up to `~/.openacp/config.json.backup`.
+**Step 2:** Apply field-by-field mapping:
+
+| Old field | New location | Notes |
+|-----------|-------------|-------|
+| `defaultAgent` | `defaultAgent` (stays at root) | Unchanged |
+| `workingDirectory` | `workingDirectory` (stays at root) | Unchanged |
+| `debug` | `debug` (stays at root) | Unchanged |
+| `logging.*` | `logging.*` (stays at root) | Unchanged |
+| `runMode` | `runMode` (stays at root) | Unchanged |
+| `autoStart` | `autoStart` (stays at root) | Unchanged |
+| `sessionStore` | `sessionStore` (stays at root) | Unchanged |
+| `security.allowedUserIds` | `plugins.builtin.@openacp/security.config.allowedUserIds` | |
+| `security.maxConcurrentSessions` | `plugins.builtin.@openacp/security.config.maxConcurrentSessions` | |
+| `channels.telegram.botToken` | `plugins.builtin.@openacp/telegram.config.botToken` | |
+| `channels.telegram.chatId` | `plugins.builtin.@openacp/telegram.config.chatId` | |
+| `channels.telegram.displayVerbosity` | `plugins.builtin.@openacp/telegram.config.displayVerbosity` | |
+| `channels.telegram.enabled` | `plugins.builtin.@openacp/telegram.enabled` | |
+| `channels.discord.*` | `plugins.builtin.@openacp/discord.config.*` | Same pattern |
+| `channels.slack.*` | `plugins.builtin.@openacp/slack.config.*` | Same pattern |
+| `speech.sttProvider` | `plugins.builtin.@openacp/speech.config.sttProvider` | |
+| `speech.ttsProvider` | `plugins.builtin.@openacp/speech.config.ttsProvider` | |
+| `speech.groqApiKey` | `plugins.builtin.@openacp/speech.config.groqApiKey` | |
+| `speech.ttsVoice` | `plugins.builtin.@openacp/speech.config.ttsVoice` | |
+| `tunnel.enabled` | `plugins.builtin.@openacp/tunnel.enabled` | |
+| `tunnel.provider` | `plugins.builtin.@openacp/tunnel.config.provider` | |
+| `usage.enabled` | `plugins.builtin.@openacp/usage.enabled` | |
+| `usage.monthlyBudget` | `plugins.builtin.@openacp/usage.config.budget.monthlyLimit` | |
+| `usage.retentionDays` | `plugins.builtin.@openacp/usage.config.retentionDays` | |
+| `api.port` | `plugins.builtin.@openacp/api-server.config.port` | |
+| `api.host` | `plugins.builtin.@openacp/api-server.config.host` | |
+
+**Step 3:** For any built-in plugin not explicitly in old config → set `enabled: true` with empty config (preserve current default behavior).
+
+**Step 4:** Write migrated config. Log: "Config migrated to plugin format"
+
+### Environment Variable Overrides
+
+Existing env vars continue to work and override plugin config:
+
+| Env var | Maps to |
+|---------|---------|
+| `OPENACP_TELEGRAM_BOT_TOKEN` | `plugins.builtin.@openacp/telegram.config.botToken` |
+| `OPENACP_TELEGRAM_CHAT_ID` | `plugins.builtin.@openacp/telegram.config.chatId` |
+| `OPENACP_DEFAULT_AGENT` | `defaultAgent` (root level) |
+| `OPENACP_DEBUG` | `debug` (root level) |
+
+Env vars are applied AFTER config load, BEFORE plugin setup. PluginContext receives the merged result.
 
 ---
 
@@ -1719,7 +1801,8 @@ const telegramPlugin: OpenACPPlugin = {
   permissions: ['events:read', 'events:emit', 'services:register', 'services:use',
                 'middleware:register', 'commands:register', 'kernel:access'],
 
-  private adapter: TelegramAdapter | null = null,
+  // Closure variable — shared between setup() and teardown()
+  _adapter: null as TelegramAdapter | null,
 
   async setup(ctx: PluginContext) {
     const config = ctx.pluginConfig as TelegramConfig
@@ -1728,13 +1811,14 @@ const telegramPlugin: OpenACPPlugin = {
     }
 
     // Create adapter with core access
-    this.adapter = new TelegramAdapter(
+    const adapter = new TelegramAdapter(
       { configManager: ctx.config, sessionManager: ctx.sessions },
       { ...config, enabled: true, maxMessageLength: 4096 },
     )
+    this._adapter = adapter
 
     // Register as adapter service
-    ctx.registerService('adapter:telegram', this.adapter)
+    ctx.registerService('adapter:telegram', adapter)
 
     // Register adapter-specific commands
     ctx.registerCommand({
@@ -1745,20 +1829,19 @@ const telegramPlugin: OpenACPPlugin = {
 
     // Listen for system:ready to start bot
     ctx.on('system:ready', async () => {
-      await this.adapter!.start()
+      await adapter.start()
       ctx.log.info('Telegram bot started')
     })
 
     // Listen for system:commands-ready to register with Telegram
-    ctx.on('system:commands-ready', async ({ commands }) => {
-      // Register all plugin commands as Telegram bot commands
-      await this.adapter!.registerBotCommands(commands)
+    ctx.on('system:commands-ready', async (payload: any) => {
+      await adapter.registerBotCommands(payload.commands)
     })
   },
 
   async teardown() {
-    if (this.adapter) {
-      await this.adapter.stop()
+    if (this._adapter) {
+      await this._adapter.stop()
     }
   }
 }
@@ -1775,21 +1858,26 @@ const translatePlugin: OpenACPPlugin = {
   description: 'Auto-translate agent responses to your language',
   permissions: ['middleware:register', 'storage:read', 'storage:write'],
 
+  // Closure variables — shared between setup() and teardown()
+  _storage: null as PluginStorage | null,
+  _cache: {} as Record<string, string>,
+
   async setup(ctx: PluginContext) {
     const targetLang = (ctx.pluginConfig as any).language ?? 'vi'
-    let translationCache = await ctx.storage.get<Record<string, string>>('cache') ?? {}
+    this._storage = ctx.storage
+    this._cache = await ctx.storage.get<Record<string, string>>('cache') ?? {}
+    const cache = this._cache
 
     ctx.registerMiddleware('message:outgoing', {
       handler: async (payload, next) => {
         if (payload.message.type === 'text' && payload.message.text) {
-          const cached = translationCache[payload.message.text]
+          const cached = cache[payload.message.text]
           if (cached) {
             payload.message.text = cached
           } else {
             const translated = await translateApi(payload.message.text, targetLang)
-            translationCache[payload.message.text] = translated
+            cache[payload.message.text] = translated
             payload.message.text = translated
-            // Persist cache periodically (not on every message)
           }
         }
         return next()
@@ -1800,8 +1888,10 @@ const translatePlugin: OpenACPPlugin = {
   },
 
   async teardown() {
-    // Flush translation cache
-    await ctx.storage.set('cache', translationCache)
+    // Flush translation cache to storage
+    if (this._storage) {
+      await this._storage.set('cache', this._cache)
+    }
   }
 }
 ```
@@ -1831,7 +1921,7 @@ Build the plugin system. Core modules stay hard-wired. Community plugins can loa
 | 10d | Wire terminal hooks (`terminal:beforeCreate`, `terminal:afterExit`) |
 | 10e | Wire permission hooks (`permission:beforeRequest`, `permission:afterResolve`) |
 | 10f | Wire session hooks (`session:beforeCreate`, `session:afterDestroy`) |
-| 10g | Wire control hooks (`mode:beforeChange`, `config:beforeChange`, `agent:beforeCancel`) |
+| 10g | Wire control hooks (`mode:beforeChange`, `model:beforeChange`, `config:beforeChange`, `agent:beforeCancel`) |
 | 11 | CLI: `openacp plugin add/remove/list/enable/disable` |
 | 12 | Unit tests for all infrastructure modules |
 | 13 | Integration test: full boot → plugin load → middleware → shutdown |
