@@ -248,6 +248,16 @@ export function setupTTSCallbacks(bot: Bot, core: OpenACPCore): void {
       return;
     }
 
+    // Check if TTS provider is available
+    if (session.voiceMode !== "on" && !core.speechService?.isTTSAvailable()) {
+      try {
+        await ctx.answerCallbackQuery({
+          text: "⚠️ TTS provider not installed. Use /tts install to set up.",
+        });
+      } catch {}
+      return;
+    }
+
     const newMode = session.voiceMode === "on" ? "off" : "on";
     session.setVoiceMode(newMode);
 
@@ -294,6 +304,17 @@ export async function handleTTS(
 
   const args = ctx.message?.text?.split(/\s+/).slice(1) ?? [];
   const arg = args[0]?.toLowerCase();
+
+  // Check if TTS provider is available before enabling
+  if (arg === "on" || (!arg)) {
+    if (!core.speechService?.isTTSAvailable()) {
+      await ctx.reply(
+        "⚠️ TTS provider not installed.\n\nUse <code>/tts install</code> to install Edge TTS plugin.",
+        { parse_mode: "HTML" },
+      );
+      return;
+    }
+  }
 
   if (arg === "on") {
     session.setVoiceMode("on");

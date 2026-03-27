@@ -21,8 +21,15 @@ export type {
 // --- Service interfaces ---
 export type {
   SecurityService, FileServiceInterface, NotificationService,
-  UsageService, SpeechServiceInterface, TunnelServiceInterface, ContextService,
+  UsageService, TunnelServiceInterface, ContextService,
 } from '@openacp/cli'
+
+// --- Speech types (self-contained, no @openacp/cli dependency) ---
+export type {
+  TTSProvider, TTSOptions, TTSResult,
+  STTProvider, STTOptions, STTResult,
+  SpeechServiceInterface,
+} from './speech-types.js'
 
 // --- Adapter types ---
 export type {

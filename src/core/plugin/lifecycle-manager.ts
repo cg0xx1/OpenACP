@@ -101,6 +101,10 @@ export class LifecycleManager {
     return [...this._failed]
   }
 
+  get registry(): PluginRegistry | undefined {
+    return this.pluginRegistry
+  }
+
   constructor(opts?: LifecycleManagerOpts) {
     this.serviceRegistry = opts?.serviceRegistry ?? new ServiceRegistry()
     this.middlewareChain = opts?.middlewareChain ?? new MiddlewareChain()

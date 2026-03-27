@@ -22,6 +22,10 @@ export class SpeechService {
     this.ttsProviders.set(name, provider);
   }
 
+  unregisterTTSProvider(name: string): void {
+    this.ttsProviders.delete(name);
+  }
+
   isSTTAvailable(): boolean {
     const { provider, providers } = this.config.stt;
     return provider !== null && providers[provider]?.apiKey !== undefined;
@@ -60,13 +64,18 @@ export class SpeechService {
     this.config = config;
   }
 
-  /** Re-create all providers from current config using the registered factory */
+  /** Re-create factory-managed providers from config. Preserves externally-registered providers (e.g. from plugins). */
   refreshProviders(newConfig: SpeechServiceConfig): void {
     this.config = newConfig;
     if (this.providerFactory) {
       const { stt, tts } = this.providerFactory(newConfig);
-      this.sttProviders = stt;
-      this.ttsProviders = tts;
+      // Merge: factory providers overwrite, but externally-registered providers are preserved
+      for (const [name, provider] of stt) {
+        this.sttProviders.set(name, provider);
+      }
+      for (const [name, provider] of tts) {
+        this.ttsProviders.set(name, provider);
+      }
     }
   }
 }

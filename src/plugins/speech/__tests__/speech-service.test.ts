@@ -42,6 +42,21 @@ describe("SpeechService", () => {
     });
   });
 
+  describe("unregisterTTSProvider", () => {
+    it('unregisters a TTS provider', () => {
+      const service = new SpeechService({
+        stt: { provider: null, providers: {} },
+        tts: { provider: 'test', providers: {} },
+      })
+      const mockProvider = { name: 'test', synthesize: vi.fn() }
+      service.registerTTSProvider('test', mockProvider)
+      expect(service.isTTSAvailable()).toBe(true)
+
+      service.unregisterTTSProvider('test')
+      expect(service.isTTSAvailable()).toBe(false)
+    })
+  });
+
   describe("transcribe", () => {
     it("throws when STT not configured", async () => {
       const svc = new SpeechService(makeConfig());

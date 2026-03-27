@@ -46,10 +46,8 @@ fs.chmodSync(cliPath, 0o755)
 // 5. Generate package.json
 const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'))
 
-// Exclude force-bundled packages from published dependencies.
-// These are bundled via tsup's `noExternal` because they can't be
-// installed via npm (e.g. msedge-tts enforces pnpm-only).
-const bundledDeps = new Set(['msedge-tts'])
+// Packages excluded from published dependencies (none currently bundled via noExternal).
+const bundledDeps = new Set<string>()
 const publishDeps: Record<string, string> = {}
 for (const [dep, version] of Object.entries(rootPkg.dependencies as Record<string, string>)) {
   if (!bundledDeps.has(dep)) {

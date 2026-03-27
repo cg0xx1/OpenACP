@@ -1,6 +1,10 @@
 import type { OpenACPPlugin, InstallContext } from '../../core/plugin/types.js'
-import { SpeechService, GroqSTT, EdgeTTS } from './exports.js'
+import type { OpenACPCore } from '../../core/core.js'
+import { SpeechService, GroqSTT } from './exports.js'
 import type { SpeechServiceConfig } from './exports.js'
+import { installNpmPlugin } from '../../core/plugin/plugin-installer.js'
+
+const EDGE_TTS_PLUGIN = '@openacp/msedge-tts-plugin'
 
 const speechPlugin: OpenACPPlugin = {
   name: '@openacp/speech',
@@ -8,7 +12,7 @@ const speechPlugin: OpenACPPlugin = {
   description: 'Text-to-speech and speech-to-text with pluggable providers',
   essential: false,
   optionalPluginDependencies: { '@openacp/file-service': '^1.0.0' },
-  permissions: ['services:register', 'commands:register'],
+  permissions: ['services:register', 'commands:register', 'kernel:access'],
 
   async install(ctx: InstallContext) {
     const { terminal, settings, legacyConfig } = ctx
@@ -66,6 +70,14 @@ const speechPlugin: OpenACPPlugin = {
 
     let ttsVoice = ''
     if (ttsProvider === 'edge-tts') {
+      terminal.log.info('Installing Edge TTS plugin...')
+      try {
+        await installNpmPlugin(EDGE_TTS_PLUGIN)
+        terminal.log.success('Edge TTS plugin installed')
+      } catch (err) {
+        terminal.log.warning(`Failed to install Edge TTS plugin: ${err}. You can install it later with: openacp plugin install ${EDGE_TTS_PLUGIN}`)
+      }
+
       ttsVoice = await terminal.text({
         message: 'TTS voice (leave blank for default):',
         placeholder: 'e.g. en-US-AriaNeural',
@@ -124,7 +136,6 @@ const speechPlugin: OpenACPPlugin = {
   async setup(ctx) {
     const config = ctx.pluginConfig as Record<string, unknown>
     const groqApiKey = config.groqApiKey as string | undefined
-    const ttsVoice = config.ttsVoice as string | undefined
 
     const sttProvider = groqApiKey ? 'groq' : null
     const speechConfig: SpeechServiceConfig = {
@@ -143,18 +154,17 @@ const speechPlugin: OpenACPPlugin = {
     if (groqApiKey) {
       service.registerSTTProvider('groq', new GroqSTT(groqApiKey))
     }
-    service.registerTTSProvider('edge-tts', new EdgeTTS(ttsVoice))
 
-    // Register provider factory for hot-reload (core calls refreshProviders on config change)
+    // TTS provider is now registered by @openacp/msedge-tts-plugin (no EdgeTTS here)
+
+    // Register provider factory for hot-reload (STT only — TTS providers are managed by external plugins)
     service.setProviderFactory((cfg) => {
-      const sttMap = new Map<string, InstanceType<typeof GroqSTT>>()
-      const ttsMap = new Map<string, InstanceType<typeof EdgeTTS>>()
+      const sttMap = new Map()
+      const ttsMap = new Map()
       const groqCfg = cfg.stt?.providers?.groq
       if (groqCfg?.apiKey) {
         sttMap.set('groq', new GroqSTT(groqCfg.apiKey, groqCfg.model))
       }
-      const edgeVoice = cfg.tts?.providers?.['edge-tts']?.voice as string | undefined
-      ttsMap.set('edge-tts', new EdgeTTS(edgeVoice))
       return { stt: sttMap, tts: ttsMap }
     })
 
@@ -163,13 +173,51 @@ const speechPlugin: OpenACPPlugin = {
     ctx.registerCommand({
       name: 'tts',
       description: 'Toggle text-to-speech',
-      usage: 'on|off',
+      usage: 'on|off|install',
       category: 'plugin',
       handler: async (args) => {
         const mode = args.raw.trim().toLowerCase()
-        if (mode === 'on') return { type: 'text', text: 'Text-to-speech enabled' }
-        if (mode === 'off') return { type: 'text', text: 'Text-to-speech disabled' }
-        return { type: 'menu', title: 'Text to Speech', options: [
+
+        // Check if TTS provider is available
+        if ((mode === 'on' || mode === '') && !service.isTTSAvailable()) {
+          return {
+            type: 'menu' as const,
+            title: 'TTS provider not installed. Install Edge TTS plugin?',
+            options: [
+              { label: 'Install Edge TTS', command: '/tts install' },
+              { label: 'Cancel', command: '/tts off' },
+            ],
+          }
+        }
+
+        if (mode === 'install') {
+          try {
+            const mod = await installNpmPlugin(EDGE_TTS_PLUGIN)
+            const plugin = mod.default
+            if (plugin && ctx.core) {
+              const lm = (ctx.core as OpenACPCore).lifecycleManager
+              const registry = lm.registry
+              if (registry) {
+                registry.register(plugin.name, {
+                  version: plugin.version,
+                  source: 'npm',
+                  enabled: true,
+                  settingsPath: '',
+                  description: plugin.description,
+                })
+                await registry.save()
+              }
+              await lm.boot([plugin])
+            }
+            return { type: 'text' as const, text: 'Edge TTS plugin installed and ready! Use /tts on to enable.' }
+          } catch (err) {
+            return { type: 'error' as const, message: `Failed to install Edge TTS plugin: ${err}. Try manually: openacp plugin install ${EDGE_TTS_PLUGIN}` }
+          }
+        }
+
+        if (mode === 'on') return { type: 'text' as const, text: 'Text-to-speech enabled' }
+        if (mode === 'off') return { type: 'text' as const, text: 'Text-to-speech disabled' }
+        return { type: 'menu' as const, title: 'Text to Speech', options: [
           { label: 'Enable', command: '/tts on' },
           { label: 'Disable', command: '/tts off' },
         ]}
