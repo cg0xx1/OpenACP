@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { builtInPlugins } from '../index.js'
 
 describe('Built-in plugin wrappers', () => {
-  it('exports all 10 built-in plugins', () => {
-    expect(builtInPlugins).toHaveLength(10)
+  it('exports all 9 built-in plugins', () => {
+    expect(builtInPlugins).toHaveLength(9)
   })
 
   it('all plugins have name, version, setup', () => {
