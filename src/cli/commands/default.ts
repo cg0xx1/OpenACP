@@ -1,5 +1,11 @@
 import { checkAndPromptUpdate } from '../version.js'
 import { printHelp } from './help.js'
+import path from 'node:path'
+import os from 'node:os'
+
+const OPENACP_DIR = path.join(os.homedir(), '.openacp')
+const PLUGINS_DATA_DIR = path.join(OPENACP_DIR, 'plugins', 'data')
+const REGISTRY_PATH = path.join(OPENACP_DIR, 'plugins.json')
 
 export async function cmdDefault(command: string | undefined): Promise<void> {
   const forceForeground = command === '--foreground'
@@ -25,8 +31,14 @@ export async function cmdDefault(command: string | undefined): Promise<void> {
 
   // If no config, run setup first
   if (!(await cm.exists())) {
+    const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
+    const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
+    const settingsManager = new SettingsManager(PLUGINS_DATA_DIR)
+    const pluginRegistry = new PluginRegistry(REGISTRY_PATH)
+    await pluginRegistry.load()
+
     const { runSetup } = await import('../../core/setup/index.js')
-    const shouldStart = await runSetup(cm)
+    const shouldStart = await runSetup(cm, { settingsManager, pluginRegistry })
     if (!shouldStart) process.exit(0)
   }
 
