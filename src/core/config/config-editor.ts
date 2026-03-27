@@ -1,6 +1,3 @@
-import { execSync } from 'node:child_process'
-import * as os from 'node:os'
-import * as path from 'node:path'
 import * as clack from '@clack/prompts'
 import type { Config, ConfigManager } from './config.js'
 
@@ -183,9 +180,9 @@ async function ensureDiscordPlugin(): Promise<any | null> {
       return null
     }
     try {
-      const pluginsDir = path.join(os.homedir(), '.openacp', 'plugins')
+      const { installNpmPlugin } = await import('../plugin/plugin-installer.js')
       console.log(dim(`Installing ${DISCORD_PACKAGE}...`))
-      execSync(`npm install ${DISCORD_PACKAGE}`, { cwd: pluginsDir, stdio: 'pipe' })
+      await installNpmPlugin(DISCORD_PACKAGE)
       console.log(ok(`${DISCORD_PACKAGE} installed`))
       return await import(DISCORD_PACKAGE)
     } catch (err) {
@@ -203,6 +200,8 @@ async function editDiscord(_config: Config, _updates: ConfigUpdates): Promise<vo
   if (plugin?.configure) {
     const { SettingsManager } = await import('../plugin/settings-manager.js')
     const { createInstallContext } = await import('../plugin/install-context.js')
+    const { default: os } = await import('node:os')
+    const { default: path } = await import('node:path')
     const basePath = path.join(os.homedir(), '.openacp', 'plugins')
     const settingsManager = new SettingsManager(basePath)
     const ctx = createInstallContext({
