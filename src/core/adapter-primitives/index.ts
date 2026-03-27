@@ -8,4 +8,5 @@ export type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta, FormattedMessage, 
 export { progressBar, formatTokens, truncateContent, stripCodeFences, splitMessage } from './format-utils.js'
 export { extractContentText, formatToolSummary, formatToolTitle, resolveToolIcon } from './message-formatter.js'
 export { STATUS_ICONS, KIND_ICONS } from './format-types.js'
-export { runAdapterConformanceTests } from './__tests__/adapter-conformance.js'
+// Note: runAdapterConformanceTests is exported from the separate './testing' entry
+// point to avoid pulling vitest into the main runtime bundle.
