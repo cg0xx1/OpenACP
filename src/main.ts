@@ -140,14 +140,49 @@ export async function startServer(opts?: StartServerOptions) {
         try {
           let modulePath: string
 
-          if (entry.source === 'local') {
-            // Local plugin: name is the filesystem path or resolves directly
-            modulePath = name.startsWith('/') || name.startsWith('.')
-              ? path.resolve(name)
-              : path.join(OPENACP_DIR, 'plugins', 'node_modules', name)
+          if (name.startsWith('/') || name.startsWith('.')) {
+            // Absolute or relative path (local install via `plugin add /path/to/plugin`)
+            const resolved = path.resolve(name)
+            const pkgPath = path.join(resolved, 'package.json')
+            const pkg = JSON.parse(await fs.promises.readFile(pkgPath, 'utf-8'))
+            modulePath = path.join(resolved, pkg.main || 'dist/index.js')
           } else {
-            // npm plugin: installed under ~/.openacp/plugins/node_modules/<name>
-            modulePath = path.join(OPENACP_DIR, 'plugins', 'node_modules', name)
+            // npm package: try direct name first, then scan node_modules for matching plugin name
+            const nodeModulesDir = path.join(OPENACP_DIR, 'plugins', 'node_modules')
+            let pkgDir = path.join(nodeModulesDir, name)
+
+            if (!fs.existsSync(path.join(pkgDir, 'package.json'))) {
+              // Plugin name doesn't match npm package name — scan installed packages
+              let found = false
+              const scopes = fs.readdirSync(nodeModulesDir).filter(d => d.startsWith('@'))
+              for (const scope of scopes) {
+                const scopeDir = path.join(nodeModulesDir, scope)
+                const pkgs = fs.readdirSync(scopeDir)
+                for (const pkg of pkgs) {
+                  const candidateDir = path.join(scopeDir, pkg)
+                  const candidatePkgPath = path.join(candidateDir, 'package.json')
+                  if (fs.existsSync(candidatePkgPath)) {
+                    try {
+                      const candidatePkg = JSON.parse(fs.readFileSync(candidatePkgPath, 'utf-8'))
+                      const mainPath = path.join(candidateDir, candidatePkg.main || 'dist/index.js')
+                      if (fs.existsSync(mainPath)) {
+                        const testMod = await import(mainPath)
+                        if (testMod.default?.name === name) {
+                          pkgDir = candidateDir
+                          found = true
+                          break
+                        }
+                      }
+                    } catch { /* skip */ }
+                  }
+                }
+                if (found) break
+              }
+            }
+
+            const pkgJsonPath = path.join(pkgDir, 'package.json')
+            const pkg = JSON.parse(await fs.promises.readFile(pkgJsonPath, 'utf-8'))
+            modulePath = path.join(pkgDir, pkg.main || 'dist/index.js')
           }
 
           log.debug({ plugin: name, modulePath }, 'Loading community plugin')
