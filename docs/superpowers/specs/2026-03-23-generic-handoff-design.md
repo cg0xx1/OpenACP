@@ -12,7 +12,7 @@ Bi-directional session handoff between terminal agents and OpenACP (Telegram) fo
 - Generic abstraction via `AgentIntegrationSpec` — no per-agent hardcoded logic in engine
 - Auto-integrate on agent install (both CLI and Telegram bot)
 - Manual `openacp adopt` for agents without hooks system
-- Resume capabilities gộp chung (by ID and resume latest treated the same)
+- Resume capabilities unified (by ID and resume latest treated the same)
 
 ## Agent Capability Matrix
 

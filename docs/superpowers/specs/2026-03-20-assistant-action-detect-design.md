@@ -23,10 +23,10 @@ Post-processing middleware in the Telegram adapter that scans assistant response
 - `/new` → `{ action: "new_session" }` (use defaults)
 - `/cancel` → `{ action: "cancel_session" }`
 
-**2. Keyword matching (fallback)** — Detect intent when LLM doesn't mention commands. Requires compound phrases to avoid false positives (single words like "huy" are too ambiguous):
+**2. Keyword matching (fallback)** — Detect intent when LLM doesn't mention commands. Requires compound phrases to avoid false positives (single words like "cancel" are too ambiguous):
 
-- "tao session", "create session", "new session" + optional agent/workspace
-- "huy session", "cancel session", "dung session"
+- "tao session" (Vietnamese: create), "create session", "new session" + optional agent/workspace
+- "huy session" (Vietnamese: cancel), "cancel session", "dung session" (Vietnamese: stop)
 
 Command pattern takes priority. If both match, use command pattern result.
 
@@ -55,8 +55,8 @@ This avoids interfering with the streaming buffer and works with the existing `M
 When action detected, edit the finalized message to append inline keyboard:
 
 ```text
-🤖 Mình sẽ tạo session với agent claude, workspace ~/project nhé!
-[✅ Tạo session] [❌ Huỷ]
+🤖 I'll create a session with agent claude, workspace ~/project!
+[✅ Create session] [❌ Dismiss]
 ```
 
 ### Callback Data Format
@@ -80,8 +80,8 @@ Registration order in `start()`:
 
 ### Button Labels
 
-- `new_session` → `[✅ Tạo session]` + `[❌ Huỷ]`
-- `cancel_session` → `[⛔ Huỷ session]` + `[❌ Không]`
+- `new_session` → `[✅ Create session]` + `[❌ Dismiss]`
+- `cancel_session` → `[⛔ Cancel session]` + `[❌ No]`
 
 ## Action Execution
 
