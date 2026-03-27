@@ -8,6 +8,7 @@ import fileServicePlugin from './file-service/index.js'
 import contextPlugin from './context/index.js'
 import speechPlugin from './speech/index.js'
 import notificationsPlugin from './notifications/index.js'
+import usagePlugin from './usage/index.js'
 import tunnelPlugin from './tunnel/index.js'
 import apiServerPlugin from './api-server/index.js'
 import telegramPlugin from './telegram/index.js'
@@ -19,6 +20,7 @@ export const corePlugins = [
   contextPlugin,
   speechPlugin,
   notificationsPlugin,
+  usagePlugin,
   // Infrastructure plugins
   tunnelPlugin,
   apiServerPlugin,

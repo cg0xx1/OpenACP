@@ -142,11 +142,39 @@ function createTunnelPlugin(): OpenACPPlugin {
 
       ctx.registerCommand({
         name: 'tunnel',
-        description: 'Show tunnel status and URL',
+        description: 'Manage tunnels: /tunnel <port> [label] | /tunnel stop <port>',
         category: 'plugin',
-        handler: async () => {
+        handler: async (args) => {
+          const parts = args.raw.trim().split(/\s+/)
+
+          // /tunnel stop <port>
+          if (parts[0] === 'stop' && parts[1]) {
+            const port = parseInt(parts[1], 10)
+            if (isNaN(port)) return { type: 'error', message: 'Invalid port number' }
+            try {
+              await tunnelSvc.stopTunnel(port)
+              return { type: 'text', text: `Tunnel on port ${port} stopped.` }
+            } catch (err) {
+              return { type: 'error', message: (err as Error).message }
+            }
+          }
+
+          // /tunnel <port> [label]
+          if (parts[0] && parts[0] !== '') {
+            const port = parseInt(parts[0], 10)
+            if (isNaN(port)) return { type: 'error', message: 'Invalid port number' }
+            const label = parts.slice(1).join(' ') || undefined
+            try {
+              const entry = await tunnelSvc.addTunnel(port, { label })
+              return { type: 'text', text: `Tunnel created: ${entry.publicUrl ?? 'starting...'}` }
+            } catch (err) {
+              return { type: 'error', message: (err as Error).message }
+            }
+          }
+
+          // /tunnel (no args) — show current tunnel URL
           const url = tunnelSvc.getPublicUrl()
-          return { type: 'text', text: `Tunnel active: ${url}` }
+          return { type: 'text', text: url ? `Tunnel: ${url}` : 'No tunnel active.' }
         },
       })
 
@@ -155,10 +183,16 @@ function createTunnelPlugin(): OpenACPPlugin {
         description: 'List active tunnels',
         category: 'plugin',
         handler: async () => {
-          const url = tunnelSvc.getPublicUrl()
-          return { type: 'list', title: 'Active Tunnels', items: [
-            { label: 'Primary', detail: url },
-          ]}
+          const userTunnels = tunnelSvc.listTunnels()
+          const systemUrl = tunnelSvc.getPublicUrl()
+          const items = [
+            { label: 'System', detail: systemUrl },
+            ...userTunnels.map(t => ({
+              label: t.label ?? `Port ${t.port}`,
+              detail: `${t.publicUrl ?? t.status} (${t.provider})`,
+            })),
+          ]
+          return { type: 'list', title: 'Active Tunnels', items }
         },
       })
 

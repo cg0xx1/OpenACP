@@ -210,6 +210,9 @@ async function executeResume(
       parse_mode: "HTML",
     });
 
+    // TODO: Over-budget interactive selection not yet implemented (F7)
+    // Spec says: show options when context > 30K tokens, auto-select after 60s
+
     const { session, contextResult } = await core.createSessionWithContext({
       channelId: "telegram",
       agentName,
