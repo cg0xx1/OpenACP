@@ -191,8 +191,9 @@ async function installAndSetupDiscord(
     spinner.start(`Installing ${packageName}...`);
     try {
       const { installNpmPlugin } = await import('../plugin/plugin-installer.js');
-      await installNpmPlugin(packageName);
-      discordPlugin = (await import(packageName)).default;
+      const pluginsDir = settingsManager.getBasePath();
+      const mod = await installNpmPlugin(packageName, pluginsDir);
+      discordPlugin = mod.default;
       spinner.stop(ok(`${packageName} installed`));
     } catch (installErr) {
       spinner.stop(fail(`Failed to install ${packageName}: ${(installErr as Error).message}`));
