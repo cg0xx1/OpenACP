@@ -84,6 +84,9 @@ export async function cmdPluginCreate(): Promise<void> {
     author: result.author || '',
     license: result.license as string,
     keywords: ['openacp', 'openacp-plugin'],
+    engines: {
+      openacp: `>=${cliVersion}`,
+    },
     peerDependencies: {
       '@openacp/cli': `>=${cliVersion}`,
     },

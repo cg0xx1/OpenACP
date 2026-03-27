@@ -90,8 +90,11 @@ Key fields in the generated `package.json`:
     "test": "vitest",
     "prepublishOnly": "npm run build"
   },
+  "engines": {
+    "openacp": ">=2026.0327.1"
+  },
   "peerDependencies": {
-    "@openacp/plugin-sdk": "^1.0.0"
+    "@openacp/cli": ">=2026.0327.1"
   },
   "devDependencies": {
     "@openacp/plugin-sdk": "^1.0.0",
@@ -100,6 +103,8 @@ Key fields in the generated `package.json`:
   }
 }
 ```
+
+The `engines.openacp` field declares the minimum OpenACP CLI version required by your plugin. When users install your plugin, OpenACP checks this field and warns if their CLI version is too old. The `peerDependencies` on `@openacp/cli` serves the same purpose for npm's dependency resolver.
 
 The `@openacp/plugin-sdk` package provides all types, base classes, and testing utilities you need.
 
