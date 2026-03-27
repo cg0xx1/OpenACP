@@ -1,5 +1,5 @@
 import * as clack from "@clack/prompts";
-import { expandHome } from "../config.js";
+import { expandHome } from "../config/config.js";
 import { guardCancel, ok, warn, dim, step } from "./helpers.js";
 
 export async function setupRunMode(opts?: {
@@ -42,8 +42,8 @@ export async function setupRunMode(opts?: {
   const wasDaemon = existing?.runMode === 'daemon';
 
   if (mode === 'daemon') {
-    const { installAutoStart, isAutoStartSupported } = await import('../autostart.js');
-    const { muteLogger, unmuteLogger } = await import('../log.js');
+    const { installAutoStart, isAutoStartSupported } = await import('../../cli/autostart.js');
+    const { muteLogger, unmuteLogger } = await import('../utils/log.js');
     const autoStart = isAutoStartSupported();
     if (autoStart) {
       muteLogger();
@@ -60,10 +60,10 @@ export async function setupRunMode(opts?: {
 
   // Switching from daemon → foreground: stop daemon + uninstall autostart
   if (wasDaemon) {
-    const { muteLogger, unmuteLogger } = await import('../log.js');
+    const { muteLogger, unmuteLogger } = await import('../utils/log.js');
     muteLogger();
     try {
-      const { stopDaemon } = await import('../daemon.js');
+      const { stopDaemon } = await import('../../cli/daemon.js');
       const result = await stopDaemon();
       unmuteLogger();
       if (result.stopped) {
@@ -75,7 +75,7 @@ export async function setupRunMode(opts?: {
     }
     muteLogger();
     try {
-      const { uninstallAutoStart } = await import('../autostart.js');
+      const { uninstallAutoStart } = await import('../../cli/autostart.js');
       uninstallAutoStart();
       unmuteLogger();
     } catch {

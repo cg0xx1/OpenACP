@@ -29,13 +29,13 @@ describe('config-editor', () => {
   })
 
   it('exports runConfigEditor function', async () => {
-    const mod = await import('../core/config-editor.js')
+    const mod = await import('../core/config/config-editor.js')
     expect(typeof mod.runConfigEditor).toBe('function')
   })
 
   it('exits without saving when no changes are made', async () => {
     const clack = await import('@clack/prompts')
-    const { runConfigEditor } = await import('../core/config-editor.js')
+    const { runConfigEditor } = await import('../core/config/config-editor.js')
 
     vi.mocked(clack.select).mockResolvedValueOnce('exit')
 
@@ -61,7 +61,7 @@ describe('config-editor', () => {
 
   it('saves changes when user edits workspace and exits', async () => {
     const clack = await import('@clack/prompts')
-    const { runConfigEditor } = await import('../core/config-editor.js')
+    const { runConfigEditor } = await import('../core/config/config-editor.js')
 
     vi.mocked(clack.select)
       .mockResolvedValueOnce('workspace')
@@ -93,7 +93,7 @@ describe('config-editor', () => {
 
   it('discards changes on Ctrl+C (cancel)', async () => {
     const clack = await import('@clack/prompts')
-    const { runConfigEditor } = await import('../core/config-editor.js')
+    const { runConfigEditor } = await import('../core/config/config-editor.js')
 
     vi.mocked(clack.isCancel).mockReturnValueOnce(true)
     vi.mocked(clack.select).mockResolvedValueOnce(Symbol('cancel'))

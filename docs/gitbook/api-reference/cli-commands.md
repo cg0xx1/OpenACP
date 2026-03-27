@@ -275,6 +275,33 @@ openacp api version
 
 ---
 
+## dev
+
+Runs OpenACP with a local plugin loaded in development mode. Compiles TypeScript automatically, starts `tsc --watch` for hot-reload, and boots the server with the plugin.
+
+**Usage**
+```
+openacp dev <plugin-path> [options]
+```
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `--no-watch` | Disable file watching (no hot-reload) |
+| `--verbose` | Enable verbose logging |
+
+**Examples**
+```bash
+openacp dev ./my-plugin
+openacp dev ../adapter-matrix --no-watch
+openacp dev ./my-plugin --verbose
+```
+
+See [Dev Mode](../extending/dev-mode.md) for the full guide.
+
+---
+
 ## config
 
 Views and edits configuration. Works with both a running and a stopped daemon.
@@ -314,16 +341,19 @@ openacp doctor [--dry-run]
 
 ## install
 
-Installs an adapter plugin from npm into `~/.openacp/plugins/`.
+Installs a plugin from npm into `~/.openacp/plugins/`. Supports built-in plugins, community npm packages, and pinning a specific version with `@version` syntax.
 
 **Usage**
 ```
-openacp install <package>
+openacp install <package>[@version]
 ```
 
 ```bash
 openacp install @openacp/adapter-discord
+openacp install @myorg/translator@1.2.0
 ```
+
+This is an alias for `openacp plugin add`. See [plugin install](#plugin-install) for details.
 
 ---
 
@@ -364,6 +394,92 @@ Runs the first-run setup wizard if no config exists. If config already exists, r
 **Usage**
 ```
 openacp onboard
+```
+
+---
+
+## plugin create
+
+Scaffolds a new OpenACP plugin project with all boilerplate: TypeScript config, test setup, lifecycle hooks, and package.json.
+
+**Usage**
+```
+openacp plugin create
+```
+
+Runs an interactive wizard that prompts for:
+- Plugin name (npm package name, e.g. `@myorg/my-plugin`)
+- Description
+- Author
+- License
+
+Creates a directory with `src/index.ts`, `src/__tests__/index.test.ts`, `package.json`, `tsconfig.json`, `CLAUDE.md` (AI agent context), `PLUGIN_GUIDE.md` (developer guide), and config files.
+
+**Example**
+```bash
+openacp plugin create
+# Follow prompts, then:
+cd my-plugin
+npm install
+npm run build
+npm test
+```
+
+See [Getting Started: Your First Plugin](../extending/getting-started-plugin.md) for a full walkthrough.
+
+---
+
+## plugin install
+
+Installs a plugin package. Works with both built-in plugins and community plugins published to npm. Supports `@version` syntax to pin a specific version. After npm install, checks the plugin's `engines.openacp` field and warns if the installed CLI version is older than the minimum required.
+
+**Usage**
+```
+openacp plugin add <package>[@version]
+openacp plugin install <package>[@version]
+```
+
+**Examples**
+```bash
+openacp plugin add @openacp/adapter-discord
+openacp plugin add @myorg/translator@1.2.0
+openacp plugin install my-plugin
+```
+
+Community plugins are installed via `npm install` into `~/.openacp/plugins/node_modules/`. The plugin's `install()` hook is called if defined.
+
+---
+
+## plugin configure
+
+Runs the configuration flow for an installed plugin. Calls the plugin's `configure()` hook, which typically presents interactive prompts to update settings.
+
+**Usage**
+```
+openacp plugin configure <name>
+```
+
+**Example**
+```bash
+openacp plugin configure @myorg/translator
+```
+
+---
+
+## plugin enable / disable
+
+Enables or disables an installed plugin without removing it. Disabled plugins are skipped during server startup.
+
+**Usage**
+```
+openacp plugin enable <name>
+openacp plugin disable <name>
+```
+
+**Examples**
+```bash
+openacp plugin disable @myorg/translator
+openacp plugin enable @myorg/translator
 ```
 
 ---

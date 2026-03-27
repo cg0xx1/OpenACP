@@ -1,5 +1,5 @@
 import * as clack from "@clack/prompts";
-import type { Config } from "../config.js";
+import type { Config } from "../config/config.js";
 import { guardCancel } from "./helpers.js";
 
 export async function setupIntegrations(config?: Config): Promise<void> {

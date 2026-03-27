@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { initLogger, shutdownLogger, createChildLogger, createSessionLogger, cleanupOldSessionLogs, log } from '../core/log.js'
+import { initLogger, shutdownLogger, createChildLogger, createSessionLogger, cleanupOldSessionLogs, log } from '../core/utils/log.js'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'

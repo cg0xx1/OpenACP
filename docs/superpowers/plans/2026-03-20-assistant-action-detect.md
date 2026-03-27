@@ -41,34 +41,34 @@ import { detectAction } from '../adapters/telegram/action-detect.js'
 describe('detectAction', () => {
   describe('command pattern detection', () => {
     it('detects /new with agent and workspace', () => {
-      const result = detectAction('Mình sẽ tạo session với /new claude ~/project nhé!')
+      const result = detectAction('I will create a session with /new claude ~/project!')
       expect(result).toEqual({ action: 'new_session', agent: 'claude', workspace: '~/project' })
     })
 
     it('detects /new with agent only', () => {
-      const result = detectAction('Bạn có thể dùng /new claude để bắt đầu')
+      const result = detectAction('You can use /new claude to get started')
       expect(result).toEqual({ action: 'new_session', agent: 'claude', workspace: undefined })
     })
 
     it('detects /new without params', () => {
-      const result = detectAction('Hãy dùng /new để tạo session mới')
+      const result = detectAction('Use /new to create a new session')
       expect(result).toEqual({ action: 'new_session', agent: undefined, workspace: undefined })
     })
 
     it('detects /cancel', () => {
-      const result = detectAction('Bạn có thể dùng /cancel để huỷ session')
+      const result = detectAction('You can use /cancel to cancel the session')
       expect(result).toEqual({ action: 'cancel_session' })
     })
 
     it('does not detect /status or /help', () => {
-      expect(detectAction('Dùng /status để xem trạng thái')).toBeNull()
-      expect(detectAction('Gõ /help để xem hướng dẫn')).toBeNull()
+      expect(detectAction('Use /status to check the status')).toBeNull()
+      expect(detectAction('Type /help to see the guide')).toBeNull()
     })
   })
 
   describe('keyword detection', () => {
-    it('detects "tao session" keyword', () => {
-      const result = detectAction('Mình sẽ tạo session mới cho bạn nhé')
+    it('detects "tao session" keyword (Vietnamese: create)', () => {
+      const result = detectAction('I will create a new session for you')
       expect(result).toEqual({ action: 'new_session', agent: undefined, workspace: undefined })
     })
 
@@ -77,8 +77,8 @@ describe('detectAction', () => {
       expect(result).toEqual({ action: 'new_session', agent: undefined, workspace: undefined })
     })
 
-    it('detects "huy session" keyword', () => {
-      const result = detectAction('Mình sẽ huỷ session hiện tại')
+    it('detects "huy session" keyword (Vietnamese: cancel)', () => {
+      const result = detectAction('I will cancel the current session')
       expect(result).toEqual({ action: 'cancel_session' })
     })
 
@@ -87,18 +87,18 @@ describe('detectAction', () => {
       expect(result).toEqual({ action: 'cancel_session' })
     })
 
-    it('does not false-positive on single word "huy"', () => {
-      expect(detectAction('Anh Huy ơi, chào anh')).toBeNull()
+    it('does not false-positive on single word "huy" (Vietnamese name)', () => {
+      expect(detectAction('Hey Huy, how are you')).toBeNull()
     })
 
     it('does not false-positive on unrelated text', () => {
-      expect(detectAction('Xin chào, tôi có thể giúp gì cho bạn?')).toBeNull()
+      expect(detectAction('Hello, how can I help you?')).toBeNull()
     })
   })
 
   describe('priority', () => {
     it('prefers command pattern over keyword', () => {
-      const result = detectAction('Tạo session bằng /new claude ~/work')
+      const result = detectAction('Create session using /new claude ~/work')
       expect(result).toEqual({ action: 'new_session', agent: 'claude', workspace: '~/work' })
     })
   })
@@ -193,11 +193,11 @@ export function removeAction(id: string): void {
 export function buildActionKeyboard(actionId: string, action: DetectedAction): InlineKeyboard {
   const keyboard = new InlineKeyboard()
   if (action.action === 'new_session') {
-    keyboard.text('✅ Tạo session', `a:${actionId}`)
-    keyboard.text('❌ Huỷ', `a:dismiss:${actionId}`)
+    keyboard.text('✅ Create session', `a:${actionId}`)
+    keyboard.text('❌ Dismiss', `a:dismiss:${actionId}`)
   } else {
-    keyboard.text('⛔ Huỷ session', `a:${actionId}`)
-    keyboard.text('❌ Không', `a:dismiss:${actionId}`)
+    keyboard.text('⛔ Cancel session', `a:${actionId}`)
+    keyboard.text('❌ No', `a:dismiss:${actionId}`)
   }
   return keyboard
 }
@@ -423,21 +423,21 @@ export function setupActionCallbacks(
     try {
       await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } })
     } catch { /* message may be old */ }
-    await ctx.answerCallbackQuery({ text: 'Đã huỷ' })
+    await ctx.answerCallbackQuery({ text: 'Dismissed' })
   })
 
   bot.callbackQuery(/^a:/, async (ctx) => {
     const actionId = ctx.callbackQuery.data.replace('a:', '')
     const action = getAction(actionId)
     if (!action) {
-      await ctx.answerCallbackQuery({ text: 'Action đã hết hạn' })
+      await ctx.answerCallbackQuery({ text: 'Action expired' })
       return
     }
     removeAction(actionId)
 
     try {
       if (action.action === 'new_session') {
-        await ctx.answerCallbackQuery({ text: '⏳ Đang tạo session...' })
+        await ctx.answerCallbackQuery({ text: '⏳ Creating session...' })
         const { session, threadId } = await executeNewSession(
           bot, core, chatId, action.agent, action.workspace,
         )
@@ -452,19 +452,19 @@ export function setupActionCallbacks(
         const assistantId = getAssistantSessionId()
         const cancelled = await executeCancelSession(core, assistantId)
         if (cancelled) {
-          await ctx.answerCallbackQuery({ text: '⛔ Session đã huỷ' })
+          await ctx.answerCallbackQuery({ text: '⛔ Session cancelled' })
           await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } })
           await ctx.editMessageText(
-            ctx.callbackQuery.message?.text + `\n\n⛔ Session "${cancelled.name || cancelled.id}" đã huỷ`,
+            ctx.callbackQuery.message?.text + `\n\n⛔ Session "${cancelled.name || cancelled.id}" cancelled`,
             { parse_mode: 'HTML' },
           )
         } else {
-          await ctx.answerCallbackQuery({ text: 'Không có session nào đang chạy' })
+          await ctx.answerCallbackQuery({ text: 'No active sessions running' })
           await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } })
         }
       }
     } catch (err) {
-      await ctx.answerCallbackQuery({ text: '❌ Lỗi, thử lại sau' })
+      await ctx.answerCallbackQuery({ text: '❌ Error, try again later' })
       try {
         await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } })
       } catch { /* best effort */ }
@@ -522,9 +522,9 @@ Expected: All pass
 
 1. Start: `OPENACP_CONFIG_PATH=~/.openacp/config2.json pnpm start`
 2. Go to Assistant topic in Telegram
-3. Type "tạo session mới với claude" → LLM responds → should see [✅ Tạo session] [❌ Huỷ] buttons
+3. Type "create a new session with claude" → LLM responds → should see [✅ Create session] [❌ Dismiss] buttons
 4. Click ✅ → should create topic and link
-5. Type "huỷ session đi" → should see [⛔ Huỷ session] [❌ Không] buttons
+5. Type "cancel the session" → should see [⛔ Cancel session] [❌ No] buttons
 6. Click ⛔ → should cancel most recent session
 7. Click ❌ on any action → should remove buttons only
 

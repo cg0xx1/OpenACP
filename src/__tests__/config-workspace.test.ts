@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { ConfigManager, expandHome } from '../core/config.js'
+import { ConfigManager, expandHome } from '../core/config/config.js'
 
 describe('expandHome', () => {
   it('expands ~ to home directory', () => {

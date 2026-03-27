@@ -1,12 +1,12 @@
 import type { AgentEvent, OutgoingMessage } from "./types.js";
-import type { TunnelService } from "../tunnel/tunnel-service.js";
-import { extractFileInfo } from "../tunnel/extract-file-info.js";
-import { createChildLogger } from "./log.js";
+import type { TunnelServiceInterface } from "./plugin/types.js";
+import { extractFileInfo } from "./utils/extract-file-info.js";
+import { createChildLogger } from "./utils/log.js";
 
 const log = createChildLogger({ module: "message-transformer" });
 
 export class MessageTransformer {
-  constructor(private tunnelService?: TunnelService) {}
+  constructor(private tunnelService?: TunnelServiceInterface) {}
 
   transform(
     event: AgentEvent,
@@ -72,6 +72,47 @@ export class MessageTransformer {
         return { type: "error", text: event.message };
       case "system_message":
         return { type: "system_message", text: event.message };
+      case "session_info_update":
+        return {
+          type: "system_message",
+          text: `Session updated: ${event.title ?? ""}`.trim(),
+          metadata: { title: event.title, updatedAt: event.updatedAt },
+        };
+      case "current_mode_update":
+        return {
+          type: "mode_change",
+          text: `Mode: ${event.modeId}`,
+          metadata: { modeId: event.modeId },
+        };
+      case "config_option_update":
+        return {
+          type: "config_update",
+          text: "Config updated",
+          metadata: { options: event.options },
+        };
+      case "model_update":
+        return {
+          type: "model_update",
+          text: `Model: ${event.modelId}`,
+          metadata: { modelId: event.modelId },
+        };
+      case "user_message_chunk":
+        return {
+          type: "user_replay",
+          text: event.content,
+        };
+      case "resource_content":
+        return {
+          type: "resource",
+          text: event.name,
+          metadata: { uri: event.uri, text: event.text, blob: event.blob, mimeType: event.mimeType },
+        };
+      case "resource_link":
+        return {
+          type: "resource_link",
+          text: event.name,
+          metadata: { uri: event.uri, mimeType: event.mimeType, title: event.title, description: event.description, size: event.size },
+        };
       default:
         return { type: "text", text: "" };
     }

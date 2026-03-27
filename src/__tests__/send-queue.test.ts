@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { TelegramSendQueue } from '../adapters/telegram/send-queue.js'
+import { SendQueue } from '../core/adapter-primitives/primitives/send-queue.js'
 
-describe('TelegramSendQueue', () => {
-  let queue: TelegramSendQueue
+describe('SendQueue', () => {
+  let queue: SendQueue
 
   beforeEach(() => {
     vi.useFakeTimers()
-    queue = new TelegramSendQueue(100) // 100ms for fast tests
+    queue = new SendQueue({ minInterval: 100 }) // 100ms for fast tests
   })
 
   it('executes items in FIFO order', async () => {

@@ -1,4 +1,4 @@
-import type { Config } from "../config.js";
+import type { Config } from "../config/config.js";
 
 export interface DoctorContext {
   config: Config | null;

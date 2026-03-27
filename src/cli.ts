@@ -9,6 +9,7 @@ import {
   cmdInstall,
   cmdUninstall,
   cmdPlugins,
+  cmdPlugin,
   cmdApi,
   cmdStart,
   cmdStop,
@@ -24,7 +25,8 @@ import {
   cmdAgents,
   cmdTunnel,
   cmdOnboard,
-} from './cli/commands.js'
+  cmdDev,
+} from './cli/commands/index.js'
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -37,6 +39,7 @@ const commands: Record<string, () => Promise<void>> = {
   'install': () => cmdInstall(args),
   'uninstall': () => cmdUninstall(args),
   'plugins': () => cmdPlugins(args),
+  'plugin': () => cmdPlugin(args),
   'api': () => cmdApi(args),
   'start': () => cmdStart(args),
   'stop': () => cmdStop(args),
@@ -51,6 +54,7 @@ const commands: Record<string, () => Promise<void>> = {
   'agents': () => cmdAgents(args),
   'tunnel': () => cmdTunnel(args),
   'onboard': () => cmdOnboard(),
+  'dev': () => cmdDev(args),
   '--daemon-child': async () => {
     const { startServer } = await import('./main.js')
     await startServer()

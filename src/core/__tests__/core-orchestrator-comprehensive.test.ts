@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { TypedEmitter } from "../typed-emitter.js";
+import { TypedEmitter } from "../utils/typed-emitter.js";
 import type { AgentEvent, IncomingMessage, SessionStatus } from "../types.js";
-import type { ChannelAdapter } from "../channel.js";
+import type { IChannelAdapter } from "../channel.js";
 
 // --- Mocks for isolated testing of message routing and session lifecycle ---
 
@@ -18,8 +18,10 @@ function mockAgentInstance(sessionId = "agent-sess-1") {
   }) as any;
 }
 
-function createMockAdapter(): ChannelAdapter {
+function createMockAdapter(): IChannelAdapter {
   return {
+    name: 'test',
+    capabilities: { streaming: false, richFormatting: false, threads: false, reactions: false, fileUpload: false, voice: false },
     sendMessage: vi.fn().mockResolvedValue(undefined),
     sendPermissionRequest: vi.fn().mockResolvedValue(undefined),
     sendNotification: vi.fn().mockResolvedValue(undefined),
@@ -31,7 +33,7 @@ function createMockAdapter(): ChannelAdapter {
     archiveSessionTopic: vi.fn(),
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
-  } as unknown as ChannelAdapter;
+  } as unknown as IChannelAdapter;
 }
 
 function makeMessage(overrides: Partial<IncomingMessage> = {}): IncomingMessage {
@@ -58,7 +60,7 @@ describe("Core Orchestrator — Message Routing & Lifecycle", () => {
         getSessionByThread: vi.fn(),
         patchRecord: vi.fn(),
       };
-      const adapters = new Map<string, ChannelAdapter>();
+      const adapters = new Map<string, IChannelAdapter>();
       adapters.set("telegram", createMockAdapter());
 
       // Simulate handleMessage logic
@@ -257,7 +259,7 @@ describe("Core Orchestrator — Message Routing & Lifecycle", () => {
     });
 
     it("rejects if adapter not found", () => {
-      const adapters = new Map<string, ChannelAdapter>();
+      const adapters = new Map<string, IChannelAdapter>();
       const adapter = adapters.get("nonexistent");
 
       if (!adapter) {

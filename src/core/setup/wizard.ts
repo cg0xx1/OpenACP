@@ -1,56 +1,170 @@
+import * as os from "node:os";
+import * as path from "node:path";
 import * as clack from "@clack/prompts";
-import type { Config, ConfigManager } from "../config.js";
+import type { Config, ConfigManager } from "../config/config.js";
+import type { ChannelId } from "./types.js";
 import type { OnboardSection } from "./types.js";
 import { ONBOARD_SECTION_OPTIONS } from "./types.js";
+import type { CommunityAdapterOption } from "./types.js";
 import { guardCancel, ok, fail, printStartBanner, summarizeConfig } from "./helpers.js";
-import { setupTelegram } from "./setup-telegram.js";
-import { setupDiscord } from "./setup-discord.js";
 import { setupAgents } from "./setup-agents.js";
 import { setupWorkspace } from "./setup-workspace.js";
 import { setupRunMode } from "./setup-run-mode.js";
 import { setupIntegrations } from "./setup-integrations.js";
 import { configureChannels } from "./setup-channels.js";
-import type { DiscordChannelConfig } from "../../adapters/discord/types.js";
+import { RegistryClient } from "../plugin/registry-client.js";
+import type { SettingsManager } from "../plugin/settings-manager.js";
+import type { PluginRegistry } from "../plugin/plugin-registry.js";
 
-// ─── First-run setup (unchanged flow) ───
+// ─── Registry discovery ───
+
+async function fetchCommunityAdapters(): Promise<CommunityAdapterOption[]> {
+  try {
+    const client = new RegistryClient()
+    const registry = await client.getRegistry()
+    return registry.plugins
+      .filter(p => p.category === 'adapter' && p.verified)
+      .map(p => ({
+        name: p.npm,
+        displayName: p.displayName ?? p.name,
+        icon: p.icon,
+        verified: p.verified,
+      }))
+  } catch {
+    return []
+  }
+}
+
+// ─── First-run setup ───
 
 export async function runSetup(
   configManager: ConfigManager,
-  opts?: { skipRunMode?: boolean },
+  opts?: { skipRunMode?: boolean; settingsManager?: SettingsManager; pluginRegistry?: PluginRegistry },
 ): Promise<boolean> {
   await printStartBanner();
   clack.intro("Let's set up OpenACP");
 
-  try {
-    const channelChoice = guardCancel(
-      await clack.select({
-        message: 'Which messaging platform do you want to use?',
-        options: [
-          { label: 'Telegram', value: 'telegram' },
-          { label: 'Discord', value: 'discord' },
-          { label: 'Both', value: 'both' },
-        ],
-      }),
-    );
+  const { settingsManager, pluginRegistry } = opts ?? {};
 
-    let telegram: Config["channels"][string] | undefined;
-    let discord: DiscordChannelConfig | undefined;
+  try {
+    if (!settingsManager || !pluginRegistry) {
+      console.log(fail('Plugin system not initialized. Cannot set up channels.'));
+      return false;
+    }
+
+    const communityAdapters = await fetchCommunityAdapters()
+
+    const builtInOptions = [
+      { label: 'Telegram', value: 'telegram' },
+    ]
+
+    const communityOptions = communityAdapters.map(a => ({
+      label: `${a.icon} ${a.displayName}${a.verified ? ' (verified)' : ''}`,
+      value: `community:${a.name}`,
+    }))
+
+    // Ask user which channels to set up
+    const channelChoices = guardCancel(
+      await clack.multiselect({
+        message: 'Which channels do you want to set up?',
+        options: [
+          ...builtInOptions.map(o => ({ value: o.value, label: o.label, hint: 'built-in' })),
+          ...(communityOptions.length > 0
+            ? communityOptions.map(o => ({ value: o.value, label: o.label, hint: 'from plugin registry' }))
+            : []),
+        ],
+        required: true,
+        initialValues: ['telegram' as const],
+      }),
+    ) as string[];
 
     // Calculate total steps dynamically: channel(s) + workspace + run mode
-    const channelSteps = channelChoice === 'both' ? 2 : 1;
+    const channelSteps = channelChoices.length;
     const runModeSteps = opts?.skipRunMode ? 0 : 1;
     const totalSteps = channelSteps + 1 + runModeSteps; // + workspace + optional run mode
 
     let currentStep = 0;
 
-    if (channelChoice === 'telegram' || channelChoice === 'both') {
+    const { createInstallContext } = await import('../plugin/install-context.js');
+
+    for (const channelId of channelChoices) {
       currentStep++;
-      telegram = await setupTelegram({ stepNum: currentStep, totalSteps });
+
+      if (channelId === 'telegram') {
+        const telegramPlugin = (await import('../../plugins/telegram/index.js')).default;
+        const ctx = createInstallContext({
+          pluginName: telegramPlugin.name,
+          settingsManager,
+          basePath: settingsManager.getBasePath(),
+        });
+        await telegramPlugin.install!(ctx);
+        pluginRegistry.register(telegramPlugin.name, {
+          version: telegramPlugin.version,
+          source: 'builtin',
+          enabled: true,
+          settingsPath: settingsManager.getSettingsPath(telegramPlugin.name),
+          description: telegramPlugin.description,
+        });
+      }
+
+
+      // Handle community plugin selections
+      if (channelId.startsWith('community:')) {
+        const npmPackage = channelId.slice('community:'.length);
+        const { execFileSync } = await import('node:child_process');
+        const pluginsDir = path.join(os.homedir(), '.openacp', 'plugins');
+        const nodeModulesDir = path.join(pluginsDir, 'node_modules');
+
+        // Install from npm
+        try {
+          execFileSync('npm', ['install', npmPackage, '--prefix', pluginsDir, '--save'], {
+            stdio: 'inherit',
+            timeout: 60000,
+          });
+        } catch {
+          console.log(fail(`Failed to install ${npmPackage}.`));
+          return false;
+        }
+
+        // Load and run install hook
+        try {
+          const { readFileSync } = await import('node:fs');
+          const installedPkgPath = path.join(nodeModulesDir, npmPackage, 'package.json');
+          const installedPkg = JSON.parse(readFileSync(installedPkgPath, 'utf-8'));
+          const pluginModule = await import(path.join(nodeModulesDir, npmPackage, installedPkg.main ?? 'dist/index.js'));
+          const plugin = pluginModule.default;
+
+          if (plugin?.install) {
+            const installCtx = createInstallContext({
+              pluginName: plugin.name ?? npmPackage,
+              settingsManager,
+              basePath: settingsManager.getBasePath(),
+            });
+            await plugin.install(installCtx);
+          }
+
+          pluginRegistry.register(plugin?.name ?? npmPackage, {
+            version: installedPkg.version,
+            source: 'npm',
+            enabled: true,
+            settingsPath: settingsManager.getSettingsPath(plugin?.name ?? npmPackage),
+            description: plugin?.description ?? installedPkg.description,
+          });
+        } catch (err) {
+          // Plugin installed via npm but failed to load — register as disabled
+          console.log(fail(`Failed to load ${npmPackage}: ${(err as Error).message}`));
+          pluginRegistry.register(npmPackage, {
+            version: 'unknown',
+            source: 'npm',
+            enabled: false,
+            settingsPath: settingsManager.getSettingsPath(npmPackage),
+          });
+        }
+      }
     }
-    if (channelChoice === 'discord' || channelChoice === 'both') {
-      currentStep++;
-      discord = await setupDiscord();
-    }
+
+    // Persist any community plugin registrations from the loop above
+    await pluginRegistry.save();
 
     const { defaultAgent } = await setupAgents();
 
@@ -75,13 +189,8 @@ export async function runSetup(
       sessionTimeoutMinutes: 60,
     };
 
-    const channels: Config["channels"] = {};
-    if (telegram) channels.telegram = telegram;
-    // DiscordChannelConfig is structurally compatible with the base channel schema
-    if (discord) channels.discord = discord as Config["channels"][string];
-
     const config: Config = {
-      channels,
+      channels: {},
       agents: {},
       defaultAgent,
       workspace,
@@ -131,6 +240,12 @@ export async function runSetup(
       return false;
     }
 
+    // Auto-register remaining built-in plugins in the registry
+    if (settingsManager && pluginRegistry) {
+      await registerBuiltinPlugins(settingsManager, pluginRegistry);
+      await pluginRegistry.save();
+    }
+
     clack.outro(`Config saved to ${configManager.getConfigPath()}`);
 
     if (!opts?.skipRunMode) {
@@ -145,6 +260,38 @@ export async function runSetup(
       return false;
     }
     throw err;
+  }
+}
+
+/**
+ * Register all built-in plugins that haven't been registered yet.
+ * Called after first-run setup to populate the registry with defaults.
+ */
+async function registerBuiltinPlugins(
+  settingsManager: SettingsManager,
+  pluginRegistry: PluginRegistry,
+): Promise<void> {
+  const builtinPlugins = [
+    { name: '@openacp/security', version: '1.0.0', description: 'User access control and session limits' },
+    { name: '@openacp/file-service', version: '1.0.0', description: 'File storage and management' },
+    { name: '@openacp/context', version: '1.0.0', description: 'Conversation context management' },
+    { name: '@openacp/usage', version: '1.0.0', description: 'Token usage tracking and budget enforcement' },
+    { name: '@openacp/speech', version: '1.0.0', description: 'Text-to-speech and speech-to-text' },
+    { name: '@openacp/notifications', version: '1.0.0', description: 'Cross-session notification routing' },
+    { name: '@openacp/tunnel', version: '1.0.0', description: 'Expose local services via tunnel' },
+    { name: '@openacp/api-server', version: '1.0.0', description: 'REST API + SSE streaming server' },
+  ];
+
+  for (const p of builtinPlugins) {
+    if (!pluginRegistry.get(p.name)) {
+      pluginRegistry.register(p.name, {
+        version: p.version,
+        source: 'builtin',
+        enabled: true,
+        settingsPath: settingsManager.getSettingsPath(p.name),
+        description: p.description,
+      });
+    }
   }
 }
 

@@ -1,0 +1,63 @@
+import { checkAndPromptUpdate } from '../version.js'
+import { printHelp } from './help.js'
+import path from 'node:path'
+import os from 'node:os'
+
+const OPENACP_DIR = path.join(os.homedir(), '.openacp')
+const PLUGINS_DATA_DIR = path.join(OPENACP_DIR, 'plugins', 'data')
+const REGISTRY_PATH = path.join(OPENACP_DIR, 'plugins.json')
+
+export async function cmdDefault(command: string | undefined): Promise<void> {
+  const forceForeground = command === '--foreground'
+
+  // Reject unknown commands
+  if (command && !command.startsWith('-')) {
+    const { suggestMatch } = await import('../suggest.js')
+    const topLevelCommands = [
+      'start', 'stop', 'status', 'logs', 'config', 'reset', 'update',
+      'install', 'uninstall', 'plugins', 'plugin', 'api', 'adopt', 'integrate', 'doctor', 'agents', 'onboard',
+    ]
+    const suggestion = suggestMatch(command, topLevelCommands)
+    console.error(`Unknown command: ${command}`)
+    if (suggestion) console.error(`Did you mean: ${suggestion}?`)
+    printHelp()
+    process.exit(1)
+  }
+
+  await checkAndPromptUpdate()
+
+  const { ConfigManager } = await import('../../core/config/config.js')
+  const cm = new ConfigManager()
+
+  // If no config, run setup first
+  if (!(await cm.exists())) {
+    const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
+    const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
+    const settingsManager = new SettingsManager(PLUGINS_DATA_DIR)
+    const pluginRegistry = new PluginRegistry(REGISTRY_PATH)
+    await pluginRegistry.load()
+
+    const { runSetup } = await import('../../core/setup/index.js')
+    const shouldStart = await runSetup(cm, { settingsManager, pluginRegistry })
+    if (!shouldStart) process.exit(0)
+  }
+
+  await cm.load()
+  const config = cm.get()
+
+  if (!forceForeground && config.runMode === 'daemon') {
+    const { startDaemon, getPidPath } = await import('../daemon.js')
+    const result = startDaemon(getPidPath(), config.logging.logDir)
+    if ('error' in result) {
+      console.error(result.error)
+      process.exit(1)
+    }
+    console.log(`OpenACP daemon started (PID ${result.pid})`)
+    return
+  }
+
+  const { markRunning } = await import('../daemon.js')
+  markRunning()
+  const { startServer } = await import('../../main.js')
+  await startServer()
+}

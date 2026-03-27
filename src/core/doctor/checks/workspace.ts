@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { expandHome } from "../../config.js";
+import { expandHome } from "../../config/config.js";
 import type { DoctorCheck, CheckResult } from "../types.js";
 
 export const workspaceCheck: DoctorCheck = {

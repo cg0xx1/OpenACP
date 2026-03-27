@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getAgentCapabilities } from "../core/agent-registry.js";
+import { getAgentCapabilities } from "../core/agents/agent-registry.js";
 
 describe("AgentRegistry", () => {
   it("returns capabilities for claude", () => {

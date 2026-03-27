@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, chmodSync, rmdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { getAgentCapabilities, commandExists, listAgentsWithIntegration } from "../core/agent-dependencies.js";
-import type { AgentIntegrationSpec } from "../core/agent-dependencies.js";
+import { getAgentCapabilities, commandExists, listAgentsWithIntegration } from "../core/agents/agent-dependencies.js";
+import type { AgentIntegrationSpec } from "../core/agents/agent-dependencies.js";
 
 export interface IntegrationResult {
   success: boolean;
@@ -109,7 +109,7 @@ User wants to:
 - **Share their local app** — "share this on my phone", "let my friend see this", "preview on mobile"
 - **Expose a port** — "expose port 3000", "map port 5173", "make port 8080 public"
 - **Get a public URL** — "give me a public URL", "I need an external link", "make localhost accessible"
-- **Open a tunnel** — "open tunnel", "start tunnel", "tunnel this", "bật tunnel"
+- **Open a tunnel** — "open tunnel", "start tunnel", "tunnel this"
 - **Forward/proxy a port** — "forward port 3000", "proxy my server"
 - **Deploy preview** — "deploy preview", "share a preview link"
 - **Access remotely** — "access from my phone", "access from outside"
@@ -146,11 +146,10 @@ ${sidVar} and ${cwdVar}, then run:
 bash ${hooksDir}openacp-handoff.sh <${sidVar}> <${cwdVar}> <args if any>
 
 Usage: /openacp:handoff [channel]
-  channel: telegram, discord, or omit for default adapter
+  channel: name of a registered adapter (e.g. telegram), or omit for default
 
 Examples:
   /openacp:handoff
-  /openacp:handoff discord
   /openacp:handoff telegram
 `;
 }

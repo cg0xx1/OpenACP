@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ConfigSchema } from '../core/config.js'
+import { ConfigSchema } from '../core/config/config.js'
 
 describe('logging config schema', () => {
   const baseConfig = {

@@ -13,7 +13,4 @@ export default defineConfig({
   dts: true,
   clean: true,
   outDir: 'dist-publish/dist',
-  // Force-bundle packages that can't be installed via npm
-  // (msedge-tts has `preinstall: npx only-allow pnpm` which blocks npm users)
-  noExternal: ['msedge-tts'],
 })
