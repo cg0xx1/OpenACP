@@ -184,14 +184,16 @@ async function installAndSetupDiscord(
 
   // Try to import first — if not installed, install it
   let discordPlugin: any;
+  const pluginsDir = settingsManager.getBasePath();
   try {
-    discordPlugin = (await import(packageName)).default;
+    const { importFromDir } = await import('../plugin/plugin-installer.js');
+    const mod = await importFromDir(packageName, pluginsDir);
+    discordPlugin = mod.default;
   } catch {
     const spinner = clack.spinner();
     spinner.start(`Installing ${packageName}...`);
     try {
       const { installNpmPlugin } = await import('../plugin/plugin-installer.js');
-      const pluginsDir = settingsManager.getBasePath();
       const mod = await installNpmPlugin(packageName, pluginsDir);
       discordPlugin = mod.default;
       spinner.stop(ok(`${packageName} installed`));
