@@ -1,6 +1,6 @@
 import { exec } from 'node:child_process'
 import { promisify } from 'node:util'
-import * as fs from 'node:fs'
+import * as fs from 'node:fs/promises'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -14,7 +14,7 @@ const execAsync = promisify(exec)
 export async function importFromDir(packageName: string, dir: string): Promise<any> {
   const pkgDir = path.join(dir, 'node_modules', ...packageName.split('/'))
   const pkgJsonPath = path.join(pkgDir, 'package.json')
-  const pkgJson = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8'))
+  const pkgJson = JSON.parse(await fs.readFile(pkgJsonPath, 'utf-8'))
 
   // Resolve entry: exports["."].import > main > index.js
   let entry: string
