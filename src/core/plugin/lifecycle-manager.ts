@@ -38,6 +38,7 @@ function resolvePluginConfig(pluginName: string, configManager: unknown): Record
       '@openacp/api-server': 'api',
       '@openacp/telegram': 'channels.telegram',
       '@openacp/discord': 'channels.discord',
+      '@openacp/plugin-discord': 'channels.discord',
       '@openacp/slack': 'channels.slack',
     }
     const legacyKey = legacyMap[pluginName]
