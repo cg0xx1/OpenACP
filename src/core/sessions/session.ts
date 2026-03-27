@@ -354,6 +354,7 @@ export class Session extends TypedEmitter<SessionEvents> {
           data: base64,
           mimeType: result.mimeType,
         });
+        this.emit("agent_event", { type: "tts_strip" });
         this.log.info("TTS synthesis completed");
       } finally {
         clearTimeout(ttsTimer!);

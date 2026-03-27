@@ -365,16 +365,32 @@ export async function handleArchive(
   // Check in-memory session first, then fall back to stored record
   const session = core.sessionManager.getSessionByThread("telegram", String(threadId));
   const record = !session ? core.sessionManager.getRecordByThread("telegram", String(threadId)) : undefined;
-  // Use sessionId if available, otherwise use threadId as identifier for orphan topics
-  const identifier = session?.id ?? record?.sessionId ?? `topic:${threadId}`;
+
+  // Must be used in a session topic (not orphan or non-session)
+  if (!session && !record) {
+    await ctx.reply("This topic is not linked to a session.", { parse_mode: "HTML" });
+    return;
+  }
+
+  const identifier = session?.id ?? record?.sessionId;
+  if (!identifier) {
+    await ctx.reply("Could not determine session for this topic.", { parse_mode: "HTML" });
+    return;
+  }
+
+  // Session must be active (not initializing)
+  const status = session?.status ?? record?.status;
+  if (status === "initializing") {
+    await ctx.reply("Cannot archive a session that is still initializing. Wait for it to become active.", { parse_mode: "HTML" });
+    return;
+  }
 
   await ctx.reply(
     "⚠️ <b>Archive this session?</b>\n\n" +
     "This will:\n" +
-    "• Delete this topic and all messages\n" +
-    "• Stop the agent session (if running)\n" +
-    "• Remove the session record\n\n" +
-    "<i>This action cannot be undone.</i>",
+    "• Delete this topic and recreate it (clearing chat history)\n" +
+    "• The agent session will keep running\n\n" +
+    "<i>Chat history cannot be recovered.</i>",
     {
       parse_mode: "HTML",
       reply_markup: new InlineKeyboard()
@@ -396,7 +412,7 @@ export async function handleArchiveConfirm(
     await ctx.answerCallbackQuery();
   } catch { /* expired */ }
 
-  // Format: ar:<action>:<identifier> where identifier is sessionId or topic:<threadId>
+  // Format: ar:<action>:<identifier> where identifier is sessionId
   const [, action, ...rest] = data.split(":");
   const identifier = rest.join(":");
 
@@ -406,40 +422,25 @@ export async function handleArchiveConfirm(
   }
 
   // action === "yes"
-  await ctx.editMessageText("🔄 Archiving...", { parse_mode: "HTML" });
-
-  // Handle orphan topics (no session/record) — delete topic directly
-  if (identifier.startsWith("topic:")) {
-    const topicId = Number(identifier.slice("topic:".length));
-    try {
-      await ctx.api.deleteForumTopic(chatId, topicId);
-      core.notificationManager.notifyAll({
-        sessionId: "system",
-        sessionName: `Orphan topic #${topicId}`,
-        type: "completed",
-        summary: `Orphan topic #${topicId} archived and deleted.`,
-      });
-    } catch (err) {
-      core.notificationManager.notifyAll({
-        sessionId: "system",
-        sessionName: `Orphan topic #${topicId}`,
-        type: "error",
-        summary: `Failed to delete orphan topic #${topicId}: ${(err as Error).message}`,
-      });
-    }
-    return;
-  }
+  // Note: we don't editMessageText here because the topic is about to be deleted
 
   const result = await core.archiveSession(identifier);
   if (result.ok) {
-    core.notificationManager.notifyAll({
-      sessionId: identifier,
-      type: "completed",
-      summary: `Session archived and deleted.`,
-    });
+    // Send confirmation in the new topic
+    const adapter = core.adapters.get("telegram");
+    if (adapter) {
+      try {
+        await adapter.sendMessage(identifier, {
+          type: "text",
+          text: "Chat history cleared. Session is still active — send a message to continue.",
+        });
+      } catch {
+        // Best effort — the new topic is already created
+      }
+    }
   } else {
     try {
-      await ctx.editMessageText(`❌ Failed to archive: <code>${escapeHtml(result.error)}</code>`, { parse_mode: "HTML" });
+      await ctx.editMessageText(`Failed to archive: <code>${escapeHtml(result.error)}</code>`, { parse_mode: "HTML" });
     } catch {
       core.notificationManager.notifyAll({
         sessionId: identifier,

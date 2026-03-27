@@ -268,6 +268,10 @@ export class SessionBridge {
           outgoing = this.deps.messageTransformer.transform(event);
           this.sendMessage(this.session.id, outgoing);
           break;
+
+        case "tts_strip":
+          this.adapter.stripTTSBlock?.(this.session.id);
+          break;
       }
 
       this.deps.eventBus?.emit("agent:event", {

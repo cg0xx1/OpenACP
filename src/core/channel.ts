@@ -30,7 +30,10 @@ export interface IChannelAdapter {
   createSessionThread(sessionId: string, name: string): Promise<string>  // returns threadId
   renameSessionThread(sessionId: string, newName: string): Promise<void>
   deleteSessionThread?(sessionId: string): Promise<void>
-  archiveSessionTopic?(sessionId: string): Promise<void>
+  archiveSessionTopic?(sessionId: string): Promise<string>
+
+  // TTS strip — optional, called after TTS audio is synthesized to remove [TTS] block from text
+  stripTTSBlock?(sessionId: string): Promise<void>
 
   // Skill commands — optional
   sendSkillCommands?(sessionId: string, commands: AgentCommand[]): Promise<void>
@@ -64,5 +67,5 @@ export abstract class ChannelAdapter<TCore = unknown> implements IChannelAdapter
 
   async sendSkillCommands(_sessionId: string, _commands: AgentCommand[]): Promise<void> {}
   async cleanupSkillCommands(_sessionId: string): Promise<void> {}
-  async archiveSessionTopic(_sessionId: string): Promise<void> {}
+  async archiveSessionTopic(_sessionId: string): Promise<string> { return ""; }
 }

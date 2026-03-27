@@ -1355,17 +1355,19 @@ export class TelegramAdapter extends MessagingAdapter {
     await this.skillManager.cleanup(sessionId);
   }
 
-  async archiveSessionTopic(sessionId: string): Promise<void> {
+  async stripTTSBlock(sessionId: string): Promise<void> {
+    await this.draftManager.stripPattern(sessionId, /\[TTS\][\s\S]*?\[\/TTS\]/g);
+  }
+
+  async archiveSessionTopic(sessionId: string): Promise<string> {
     const core = this.core as OpenACPCore;
     const session = core.sessionManager.getSession(sessionId);
-    if (!session) return;
+    if (!session) throw new Error("Session not found");
 
     const chatId = this.telegramConfig.chatId;
     const oldTopicId = Number(session.threadId);
-    // Strip existing 🔄 prefix to avoid stacking on repeated archives
 
     // Set archiving flag — sendMessage will skip while this is true.
-    // Flag stays true until core finishes cancelSession (prevents race window).
     session.archiving = true;
 
     // Finalize any pending draft
@@ -1380,7 +1382,16 @@ export class TelegramAdapter extends MessagingAdapter {
       this.sessionTrackers.delete(session.id);
     }
 
-    // Delete topic (removes all messages)
+    // 1. Delete old topic (removes all messages)
     await deleteSessionTopic(this.bot, chatId, oldTopicId);
+
+    // 2. Create new topic with session name
+    const topicName = session.name ?? `Session ${session.id.slice(0, 6)}`;
+    const newTopicId = await createSessionTopic(this.bot, chatId, topicName);
+
+    // Clear archiving flag — messages can now be sent to new topic
+    session.archiving = false;
+
+    return String(newTopicId);
   }
 }

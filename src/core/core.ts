@@ -186,47 +186,39 @@ export class OpenACPCore {
 
   // --- Archive ---
 
-  async archiveSession(sessionId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  async archiveSession(sessionId: string): Promise<{ ok: true; newThreadId: string } | { ok: false; error: string }> {
     const session = this.sessionManager.getSession(sessionId);
-    const record = this.sessionManager.getSessionRecord(sessionId);
+    if (!session) return { ok: false, error: "Session not found (must be in memory)" };
 
-    if (!session && !record) return { ok: false, error: "Session not found" };
+    // Must be active (not initializing or finished)
+    if (session.status !== "active" && session.status !== "cancelled" && session.status !== "error") {
+      return { ok: false, error: `Cannot archive session in '${session.status}' state` };
+    }
 
-    const channelId = session?.channelId ?? record?.channelId;
-    if (!channelId) return { ok: false, error: "No channel for session" };
-
-    const adapter = this.adapters.get(channelId);
+    const adapter = this.adapters.get(session.channelId);
     if (!adapter) return { ok: false, error: "Adapter not found for session" };
+    if (!adapter.archiveSessionTopic) return { ok: false, error: "Adapter does not support topic archiving" };
 
     try {
-      // 1. Delete topic — if session is in memory use archiveSessionTopic (cleans up trackers),
-      //    otherwise use deleteSessionThread (looks up topicId from record)
-      if (session) {
-        await adapter.archiveSessionTopic?.(session.id);
+      // archiveSessionTopic handles: cleanup trackers → delete old topic → create new topic
+      const newThreadId = await adapter.archiveSessionTopic(session.id);
+
+      // Rewire session to new topic
+      session.threadId = newThreadId;
+
+      // Update session store with new topic ID
+      const platform: Record<string, unknown> = {};
+      if (session.channelId === "telegram") {
+        platform.topicId = Number(newThreadId);
       } else {
-        await adapter.deleteSessionThread?.(sessionId);
+        platform.threadId = newThreadId;
       }
+      await this.sessionManager.patchRecord(sessionId, { platform });
 
-      // 2. Cancel the session if in memory (stop agent)
-      if (session) {
-        try {
-          await this.sessionManager.cancelSession(sessionId);
-        } catch {
-          // Session may already be finished/cancelled
-        } finally {
-          // Clear archiving flag after cancel completes — prevents race window
-          // where agent events try to send to deleted topic
-          session.archiving = false;
-        }
-      }
-
-      // 3. Remove session record
-      await this.sessionManager.removeRecord(sessionId);
-
-      return { ok: true };
+      return { ok: true, newThreadId };
     } catch (err) {
-      // Clear archiving flag on error too
-      if (session) session.archiving = false;
+      // Clear archiving flag on error
+      session.archiving = false;
       return { ok: false, error: (err as Error).message };
     }
   }

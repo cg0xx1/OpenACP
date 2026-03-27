@@ -7,9 +7,15 @@ import {
   buildActionKeyboard,
 } from "./action-detect.js";
 
+interface FinalizedDraft {
+  messageId: number;
+  draft: MessageDraft;
+}
+
 export class DraftManager {
   private drafts: Map<string, MessageDraft> = new Map();
   private textBuffers: Map<string, string> = new Map();
+  private finalizedDrafts: Map<string, FinalizedDraft> = new Map();
 
   constructor(
     private bot: Bot,
@@ -63,6 +69,11 @@ export class DraftManager {
     this.drafts.delete(sessionId);
     const finalMsgId = await draft.finalize();
 
+    // Keep finalized draft reference so tts_strip can edit after finalization
+    if (finalMsgId) {
+      this.finalizedDrafts.set(sessionId, { messageId: finalMsgId, draft });
+    }
+
     // Detect actions in assistant responses and attach keyboard
     if (assistantSessionId && sessionId === assistantSessionId) {
       const fullText = this.textBuffers.get(sessionId);
@@ -88,8 +99,25 @@ export class DraftManager {
     }
   }
 
+  /**
+   * Strip a regex pattern from the active or finalized draft for a session.
+   * Used by tts_strip to remove [TTS]...[/TTS] blocks after TTS audio is sent.
+   */
+  async stripPattern(sessionId: string, pattern: RegExp): Promise<void> {
+    const draft = this.drafts.get(sessionId);
+    if (draft) {
+      await draft.stripPattern(pattern);
+      return;
+    }
+    const finalized = this.finalizedDrafts.get(sessionId);
+    if (finalized) {
+      await finalized.draft.stripPattern(pattern);
+    }
+  }
+
   cleanup(sessionId: string): void {
     this.drafts.delete(sessionId);
     this.textBuffers.delete(sessionId);
+    this.finalizedDrafts.delete(sessionId);
   }
 }

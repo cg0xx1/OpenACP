@@ -112,7 +112,8 @@ export type AgentEvent =
   | { type: "model_update"; modelId: string }
   | { type: "user_message_chunk"; content: string }
   | { type: "resource_content"; uri: string; name: string; text?: string; blob?: string; mimeType?: string }
-  | { type: "resource_link"; uri: string; name: string; mimeType?: string; title?: string; description?: string; size?: number };
+  | { type: "resource_link"; uri: string; name: string; mimeType?: string; title?: string; description?: string; size?: number }
+  | { type: "tts_strip" };
 
 export interface PlanEntry {
   content: string;

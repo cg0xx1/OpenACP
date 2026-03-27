@@ -25,7 +25,24 @@ describe("handleArchive", () => {
     );
   });
 
-  it("shows confirmation for initializing session", async () => {
+  it("confirmation text describes topic recreation (not deletion)", async () => {
+    const ctx = mockCtx(456);
+    const core = {
+      sessionManager: {
+        getSessionByThread: vi.fn(() => ({ id: "sess-1", status: "active" })),
+        getRecordByThread: vi.fn(),
+      },
+    } as any;
+
+    await handleArchive(ctx, core);
+    const text = ctx.reply.mock.calls[0][0] as string;
+    expect(text).toContain("recreate it");
+    expect(text).toContain("agent session will keep running");
+    expect(text).not.toContain("Stop the agent");
+    expect(text).not.toContain("Remove the session record");
+  });
+
+  it("rejects initializing session", async () => {
     const ctx = mockCtx(456);
     const core = {
       sessionManager: {
@@ -36,12 +53,12 @@ describe("handleArchive", () => {
 
     await handleArchive(ctx, core);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("Archive this session"),
-      expect.objectContaining({ reply_markup: expect.any(Object) }),
+      expect.stringContaining("still initializing"),
+      expect.any(Object),
     );
   });
 
-  it("shows confirmation for orphan topic (no session, no record)", async () => {
+  it("rejects non-session topic (no session, no record)", async () => {
     const ctx = mockCtx(999);
     const core = {
       sessionManager: {
@@ -52,8 +69,8 @@ describe("handleArchive", () => {
 
     await handleArchive(ctx, core);
     expect(ctx.reply).toHaveBeenCalledWith(
-      expect.stringContaining("Archive this session"),
-      expect.objectContaining({ reply_markup: expect.any(Object) }),
+      expect.stringContaining("not linked to a session"),
+      expect.any(Object),
     );
   });
 
@@ -62,7 +79,7 @@ describe("handleArchive", () => {
     const core = {
       sessionManager: {
         getSessionByThread: vi.fn(() => undefined),
-        getRecordByThread: vi.fn(() => ({ sessionId: "stored-1" })),
+        getRecordByThread: vi.fn(() => ({ sessionId: "stored-1", status: "active" })),
       },
     } as any;
 
@@ -79,6 +96,24 @@ describe("handleArchive", () => {
 
     await handleArchive(ctx, core);
     expect(ctx.reply).not.toHaveBeenCalled();
+  });
+
+  it("allows archiving error/cancelled sessions", async () => {
+    for (const status of ["error", "cancelled"]) {
+      const ctx = mockCtx(456);
+      const core = {
+        sessionManager: {
+          getSessionByThread: vi.fn(() => ({ id: "sess-1", status })),
+          getRecordByThread: vi.fn(),
+        },
+      } as any;
+
+      await handleArchive(ctx, core);
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining("Archive this session"),
+        expect.objectContaining({ reply_markup: expect.any(Object) }),
+      );
+    }
   });
 });
 
@@ -97,10 +132,11 @@ describe("handleArchiveConfirm", () => {
     );
   });
 
-  it("calls core.archiveSession on confirm and notifies", async () => {
+  it("calls core.archiveSession and sends confirmation in new topic", async () => {
+    const sendMessage = vi.fn(() => Promise.resolve());
     const core = {
-      archiveSession: vi.fn(() => Promise.resolve({ ok: true })),
-      notificationManager: { notifyAll: vi.fn(() => Promise.resolve()) },
+      archiveSession: vi.fn(() => Promise.resolve({ ok: true, newThreadId: "789" })),
+      adapters: new Map([["telegram", { sendMessage }]]),
     } as any;
     const ctx = {
       callbackQuery: { data: "ar:yes:sess-1" },
@@ -110,10 +146,11 @@ describe("handleArchiveConfirm", () => {
 
     await handleArchiveConfirm(ctx, core, 123);
     expect(core.archiveSession).toHaveBeenCalledWith("sess-1");
-    expect(core.notificationManager.notifyAll).toHaveBeenCalledWith(
+    expect(sendMessage).toHaveBeenCalledWith(
+      "sess-1",
       expect.objectContaining({
-        sessionId: "sess-1",
-        type: "completed",
+        type: "text",
+        text: expect.stringContaining("Chat history cleared"),
       }),
     );
   });
@@ -121,6 +158,7 @@ describe("handleArchiveConfirm", () => {
   it("shows error when archive fails", async () => {
     const core = {
       archiveSession: vi.fn(() => Promise.resolve({ ok: false, error: "No permission" })),
+      notificationManager: { notifyAll: vi.fn(() => Promise.resolve()) },
     } as any;
     const ctx = {
       callbackQuery: { data: "ar:yes:sess-1" },
@@ -135,46 +173,23 @@ describe("handleArchiveConfirm", () => {
     );
   });
 
-  it("handles orphan topic deletion", async () => {
+  it("does not kill agent or remove session record", async () => {
+    const sendMessage = vi.fn(() => Promise.resolve());
+    const cancelSession = vi.fn();
+    const removeRecord = vi.fn();
     const core = {
-      notificationManager: { notifyAll: vi.fn(() => Promise.resolve()) },
+      archiveSession: vi.fn(() => Promise.resolve({ ok: true, newThreadId: "789" })),
+      adapters: new Map([["telegram", { sendMessage }]]),
+      sessionManager: { cancelSession, removeRecord },
     } as any;
     const ctx = {
-      callbackQuery: { data: "ar:yes:topic:999" },
+      callbackQuery: { data: "ar:yes:sess-1" },
       answerCallbackQuery: vi.fn(() => Promise.resolve()),
       editMessageText: vi.fn(() => Promise.resolve()),
-      api: { deleteForumTopic: vi.fn(() => Promise.resolve()) },
     } as any;
 
     await handleArchiveConfirm(ctx, core, 123);
-    expect(ctx.api.deleteForumTopic).toHaveBeenCalledWith(123, 999);
-    expect(core.notificationManager.notifyAll).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "system",
-        sessionName: "Orphan topic #999",
-        type: "completed",
-      }),
-    );
-  });
-
-  it("notifies on orphan topic delete failure", async () => {
-    const core = {
-      notificationManager: { notifyAll: vi.fn(() => Promise.resolve()) },
-    } as any;
-    const ctx = {
-      callbackQuery: { data: "ar:yes:topic:999" },
-      answerCallbackQuery: vi.fn(() => Promise.resolve()),
-      editMessageText: vi.fn(() => Promise.resolve()),
-      api: { deleteForumTopic: vi.fn(() => Promise.reject(new Error("forbidden"))) },
-    } as any;
-
-    await handleArchiveConfirm(ctx, core, 123);
-    expect(core.notificationManager.notifyAll).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "system",
-        type: "error",
-        summary: expect.stringContaining("forbidden"),
-      }),
-    );
+    expect(cancelSession).not.toHaveBeenCalled();
+    expect(removeRecord).not.toHaveBeenCalled();
   });
 });
