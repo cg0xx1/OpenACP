@@ -40,6 +40,7 @@ export type {
 
 // --- Adapter base classes (runtime) ---
 export { MessagingAdapter, StreamAdapter, BaseRenderer } from '@openacp/cli'
+export type { MessagingAdapterConfig, IRenderer, RenderedMessage } from '@openacp/cli'
 
 // --- Adapter primitives (runtime) ---
 export { SendQueue, DraftManager, ToolCallTracker, ActivityTracker } from '@openacp/cli'

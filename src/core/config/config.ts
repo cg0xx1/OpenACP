@@ -18,7 +18,10 @@ const BaseChannelSchema = z
   })
   .passthrough();
 
-export const PLUGINS_DIR = path.join(os.homedir(), ".openacp", "plugins");
+export const OPENACP_DIR = path.join(os.homedir(), ".openacp");
+export const PLUGINS_DIR = path.join(OPENACP_DIR, "plugins");
+export const PLUGINS_DATA_DIR = path.join(OPENACP_DIR, "plugins", "data");
+export const REGISTRY_PATH = path.join(OPENACP_DIR, "plugins.json");
 
 const AgentSchema = z.object({
   command: z.string(),

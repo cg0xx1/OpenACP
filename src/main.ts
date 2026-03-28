@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { ConfigManager } from './core/config/config.js'
+import path from 'node:path'
+import { ConfigManager, OPENACP_DIR, PLUGINS_DATA_DIR, REGISTRY_PATH } from './core/config/config.js'
 import { OpenACPCore } from './core/core.js'
 import { initLogger, shutdownLogger, cleanupOldSessionLogs, log, muteLogger, unmuteLogger } from './core/utils/log.js'
 import { corePlugins } from './plugins/core-plugins.js'
@@ -11,15 +12,10 @@ import { registerSystemCommands } from './core/commands/index.js'
 import type { IChannelAdapter } from './core/channel.js'
 import type { TunnelService } from './plugins/tunnel/tunnel-service.js'
 import fs from 'node:fs'
-import path from 'node:path'
-import os from 'node:os'
 
 export const RESTART_EXIT_CODE = 75
 let shuttingDown = false
 
-const OPENACP_DIR = path.join(os.homedir(), '.openacp')
-const PLUGINS_DATA_DIR = path.join(OPENACP_DIR, 'plugins', 'data')
-const REGISTRY_PATH = path.join(OPENACP_DIR, 'plugins.json')
 
 export interface StartServerOptions {
   devPluginPath?: string
