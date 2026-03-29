@@ -75,6 +75,24 @@ describe("DisplaySpecBuilder.buildToolSpec", () => {
       const spec = builder.buildToolSpec(makeEntry({ content: longOutput }), "high");
       expect(spec.outputContent).toBeNull();
     });
+
+    it("includes inline outputContent at exactly 15 lines (boundary)", () => {
+      const content = Array.from({ length: 15 }, (_, i) => `line ${i}`).join("\n");
+      const spec = builder.buildToolSpec(makeEntry({ content }), "high");
+      expect(spec.outputContent).toBe(content);
+    });
+
+    it("includes inline outputContent at exactly 800 chars (boundary)", () => {
+      const content = "x".repeat(800);
+      const spec = builder.buildToolSpec(makeEntry({ content }), "high");
+      expect(spec.outputContent).toBe(content);
+    });
+
+    it("non-noise tool is never hidden regardless of mode", () => {
+      expect(builder.buildToolSpec(makeEntry({ isNoise: false }), "low").isHidden).toBe(false);
+      expect(builder.buildToolSpec(makeEntry({ isNoise: false }), "medium").isHidden).toBe(false);
+      expect(builder.buildToolSpec(makeEntry({ isNoise: false }), "high").isHidden).toBe(false);
+    });
   });
 
   describe("thought spec", () => {

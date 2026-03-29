@@ -149,6 +149,7 @@ export class DisplaySpecBuilder {
 
     const diffStats = includeMeta ? (entry.diffStats ?? null) : null;
 
+    // outputViewerLink and outputFallbackContent populated in Task 6 (ViewerStore integration)
     return {
       id: entry.id,
       icon,
@@ -159,6 +160,8 @@ export class DisplaySpecBuilder {
       outputContent,
       diffStats,
       viewerLinks: entry.viewerLinks,
+      outputViewerLink: undefined,
+      outputFallbackContent: undefined,
       status: entry.status,
       isNoise: entry.isNoise,
       isHidden,
