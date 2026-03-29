@@ -97,6 +97,23 @@ export const migrations: Migration[] = [
       return true;
     },
   },
+  {
+    name: "migrate-display-verbosity-to-output-mode",
+    apply(raw) {
+      const channels = raw.channels as Record<string, unknown> | undefined;
+      if (!channels) return false;
+      let changed = false;
+      for (const [, channelCfg] of Object.entries(channels)) {
+        if (!channelCfg || typeof channelCfg !== "object") continue;
+        const cfg = channelCfg as Record<string, unknown>;
+        if (cfg.displayVerbosity && !cfg.outputMode) {
+          cfg.outputMode = cfg.displayVerbosity;
+          changed = true;
+        }
+      }
+      return changed;
+    },
+  },
 ];
 
 /**

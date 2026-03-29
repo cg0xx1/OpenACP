@@ -225,6 +225,7 @@ export interface SessionRecord<P = Record<string, unknown>> {
   lastActiveAt: string;
   name?: string;
   dangerousMode?: boolean;
+  outputMode?: import("./adapter-primitives/format-types.js").OutputMode;
   platform: P;
 }
 

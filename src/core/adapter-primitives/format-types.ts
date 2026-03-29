@@ -1,6 +1,8 @@
 // src/adapters/shared/format-types.ts
 
-export type DisplayVerbosity = "low" | "medium" | "high";
+export type OutputMode = "low" | "medium" | "high";
+/** @deprecated Use OutputMode instead */
+export type DisplayVerbosity = OutputMode;
 
 export type NoiseAction = "hide" | "collapse";
 
