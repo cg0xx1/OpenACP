@@ -165,6 +165,15 @@ export class MessageTransformer {
         sessionContext.workingDirectory,
       );
       if (id) viewerLinks.diff = this.tunnelService.diffUrl(id);
+
+      // Compute diff stats: net line count change
+      const oldLines = fileInfo.oldContent.split("\n").length;
+      const newLines = fileInfo.content.split("\n").length;
+      const added = Math.max(0, newLines - oldLines);
+      const removed = Math.max(0, oldLines - newLines);
+      if (added > 0 || removed > 0) {
+        metadata.diffStats = { added, removed };
+      }
     }
 
     // Always store as file view (new file creation or read)
