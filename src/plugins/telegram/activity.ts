@@ -256,6 +256,7 @@ export class ActivityTracker {
   private outputMode: OutputMode;
   private tracer: DebugTracer | null;
   private sessionId: string;
+  private sessionContext?: { id: string; workingDirectory: string };
 
   constructor(
     private api: Bot["api"],
@@ -265,11 +266,14 @@ export class ActivityTracker {
     outputMode: OutputMode = "medium",
     sessionId: string = "",
     tracer: DebugTracer | null = null,
-    _tunnelService?: TunnelServiceInterface,
+    tunnelService?: TunnelServiceInterface,
+    sessionContext?: { id: string; workingDirectory: string },
   ) {
     this.outputMode = outputMode;
     this.tracer = tracer;
     this.sessionId = sessionId;
+    this.sessionContext = sessionContext;
+    void tunnelService; // reserved for future use
     this.specBuilder = new DisplaySpecBuilder();
     this.toolStateMap = new ToolStateMap();
     this.thoughtBuffer = new ThoughtBuffer();
