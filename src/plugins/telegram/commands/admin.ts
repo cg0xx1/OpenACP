@@ -436,7 +436,7 @@ export function setupVerbosityCallbacks(bot: Bot, core: OpenACPCore): void {
 
     try {
       await ctx.answerCallbackQuery({
-        text: `${OUTPUT_MODE_LABELS[level]} Verbosity: ${level}`,
+        text: `${OUTPUT_MODE_LABELS[level]} Output mode: ${level}`,
       });
     } catch {}
   });
