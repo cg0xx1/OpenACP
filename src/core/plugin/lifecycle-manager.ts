@@ -85,7 +85,7 @@ export class LifecycleManager {
   private config: unknown
   private core: unknown
   private log: Logger | undefined
-  private settingsManager: SettingsManager | undefined
+  settingsManager: SettingsManager | undefined
   private pluginRegistry: PluginRegistry | undefined
 
   private contexts = new Map<string, ReturnType<typeof createPluginContext>>()
