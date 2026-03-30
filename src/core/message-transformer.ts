@@ -254,6 +254,14 @@ export class MessageTransformer {
       return;
     }
 
+    // Skip viewer link generation if the tunnel only has a localhost URL —
+    // Telegram strips <a href="localhost:..."> tags, rendering plain unclickable text.
+    const publicUrl = this.tunnelService.getPublicUrl();
+    if (publicUrl.startsWith("http://localhost") || publicUrl.startsWith("http://127.0.0.1")) {
+      log.debug({ kind, filePath: fileInfo.filePath }, "enrichWithViewerLinks: skipping (no public tunnel URL)");
+      return;
+    }
+
     log.info(
       {
         name,

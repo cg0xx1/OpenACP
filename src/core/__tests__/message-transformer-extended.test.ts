@@ -329,6 +329,7 @@ describe("MessageTransformer - extended", () => {
         storeDiff: vi.fn().mockReturnValue("diff-id"),
       };
       const tunnelService = {
+        getPublicUrl: vi.fn().mockReturnValue("https://tunnel.example"),
         getStore: vi.fn().mockReturnValue(tunnelStore),
         fileUrl: vi.fn().mockReturnValue("https://tunnel.example/view/file-id"),
         diffUrl: vi.fn().mockReturnValue("https://tunnel.example/diff/diff-id"),
@@ -352,9 +353,38 @@ describe("MessageTransformer - extended", () => {
       expect(result.metadata?.viewerLinks).toBeDefined();
     });
 
+    it("skips viewer links when only localhost URL available", () => {
+      const tunnelStore = {
+        storeFile: vi.fn().mockReturnValue("file-id"),
+        storeDiff: vi.fn().mockReturnValue("diff-id"),
+      };
+      const tunnelService = {
+        getPublicUrl: vi.fn().mockReturnValue("http://localhost:3105"),
+        getStore: vi.fn().mockReturnValue(tunnelStore),
+        fileUrl: vi.fn().mockReturnValue("http://localhost:3105/view/file-id"),
+        diffUrl: vi.fn().mockReturnValue("http://localhost:3105/diff/diff-id"),
+      } as any;
+      const t = new MessageTransformer(tunnelService);
+
+      const event: AgentEvent = {
+        type: "tool_call",
+        id: "tc-1",
+        name: "Edit",
+        kind: "edit",
+        status: "completed",
+        content: [
+          { type: "diff", path: "/ws/file.ts", oldText: "old", newText: "new" },
+        ],
+      };
+      const result = t.transform(event, { id: "sess-1", workingDirectory: "/ws" });
+      expect(result.metadata?.viewerLinks).toBeUndefined();
+      expect(tunnelStore.storeFile).not.toHaveBeenCalled();
+    });
+
     it("skips non-file tool kinds", () => {
       const tunnelStore = { storeFile: vi.fn(), storeDiff: vi.fn() };
       const tunnelService = {
+        getPublicUrl: vi.fn().mockReturnValue("https://tunnel.example"),
         getStore: vi.fn().mockReturnValue(tunnelStore),
         fileUrl: vi.fn(),
         diffUrl: vi.fn(),

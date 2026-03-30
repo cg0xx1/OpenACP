@@ -13,6 +13,7 @@ export class TunnelService {
   private server: ReturnType<typeof serve> | null = null
   private config: TunnelConfig
   private systemPort = 0
+  private startError: string | undefined
 
   constructor(config: TunnelConfig) {
     this.config = config
@@ -68,7 +69,8 @@ export class TunnelService {
         label: 'File Viewer',
       })
     } catch (err) {
-      log.warn({ err: (err as Error).message }, 'System tunnel failed, running on localhost')
+      this.startError = (err as Error).message
+      log.warn({ err: this.startError }, 'System tunnel failed, running on localhost')
     }
 
     // 3. Restore persisted user tunnels
@@ -125,6 +127,10 @@ export class TunnelService {
   getPublicUrl(): string {
     const system = this.registry.getSystemEntry()
     return system?.publicUrl || `http://localhost:${this.systemPort || this.config.port}`
+  }
+
+  getStartError(): string | undefined {
+    return this.startError
   }
 
   getStore(): ViewerStore {
