@@ -32,6 +32,10 @@ A single object that holds all resolved paths for an instance. Created once at C
 
 ```typescript
 interface InstanceContext {
+  /** Unique slug ID (e.g. "main", "my-project", "staging-bot") */
+  id: string
+  /** Human-readable name (e.g. "Main", "My Project", "Staging Bot") */
+  name: string
   /** Instance root directory (e.g. ~/.openacp or /project/.openacp) */
   root: string
   /** Whether this is the global instance */
@@ -58,7 +62,19 @@ interface InstanceContext {
 }
 ```
 
+#### Instance Naming
+
+Each instance has a **name** and a unique **id**:
+
+- **name**: Human-readable, provided by user during setup. Default: `"Main"` for global, `"openacp-<N>"` for local (where N is the next available number).
+- **id**: Auto-generated slug from name. Lowercase, hyphens, no spaces. E.g. `"My Staging Bot"` → `"my-staging-bot"`. Must be unique across all instances — if collision, append `-2`, `-3`, etc.
+- Global instance always has id `"main"`.
+
+Used for: lookup (`openacp status --id my-staging-bot`), display, and internal keying in the registry.
+
 #### Path Resolution (CLI entry, runs once)
+
+User-facing flags always take a **directory path** (not the `.openacp` subfolder). The system appends `/.openacp` internally.
 
 Priority order:
 
@@ -91,18 +107,21 @@ A central registry at `~/.openacp/instances.json` (always in global dir) that tr
 ```typescript
 interface InstanceRegistry {
   version: 1
-  instances: Record<string, InstanceEntry>  // key = root path
+  instances: Record<string, InstanceEntry>  // key = id (slug)
 }
 
 interface InstanceEntry {
-  root: string
+  id: string               // unique slug (e.g. "main", "my-staging-bot")
+  name: string             // human-readable (e.g. "Main", "My Staging Bot")
+  root: string             // full path to .openacp dir
   isGlobal: boolean
   pid: number | null       // null if not running
   apiPort: number | null
   tunnelPort: number | null
+  runMode: 'foreground' | 'daemon' | null  // how it was last started
+  channels: string[]       // e.g. ["telegram", "discord"] — for quick display
   createdAt: string        // ISO
   lastStartedAt: string    // ISO
-  label?: string           // optional friendly name
 }
 ```
 
@@ -133,41 +152,62 @@ When running multiple instances, ports will conflict if both use defaults.
 ```
 openacp --local  (or user picks "new setup here" from prompt)
   → cwd/.openacp/ does not exist
-  → "Set up a new OpenACP here?"
-  → Check if any existing instance is available to clone from
+  → Ask instance name: "Give this setup a name" (default: openacp-<N>)
+  → Check if any existing setup is available to copy from
     → One or more exist:
       → "Use settings from an existing setup as a starting point?"
-        → Yes: pick source instance (see Source Selection below)
-          → clone inheritable fields → run setup for remaining fields
+        → Yes: pick which setup (see below)
+          → copy with progress → run setup for remaining fields
         → No: run full setup from scratch
     → None exist: run full setup from scratch
 ```
 
-#### Clone Source Selection
+#### Choosing Which Setup to Copy From
 
-User can clone from **any existing instance**, not just global. Two ways:
+User can copy from **any existing instance**, not just the main one. Two ways:
 
 **Interactive (no flag):**
 ```
 ? Use settings from an existing setup as a starting point? (Y/n) Y
 ? Which setup to copy from?
-  ● Main setup (~/.openacp)
-    ~/my-project/.openacp
-    ~/other-project/.openacp
+  ● Main (/Users/lucas/.openacp)
+    My Project (/Users/lucas/my-project/.openacp)
+    Staging Bot (/Users/lucas/staging/.openacp)
 ```
 
-Each option shows the full path so the user knows exactly where it is.
+Each option shows the instance name and full path.
 
-**CLI flag:** `--from <path>` to skip the prompt:
+**CLI flag:** `--from <path>` to skip the prompt (path is the parent directory, not `.openacp`):
 ```
-openacp --local --from ~/.openacp
-openacp --local --from ~/other-project/.openacp
-openacp --dir /new/path --from ~/existing/.openacp
+openacp --local --from ~
+openacp --local --from ~/other-project
+openacp --dir /new/path --from ~/existing
 ```
 
-Validation: `--from` path must contain a valid `.openacp/` directory with a `config.json`. Error with clear message if not found.
+Validation: `--from` path must contain a `.openacp/` subdirectory with a `config.json` inside. Error with clear message if not found:
+```
+Error: No OpenACP setup found at /Users/lucas/other-project/.openacp
+```
 
-The list of available instances comes from the Instance Registry (`~/.openacp/instances.json`). If a registered instance's directory no longer exists, it is skipped.
+The list of available setups comes from the Instance Registry (`~/.openacp/instances.json`). If a registered instance's directory no longer exists, it is skipped.
+
+#### Copy Progress
+
+Copying plugins and agents can take time (node_modules can be large). Show step-by-step progress:
+
+```
+Copying from "Main" (/Users/lucas/.openacp)...
+  ✓ Configuration
+  ✓ Plugin list
+  ◐ Plugins (47 MB)...
+  ✓ Plugins
+  ✓ Agents
+  ✓ Tools (cloudflared, ...)
+  ✓ Preferences
+Done! Copied 52 MB in 3s.
+```
+
+Use a spinner for in-progress items and checkmarks for completed ones. Show size for large directories.
 
 #### Plugin Inheritance Declaration
 
@@ -216,15 +256,16 @@ Sessions, logs, cache, PID file, tunnel registry, api.port, api-secret — each 
 #### New Flags
 
 ```
-openacp [command] [--local | --global | --dir <path>] [--from <path>]
+openacp [command] [--local | --global | --dir <path>] [--from <path>] [--name <name>]
 ```
 
 - `--local` — use/create `.openacp/` in current directory
 - `--global` — always use `~/.openacp/`
-- `--dir <path>` — use/create `.openacp/` at specified path (creates directory if it doesn't exist)
-- `--from <path>` — when creating a new instance, copy settings from this existing instance (must contain `.openacp/config.json`)
+- `--dir <path>` — use/create `.openacp/` at specified directory (system appends `/.openacp` internally)
+- `--from <path>` — when creating a new setup, copy settings from this directory's existing setup
+- `--name <name>` — set the instance name (only during creation, default: `openacp-<N>`)
 
-These flags apply to ALL commands: `start`, `stop`, `status`, `config`, `logs`, `plugins`, etc. (`--from` only applies during instance creation.)
+All flags except `--from` and `--name` apply to ALL commands. `--from` and `--name` only apply during instance creation.
 
 #### New Subcommand
 
@@ -234,24 +275,26 @@ openacp status --all    # show all known instances
 
 Output:
 ```
-┌──────────┬──────────────────────────────┬─────────┬──────┬────────┐
-│ Status   │ Location                     │ PID     │ API  │ Tunnel │
-├──────────┼──────────────────────────────┼─────────┼──────┼────────┤
-│ ● online │ ~/.openacp (main)            │ 12345   │ 21420│ 3100   │
-│ ● online │ ~/my-project/.openacp        │ 12389   │ 21421│ 3101   │
-│ ○ offline│ ~/other/.openacp             │ —       │ —    │ —      │
-└──────────┴──────────────────────────────┴─────────┴──────┴────────┘
+┌──────────┬─────────────────┬──────────────────────────────┬────────┬──────────┬─────────┬──────┬────────┐
+│ Status   │ ID              │ Name            │ Location                     │ Mode   │ Channels │ API     │ Tunnel │
+├──────────┼─────────────────┼─────────────────┼──────────────────────────────┼────────┼──────────┼─────────┼────────┤
+│ ● online │ main            │ Main            │ ~/.openacp                   │ daemon │ telegram │ 21420   │ 3100   │
+│ ● online │ my-project      │ My Project      │ ~/my-project/.openacp        │ fg     │ discord  │ 21421   │ 3101   │
+│ ○ offline│ staging-bot     │ Staging Bot     │ ~/staging/.openacp           │ —      │ telegram │ —       │ —      │
+└──────────┴─────────────────┴─────────────────┴──────────────────────────────┴────────┴──────────┴─────────┴────────┘
 ```
+
+Individual instance by ID: `openacp status --id my-project`
 
 #### Auto-detect Logic (no prompt needed)
 
 1. `.openacp/` exists in cwd → use it
 2. Any explicit flag → follow it
-3. No local dir + no flag + global exists → prompt (shows full paths):
+3. No local dir + no flag + global exists → prompt (shows name + full path):
    ```
    ? How would you like to run OpenACP?
-     ● Use main setup (/Users/you/.openacp)
-       Create a new setup here (/Users/you/current-dir/.openacp)
+     ● Use "Main" (/Users/you/.openacp)
+       Create a new setup here (/Users/you/current-dir)
    ```
 4. Nothing exists → full setup wizard (current behavior)
 
@@ -261,12 +304,13 @@ All prompts use plain language, always show full paths so user knows exactly whe
 
 | Internal concept | User-facing text |
 |-----------------|-----------------|
-| Global instance | "Main setup (/full/path/.openacp)" |
-| Local instance | "Setup in this folder (/full/path/.openacp)" |
-| Clone source | "Use settings from an existing setup as a starting point" |
+| Global instance | `"Main" (/Users/you/.openacp)` — name + path |
+| Local instance | `"My Project" (/Users/you/my-project/.openacp)` — name + path |
+| Copy from existing | "Use settings from an existing setup as a starting point" |
 | Instance root | "location" with full path shown |
 | Auto-detect | (no message, just works) |
 | CLI shortcut | Show equivalent command, e.g. "Tip: next time use `openacp --local`" |
+| Instance name prompt | "Give this setup a name" (default shown) |
 
 ### 6. Files to Modify
 
@@ -309,15 +353,16 @@ All prompts use plain language, always show full paths so user knows exactly whe
 
 ### 7. New Code
 
-1. `InstanceContext` type + `resolveInstanceRoot()` function + `createInstanceContext()` factory
-2. `InstanceRegistry` class (read/write `~/.openacp/instances.json`)
-3. Clone logic in setup wizard (partial setup detection + inheritance)
-4. `inheritableKeys` field in plugin definition type
-5. API server port auto-detect (tunnel already has this)
-6. `--local`, `--global`, `--dir`, `--from` flag parsing in CLI entry
-7. `status --all` subcommand
-8. User-facing prompt when no flag and cwd has no `.openacp/` (with full paths)
-9. Clone source selection UI (list existing instances from registry, validate `--from` path)
+1. `InstanceContext` type (with `id`, `name`) + `resolveInstanceRoot()` + `createInstanceContext()` factory
+2. `InstanceRegistry` class (read/write `~/.openacp/instances.json`, keyed by id)
+3. Instance naming: slug generation from name, uniqueness check, auto-numbering
+4. Copy logic in setup wizard (partial setup detection + inheritance + progress display)
+5. `inheritableKeys` field in plugin definition type
+6. API server port auto-detect (tunnel already has this)
+7. `--local`, `--global`, `--dir`, `--from`, `--name` flag parsing in CLI entry
+8. `status --all` and `status --id <id>` subcommands
+9. User-facing prompt when no flag and cwd has no `.openacp/` (with names + full paths)
+10. Setup copy selection UI (list existing instances from registry, validate `--from` path)
 
 ### 8. Backward Compatibility
 
