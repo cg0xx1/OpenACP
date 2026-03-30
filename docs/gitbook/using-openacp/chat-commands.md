@@ -29,7 +29,7 @@ OpenACP responds to commands sent in your chat platform. This page covers every 
 | `/usage` | Yes | No | View token usage and cost |
 | `/archive` | Yes | No | Archive a session topic |
 | `/summary` | Yes | No | Generate an AI summary of a session |
-| `/switch` | Yes | Yes | Switch to a different agent mid-conversation |
+| `/switch` | Yes | No | Switch to a different agent mid-conversation (Discord/Slack: coming soon) |
 | `/handoff` | Yes | Yes | Continue session in your terminal |
 | `/integrate` | Yes | Yes | Manage agent integrations |
 | `/restart` | Yes | Yes | Restart OpenACP |

@@ -41,6 +41,7 @@ export class OpenACPCore {
   private _tunnelService?: TunnelService;
   private sessionStore: SessionStore | null = null;
   private resumeLocks: Map<string, Promise<Session | null>> = new Map();
+  private switchingLocks = new Set<string>();
   eventBus: EventBus;
   sessionFactory: SessionFactory;
   readonly lifecycleManager: LifecycleManager;
@@ -598,8 +599,25 @@ export class OpenACPCore {
   // --- Agent Switch ---
 
   async switchSessionAgent(sessionId: string, toAgent: string): Promise<{ resumed: boolean }> {
+    // Prevent concurrent switches on the same session
+    if (this.switchingLocks.has(sessionId)) {
+      throw new Error('Switch already in progress');
+    }
+    this.switchingLocks.add(sessionId);
+    try {
+      return await this._doSwitchSessionAgent(sessionId, toAgent);
+    } finally {
+      this.switchingLocks.delete(sessionId);
+    }
+  }
+
+  private async _doSwitchSessionAgent(sessionId: string, toAgent: string): Promise<{ resumed: boolean }> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
+
+    // Validate target agent exists before doing anything destructive
+    const agentDef = this.agentManager.getAgent(toAgent);
+    if (!agentDef) throw new Error(`Agent "${toAgent}" is not installed`);
 
     const fromAgent = session.agentName;
 
@@ -664,9 +682,17 @@ export class OpenACPCore {
         }
       });
     } catch (err) {
-      // Rollback: try to re-spawn the old agent so the session isn't left broken
+      // Rollback: try to restore the old agent so the session isn't left broken
       try {
-        const oldInstance = await this.agentManager.spawn(fromAgent, session.workingDirectory);
+        let rollbackInstance;
+        try {
+          // Try resume first to preserve conversation history
+          rollbackInstance = await this.agentManager.resume(fromAgent, session.workingDirectory, fromAgentSessionId);
+        } catch {
+          // Fall back to fresh spawn if resume fails
+          rollbackInstance = await this.agentManager.spawn(fromAgent, session.workingDirectory);
+        }
+        const oldInstance = rollbackInstance;
         // switchAgent already pushed to history, so undo it
         session.agentSwitchHistory.pop();
         session.agentInstance = oldInstance;
