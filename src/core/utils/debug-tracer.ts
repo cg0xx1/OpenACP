@@ -26,7 +26,6 @@ export class DebugTracer {
   }
 
   log(layer: TraceLayer, data: Record<string, unknown>): void {
-    if (!DEBUG_ENABLED) return;
     try {
       if (!this.dirCreated) {
         fs.mkdirSync(this.logDir, { recursive: true });

@@ -384,7 +384,15 @@ export async function startServer(opts?: StartServerOptions) {
     ok('Config loaded')
     ok('Dependencies checked')
     const tunnelSvc = core.lifecycleManager.serviceRegistry.get<TunnelService>('tunnel')
-    if (tunnelSvc) ok(`Tunnel ready → ${tunnelSvc.getPublicUrl()}`)
+    if (tunnelSvc) {
+      const tunnelUrl = tunnelSvc.getPublicUrl()
+      const tunnelErr = tunnelSvc.getStartError()
+      if (tunnelErr) {
+        console.log(`\x1b[33m⚠\x1b[0m  Tunnel failed (${tunnelErr}) — viewer links unavailable`)
+      } else {
+        ok(`Tunnel ready → ${tunnelUrl}`)
+      }
+    }
     for (const [name] of core.adapters) ok(`${name.charAt(0).toUpperCase() + name.slice(1)} connected`)
     const apiPort = config.api?.port ?? 21420
     if (core.lifecycleManager.serviceRegistry.get('api-server')) ok(`API server on port ${apiPort}`)

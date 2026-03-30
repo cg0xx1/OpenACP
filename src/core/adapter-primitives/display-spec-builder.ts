@@ -62,10 +62,16 @@ function buildTitle(entry: ToolEntry, kind: string): string {
   if (kind === "read") {
     const filePath = typeof input.file_path === "string" ? input.file_path : null;
     if (filePath) {
-      const start = typeof input.start_line === "number" ? input.start_line : null;
-      const end = typeof input.end_line === "number" ? input.end_line : null;
-      if (start !== null && end !== null) return `${filePath} (lines ${start}–${end})`;
-      if (start !== null) return `${filePath} (from line ${start})`;
+      // start_line/end_line style
+      const startLine = typeof input.start_line === "number" ? input.start_line : null;
+      const endLine = typeof input.end_line === "number" ? input.end_line : null;
+      if (startLine !== null && endLine !== null) return `${filePath} (lines ${startLine}–${endLine})`;
+      if (startLine !== null) return `${filePath} (from line ${startLine})`;
+      // offset/limit style (Claude Code Read tool)
+      const offset = typeof input.offset === "number" ? input.offset : null;
+      const limit = typeof input.limit === "number" ? input.limit : null;
+      if (offset !== null && limit !== null) return `${filePath} (lines ${offset}–${offset + limit - 1})`;
+      if (offset !== null) return `${filePath} (from line ${offset})`;
       return filePath;
     }
     return capitalize(entry.name);
@@ -90,6 +96,16 @@ function buildTitle(entry: ToolEntry, kind: string): string {
     return capitalize(entry.name);
   }
 
+  if (kind === "agent") {
+    const skill = typeof input.skill === "string" ? input.skill : null;
+    const description = typeof input.description === "string" ? input.description : null;
+    const subtype = typeof input.subagent_type === "string" ? input.subagent_type : null;
+    if (skill) return skill;
+    if (description) return description.length > 60 ? description.slice(0, 57) + "..." : description;
+    if (subtype) return subtype;
+    return capitalize(entry.name);
+  }
+
   if (kind === "search") {
     const pattern =
       typeof input.pattern === "string"
@@ -106,6 +122,11 @@ function buildTitle(entry: ToolEntry, kind: string): string {
       return title;
     }
     return capitalize(entry.name);
+  }
+
+  // Show skill name for Skill tool calls (e.g. Claude Code's Skill tool)
+  if (entry.name.toLowerCase() === "skill" && typeof input.skill === "string" && input.skill) {
+    return input.skill;
   }
 
   return entry.name;
@@ -163,17 +184,7 @@ export class DisplaySpecBuilder {
         ? rawCommand
         : null;
 
-    // Input content: show raw input inline for high mode (edit/write tools only — execute uses command field)
-    let inputContent: string | null = null;
-    if (mode === "high" && (effectiveKind === "edit" || effectiveKind === "write")) {
-      const inputStr =
-        typeof entry.rawInput === "object" && entry.rawInput !== null
-          ? JSON.stringify(entry.rawInput, null, 2)
-          : null;
-      if (inputStr && inputStr !== "{}") {
-        inputContent = inputStr;
-      }
-    }
+    const inputContent: string | null = null;
 
     const content = entry.content;
 
@@ -189,7 +200,9 @@ export class DisplaySpecBuilder {
         content.split("\n").length > INLINE_MAX_LINES || content.length > INLINE_MAX_CHARS;
 
       if (isLong) {
-        if (this.tunnelService && sessionContext) {
+        const publicUrl = this.tunnelService?.getPublicUrl();
+        const hasPublicTunnel = !!publicUrl && !publicUrl.startsWith("http://localhost") && !publicUrl.startsWith("http://127.0.0.1");
+        if (this.tunnelService && sessionContext && hasPublicTunnel) {
           const label =
             typeof input.command === "string" ? input.command : entry.name;
           const id = this.tunnelService.getStore().storeOutput(sessionContext.id, label, content);
