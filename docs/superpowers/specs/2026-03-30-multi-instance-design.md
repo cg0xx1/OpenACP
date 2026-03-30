@@ -275,14 +275,15 @@ openacp status --all    # show all known instances
 
 Output:
 ```
-┌──────────┬─────────────────┬──────────────────────────────┬────────┬──────────┬─────────┬──────┬────────┐
-│ Status   │ ID              │ Name            │ Location                     │ Mode   │ Channels │ API     │ Tunnel │
-├──────────┼─────────────────┼─────────────────┼──────────────────────────────┼────────┼──────────┼─────────┼────────┤
-│ ● online │ main            │ Main            │ ~/.openacp                   │ daemon │ telegram │ 21420   │ 3100   │
-│ ● online │ my-project      │ My Project      │ ~/my-project/.openacp        │ fg     │ discord  │ 21421   │ 3101   │
-│ ○ offline│ staging-bot     │ Staging Bot     │ ~/staging/.openacp           │ —      │ telegram │ —       │ —      │
-└──────────┴─────────────────┴─────────────────┴──────────────────────────────┴────────┴──────────┴─────────┴────────┘
+  Status   ID              Name            Directory              Mode     Channels   API    Tunnel
+  ● online main            Main            ~                      daemon   telegram   21420  3100
+  ● online my-project      My Project      ~/my-project           fg       discord    21421  3101
+  ○ offline staging-bot    Staging Bot     ~/staging              —        telegram   —      —
 ```
+
+- **Directory** column shows the parent directory (without `/.openacp` suffix) for readability
+- **API** and **Tunnel** show the actual port numbers (or `—` if offline)
+- **Mode** shows `daemon`, `fg` (foreground), or `—` if not running
 
 Individual instance by ID: `openacp status --id my-project`
 
