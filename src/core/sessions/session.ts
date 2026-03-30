@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import type { AgentInstance } from "../agents/agent-instance.js";
-import type { AgentCapabilities, AgentEvent, Attachment, PermissionRequest, SessionStatus, SessionMode, ConfigOption, ModelInfo, SessionModeState, SessionModelState } from "../types.js";
+import type { AgentCapabilities, AgentEvent, AgentSwitchEntry, Attachment, PermissionRequest, SessionStatus, SessionMode, ConfigOption, ModelInfo, SessionModeState, SessionModelState } from "../types.js";
 import { TypedEmitter } from "../utils/typed-emitter.js";
 import { PromptQueue } from "./prompt-queue.js";
 import { PermissionGate } from "./permission-gate.js";
@@ -55,6 +55,8 @@ export class Session extends TypedEmitter<SessionEvents> {
   agentCapabilities?: AgentCapabilities;
   archiving: boolean = false;
   promptCount: number = 0;
+  firstAgent: string;
+  agentSwitchHistory: AgentSwitchEntry[] = [];
   log: Logger;
   middlewareChain?: MiddlewareChain;
 
@@ -75,6 +77,7 @@ export class Session extends TypedEmitter<SessionEvents> {
     this.id = opts.id || nanoid(12);
     this.channelId = opts.channelId;
     this.agentName = opts.agentName;
+    this.firstAgent = opts.agentName;
     this.workingDirectory = opts.workingDirectory;
     this.agentInstance = opts.agentInstance;
     this.speechService = opts.speechService;
@@ -494,6 +497,43 @@ export class Session extends TypedEmitter<SessionEvents> {
     this.queue.clear();
     this.log.info("Prompt aborted");
     await this.agentInstance.cancel();
+  }
+
+  /** Search backward through agentSwitchHistory for the last entry matching agentName */
+  findLastSwitchEntry(agentName: string): AgentSwitchEntry | undefined {
+    for (let i = this.agentSwitchHistory.length - 1; i >= 0; i--) {
+      if (this.agentSwitchHistory[i].agentName === agentName) {
+        return this.agentSwitchHistory[i];
+      }
+    }
+    return undefined;
+  }
+
+  /** Switch the agent instance in-place, preserving session identity */
+  async switchAgent(agentName: string, createAgent: () => Promise<AgentInstance>): Promise<void> {
+    if (agentName === this.agentName) {
+      throw new Error(`Already using ${agentName}`);
+    }
+
+    // Record current agent in history
+    this.agentSwitchHistory.push({
+      agentName: this.agentName,
+      agentSessionId: this.agentSessionId,
+      switchedAt: new Date().toISOString(),
+      promptCount: this.promptCount,
+    });
+
+    // Destroy old agent
+    await this.agentInstance.destroy();
+
+    // Create and wire new agent
+    const newAgent = await createAgent();
+    this.agentInstance = newAgent;
+    this.agentName = agentName;
+    this.agentSessionId = newAgent.sessionId;
+    this.promptCount = 0;
+
+    this.log.info({ from: this.agentSwitchHistory.at(-1)!.agentName, to: agentName }, "Agent switched");
   }
 
   async destroy(): Promise<void> {
