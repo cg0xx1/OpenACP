@@ -218,10 +218,6 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
 
     const stdinLogger = new Transform({
       transform(chunk, _enc, cb) {
-        log.debug(
-          { direction: "send", raw: chunk.toString().trimEnd() },
-          "ACP raw",
-        );
         if (instance.debugTracer) {
           const raw = chunk.toString().trimEnd();
           try {
@@ -237,10 +233,6 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
 
     const stdoutLogger = new Transform({
       transform(chunk, _enc, cb) {
-        log.debug(
-          { direction: "recv", raw: chunk.toString().trimEnd() },
-          "ACP raw",
-        );
         if (instance.debugTracer) {
           const raw = chunk.toString().trimEnd();
           try {

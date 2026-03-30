@@ -353,6 +353,9 @@ export class ActivityTracker {
     // Skip spec build for out-of-order updates — buffered in pendingUpdates
     if (!existed || !entry) return;
 
+    if (viewerLinks || entry.viewerLinks) {
+      log.debug({ toolId: id, status, hasIncomingLinks: !!viewerLinks, hasEntryLinks: !!entry.viewerLinks, entryLinks: entry.viewerLinks }, "toolUpdate: viewer links trace");
+    }
     const spec = this.specBuilder.buildToolSpec(entry, this.outputMode, this.sessionContext);
     this.toolCard.updateFromSpec(spec);
   }

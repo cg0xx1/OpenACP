@@ -14,3 +14,4 @@ test/
 built-in-plugins/
 plugin-registry/
 .worktrees/
+.log
