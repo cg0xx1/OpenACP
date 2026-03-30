@@ -525,6 +525,9 @@ export class Session extends TypedEmitter<SessionEvents> {
       promptCount: this.promptCount,
     });
 
+    // Clear queued prompts and abort in-flight prompt before destroying old agent
+    this.queue.clear();
+
     // Reject any pending permission request before destroying old agent
     if (this.permissionGate.isPending) {
       this.permissionGate.reject("Agent switched");

@@ -13,10 +13,7 @@ export async function handleSwitch(
   const threadId = ctx.message?.message_thread_id;
   if (!threadId) return;
 
-  const session = core.sessionManager.getSessionByThread(
-    "telegram",
-    String(threadId),
-  );
+  const session = await core.getOrResumeSession("telegram", String(threadId));
   if (!session) {
     await ctx.reply("No active session in this topic.");
     return;
@@ -109,10 +106,7 @@ export function setupSwitchCallbacks(
     const threadId = ctx.callbackQuery.message?.message_thread_id;
     if (!threadId) return;
 
-    const session = core.sessionManager.getSessionByThread(
-      "telegram",
-      String(threadId),
-    );
+    const session = await core.getOrResumeSession("telegram", String(threadId));
     if (!session) {
       await ctx.reply("No active session in this topic.");
       return;
@@ -145,15 +139,14 @@ export function setupSwitchCallbacks(
     const threadId = ctx.callbackQuery.message?.message_thread_id;
     if (!threadId) return;
 
-    const session = core.sessionManager.getSessionByThread(
-      "telegram",
-      String(threadId),
-    );
+    const session = await core.getOrResumeSession("telegram", String(threadId));
     if (!session) {
       await ctx.reply("No active session in this topic.");
       return;
     }
 
+    // Cancel in-flight prompt before switching
+    await session.abortPrompt();
     await executeSwitchAgent(ctx, core, session.id, data);
   });
 }
