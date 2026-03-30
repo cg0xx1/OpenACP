@@ -81,7 +81,7 @@ async function showSingleInstance(root: string): Promise<void> {
   }
 }
 
-interface InstanceInfo {
+export interface InstanceInfo {
   name: string | null
   pid: number | null
   apiPort: number | null
@@ -90,7 +90,7 @@ interface InstanceInfo {
   channels: string[]
 }
 
-function readInstanceInfo(root: string): InstanceInfo {
+export function readInstanceInfo(root: string): InstanceInfo {
   const result: InstanceInfo = {
     name: null, pid: null, apiPort: null,
     tunnelPort: null, runMode: null, channels: [],
