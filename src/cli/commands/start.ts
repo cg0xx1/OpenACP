@@ -1,5 +1,6 @@
 import { checkAndPromptUpdate } from '../version.js'
 import { wantsHelp } from './helpers.js'
+import { printInstanceHint } from '../instance-hint.js'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -35,6 +36,7 @@ Requires an existing config — run 'openacp' first to set up.
       console.error(result.error)
       process.exit(1)
     }
+    printInstanceHint(root)
     console.log(`OpenACP daemon started (PID ${result.pid})`)
   } else {
     console.error('No config found. Run "openacp" first to set up.')
