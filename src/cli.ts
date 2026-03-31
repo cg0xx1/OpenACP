@@ -28,6 +28,7 @@ import {
   cmdTunnel,
   cmdOnboard,
   cmdDev,
+  cmdAttach,
 } from './cli/commands/index.js'
 import { resolveInstanceRoot, getGlobalRoot } from './core/instance-context.js'
 
@@ -105,6 +106,7 @@ const commands: Record<string, () => Promise<void>> = {
   'tunnel': () => cmdTunnel(args),
   'onboard': () => cmdOnboard(),
   'dev': () => cmdDev(args),
+  'attach': () => cmdAttach(args, root),
   '--daemon-child': async () => {
     const { startServer } = await import('./main.js')
     const envRoot = process.env.OPENACP_INSTANCE_ROOT
