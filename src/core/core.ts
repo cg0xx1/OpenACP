@@ -12,7 +12,7 @@ import type { FileServiceInterface } from "./plugin/types.js";
 import { JsonFileSessionStore, type SessionStore } from "./sessions/session-store.js";
 import type { SecurityGuard } from "../plugins/security/security-guard.js";
 import { SessionFactory } from "./sessions/session-factory.js";
-import type { AgentEvent, IncomingMessage } from "./types.js";
+import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../plugins/tunnel/tunnel-service.js";
 import { getAgentCapabilities } from "./agents/agent-registry.js";
 import { AgentSwitchHandler } from "./agent-switch-handler.js";
