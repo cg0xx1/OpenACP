@@ -97,19 +97,13 @@ async function showAlreadyRunningMenu(root: string): Promise<void> {
   // TTY: interactive menu
   const { showInteractiveMenu } = await import('../interactive-menu.js')
 
+  // Options ordered for two-column layout: r/f, s/l, q
   const shown = await showInteractiveMenu([
     {
       key: 'r', label: 'Restart',
       action: async () => {
         const { cmdRestart } = await import('./restart.js')
         await cmdRestart([], root)
-      },
-    },
-    {
-      key: 'f', label: 'Restart in foreground',
-      action: async () => {
-        const { cmdRestart } = await import('./restart.js')
-        await cmdRestart(['--foreground'], root)
       },
     },
     {
@@ -120,15 +114,22 @@ async function showAlreadyRunningMenu(root: string): Promise<void> {
       },
     },
     {
+      key: 'q', label: 'Quit',
+      action: () => { /* exit naturally */ },
+    },
+    {
+      key: 'f', label: 'Restart in foreground',
+      action: async () => {
+        const { cmdRestart } = await import('./restart.js')
+        await cmdRestart(['--foreground'], root)
+      },
+    },
+    {
       key: 'l', label: 'View logs',
       action: async () => {
         const { cmdLogs } = await import('./logs.js')
         await cmdLogs([])
       },
-    },
-    {
-      key: 'q', label: 'Quit',
-      action: () => { /* exit naturally */ },
     },
   ])
 

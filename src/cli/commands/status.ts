@@ -145,7 +145,7 @@ export function formatInstanceStatus(root: string): { info: InstanceInfo; lines:
   if (!info.pid) return null
 
   const displayRoot = root.replace(os.homedir(), '~')
-  const isGlobal = root === path.join(os.homedir(), '.openacp')
+  const isGlobal = root === getGlobalRoot()
   const label = isGlobal ? 'global' : 'local'
 
   const lines: string[] = []

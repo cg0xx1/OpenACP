@@ -40,17 +40,19 @@ Press Ctrl+C to detach.
   console.log('--- logs (Ctrl+C to detach) ---')
   console.log('')
 
-  // Tail logs
+  // Tail logs — derive log path from instance root
   const { spawn } = await import('node:child_process')
-  const { ConfigManager, expandHome } = await import('../../core/config/config.js')
+  const { expandHome } = await import('../../core/config/config.js')
 
-  const cm = new ConfigManager()
-  let logDir = '~/.openacp/logs'
-  if (await cm.exists()) {
-    await cm.load()
-    logDir = cm.get().logging.logDir
-  }
-  const logFile = path.join(expandHome(logDir), 'openacp.log')
+  // Try to read logDir from config, fallback to <root>/logs
+  let logDir = path.join(root, 'logs')
+  try {
+    const configPath = path.join(root, 'config.json')
+    const { readFileSync } = await import('node:fs')
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+    if (config.logging?.logDir) logDir = expandHome(config.logging.logDir)
+  } catch { /* use default */ }
+  const logFile = path.join(logDir, 'openacp.log')
   const tail = spawn('tail', ['-f', '-n', '50', logFile], { stdio: 'inherit' })
   tail.on('error', (err: Error) => {
     console.error(`Cannot tail log file: ${err.message}`)

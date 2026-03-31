@@ -1,9 +1,11 @@
-import readline from 'node:readline'
-
 export interface MenuOption {
   key: string
   label: string
   action: () => Promise<void> | void
+}
+
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, '')
 }
 
 /**
@@ -23,7 +25,9 @@ export function showInteractiveMenu(options: MenuOption[]): Promise<boolean> {
     const leftStr = `  \x1b[1m[${left.key}]\x1b[0m ${left.label}`
     if (right) {
       const rightStr = `\x1b[1m[${right.key}]\x1b[0m ${right.label}`
-      console.log(`${leftStr.padEnd(34)}${rightStr}`)
+      const visualLen = stripAnsi(leftStr).length
+      const padding = Math.max(34 - visualLen, 2)
+      console.log(`${leftStr}${' '.repeat(padding)}${rightStr}`)
     } else {
       console.log(leftStr)
     }
@@ -31,8 +35,6 @@ export function showInteractiveMenu(options: MenuOption[]): Promise<boolean> {
   console.log('')
 
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, terminal: false })
-
     process.stdin.setRawMode(true)
     process.stdin.resume()
 
@@ -49,7 +51,12 @@ export function showInteractiveMenu(options: MenuOption[]): Promise<boolean> {
       if (option) {
         cleanup()
         console.log('')
-        await option.action()
+        try {
+          await option.action()
+        } catch (err) {
+          console.error(err)
+          process.exit(1)
+        }
         resolve(true)
       }
       // Ignore unrecognized keys
@@ -59,7 +66,6 @@ export function showInteractiveMenu(options: MenuOption[]): Promise<boolean> {
       process.stdin.removeListener('data', onData)
       process.stdin.setRawMode(false)
       process.stdin.pause()
-      rl.close()
     }
 
     process.stdin.on('data', onData)
