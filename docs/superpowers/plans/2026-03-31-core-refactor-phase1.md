@@ -239,14 +239,12 @@ export class AgentSwitchHandler {
 
     // 1. Middleware: agent:beforeSwitch (blocking)
     const middlewareChain = this.deps.getMiddlewareChain();
-    if (middlewareChain) {
-      const result = await middlewareChain.execute('agent:beforeSwitch', {
-        sessionId,
-        fromAgent,
-        toAgent,
-      }, async (payload) => payload);
-      if (!result) throw new Error('Agent switch blocked by middleware');
-    }
+    const result = await middlewareChain?.execute('agent:beforeSwitch', {
+      sessionId,
+      fromAgent,
+      toAgent,
+    }, async (payload) => payload);
+    if (middlewareChain && !result) throw new Error('Agent switch blocked by middleware');
 
     // 2. Determine resume vs new
     const lastEntry = session.findLastSwitchEntry(toAgent);
@@ -392,14 +390,12 @@ export class AgentSwitchHandler {
     });
 
     // 7. Middleware: agent:afterSwitch (fire-and-forget)
-    if (middlewareChain) {
-      middlewareChain.execute('agent:afterSwitch', {
-        sessionId,
-        fromAgent,
-        toAgent,
-        resumed,
-      }, async (p) => p).catch(() => {});
-    }
+    middlewareChain?.execute('agent:afterSwitch', {
+      sessionId,
+      fromAgent,
+      toAgent,
+      resumed,
+    }, async (p) => p).catch(() => {});
 
     return { resumed };
   }
@@ -492,7 +488,7 @@ export class SessionFactory {
   /** Injected by Core after construction — needed for lazy resume store lookup */
   sessionStore?: SessionStore | null;
   /** Injected by Core — creates full session with thread + bridge + persist */
-  createFullSession?: (params: SessionCreateParams & { threadId?: string }) => Promise<Session>;
+  createFullSession?: (params: SessionCreateParams & { threadId?: string; createThread?: boolean }) => Promise<Session>;
 ```
 
 Add these methods to `SessionFactory`:
@@ -583,7 +579,7 @@ In `core.ts` constructor, after `this.sessionFactory` creation and `this.lifecyc
 // Wire lazy resume dependencies
 this.sessionFactory.sessionStore = this.sessionStore;
 this.sessionFactory.adapters = this.adapters;
-this.sessionFactory.createFullSession = (params) => this.createSession({ ...params, createThread: false });
+this.sessionFactory.createFullSession = (params) => this.createSession(params);
 ```
 
 Update `handleMessage()` — replace lines 281-297:
@@ -681,6 +677,8 @@ Add these methods to `SessionFactory`:
     });
   }
 
+  /** NOTE: handleNewChat is currently dead code — never called outside core.ts itself.
+   *  Moving it anyway for completeness; can be removed in a future cleanup. */
   async handleNewChat(
     channelId: string,
     currentThreadId: string,
@@ -740,7 +738,7 @@ Add these methods to `SessionFactory`:
       channelId: params.channelId,
       agentName: params.agentName,
       workingDirectory: params.workingDirectory,
-      ...params,
+      createThread: params.createThread,
     });
 
     if (contextResult) {
