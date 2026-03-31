@@ -38,6 +38,7 @@ function createMockSession() {
     updateMode: vi.fn(),
     updateConfigOptions: vi.fn(),
     updateModel: vi.fn(),
+    toAcpStateSnapshot: vi.fn().mockReturnValue({}),
   }) as unknown as Session
 }
 

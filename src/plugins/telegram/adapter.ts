@@ -1513,10 +1513,12 @@ export class TelegramAdapter extends MessagingAdapter {
   }
 
   async cleanupSkillCommands(sessionId: string): Promise<void> {
+    this._pendingSkillCommands.delete(sessionId);
     await this.skillManager.cleanup(sessionId);
   }
 
   async cleanupSessionState(sessionId: string): Promise<void> {
+    this._pendingSkillCommands.delete(sessionId);
     // Finalize and clean up draft state
     await this.draftManager.finalize(sessionId, this.assistantSession?.id);
     this.draftManager.cleanup(sessionId);

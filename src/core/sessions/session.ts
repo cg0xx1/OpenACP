@@ -489,6 +489,18 @@ export class Session extends TypedEmitter<SessionEvents> {
     this.currentModel = modelId;
   }
 
+  /** Snapshot of current ACP state for persistence */
+  toAcpStateSnapshot(): NonNullable<import("../types.js").SessionRecord["acpState"]> {
+    return {
+      currentMode: this.currentMode,
+      availableModes: this.availableModes.length > 0 ? this.availableModes : undefined,
+      configOptions: this.configOptions.length > 0 ? this.configOptions : undefined,
+      currentModel: this.currentModel,
+      availableModels: this.availableModels.length > 0 ? this.availableModels : undefined,
+      agentCapabilities: this.agentCapabilities,
+    };
+  }
+
   /** Check if the agent supports a specific session capability */
   supportsCapability(cap: 'list' | 'fork' | 'close' | 'loadSession'): boolean {
     if (cap === 'loadSession') return this.agentCapabilities?.loadSession === true;

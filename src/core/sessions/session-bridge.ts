@@ -303,14 +303,7 @@ export class SessionBridge {
   /** Persist current ACP state (mode, config, model) to session store as cache */
   private persistAcpState(): void {
     this.deps.sessionManager.patchRecord(this.session.id, {
-      acpState: {
-        currentMode: this.session.currentMode,
-        availableModes: this.session.availableModes.length > 0 ? this.session.availableModes : undefined,
-        configOptions: this.session.configOptions.length > 0 ? this.session.configOptions : undefined,
-        currentModel: this.session.currentModel,
-        availableModels: this.session.availableModels.length > 0 ? this.session.availableModels : undefined,
-        agentCapabilities: this.session.agentCapabilities,
-      },
+      acpState: this.session.toAcpStateSnapshot(),
     });
   }
 

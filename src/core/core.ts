@@ -375,14 +375,7 @@ export class OpenACPCore {
       currentPromptCount: session.promptCount,
       agentSwitchHistory: session.agentSwitchHistory,
       // Cache ACP state for display before agent reconnects on lazy resume
-      acpState: {
-        currentMode: session.currentMode,
-        availableModes: session.availableModes.length > 0 ? session.availableModes : undefined,
-        configOptions: session.configOptions.length > 0 ? session.configOptions : undefined,
-        currentModel: session.currentModel,
-        availableModels: session.availableModels.length > 0 ? session.availableModels : undefined,
-        agentCapabilities: session.agentCapabilities,
-      },
+      acpState: session.toAcpStateSnapshot(),
     });
 
     // 6. Connect SessionBridge — agent events can now fire with threadId available
@@ -390,7 +383,9 @@ export class OpenACPCore {
       const bridge = this.createBridge(session, adapter);
       bridge.connect();
       // Flush any skill commands that arrived before threadId was set (safety net)
-      adapter.flushPendingSkillCommands?.(session.id);
+      adapter.flushPendingSkillCommands?.(session.id).catch((err) => {
+        log.warn({ err, sessionId: session.id }, "Failed to flush pending skill commands");
+      });
     }
 
     // 6b. Wire usage tracking and tunnel cleanup
