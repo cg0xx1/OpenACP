@@ -30,7 +30,7 @@ const plugin: OpenACPPlugin = {
       return;
     }
 
-    const connectionManager = new ConnectionManager();
+    const connectionManager = new ConnectionManager({ maxPerSession: 10, maxTotal: 100 });
     const eventBuffer = new EventBuffer(100);
     const adapter = new SSEAdapter(connectionManager, eventBuffer);
 
@@ -42,6 +42,16 @@ const plugin: OpenACPPlugin = {
 
     // Get command registry for command execution in routes
     const commandRegistry = ctx.getService<CommandRegistry>('command-registry');
+
+    // Clean up event buffer when a session ends or is deleted to prevent unbounded memory growth
+    ctx.on('session:deleted', (data: unknown) => {
+      const { sessionId } = data as { sessionId: string };
+      eventBuffer.cleanup(sessionId);
+    });
+    ctx.on('session:ended', (data: unknown) => {
+      const { sessionId } = data as { sessionId: string };
+      eventBuffer.cleanup(sessionId);
+    });
 
     // Register SSE routes on the api-server
     apiServer.registerPlugin('/api/v1/sse', async (app) => {

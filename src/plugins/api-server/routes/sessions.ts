@@ -126,19 +126,33 @@ export async function sessionRoutes(
       initialName: `🔄 ${resolvedAgent} — New Session`,
     });
 
-    // If no adapter wired events (headless), auto-approve permissions
+    // If no adapter wired events (headless), auto-approve only explicit allow options.
+    // Permissions without an isAllow option are NOT auto-approved — they will time out
+    // naturally, preventing silent approval of potentially destructive actions.
     if (!adapter) {
       session.agentInstance.onPermissionRequest = async (permRequest) => {
         const allowOption = permRequest.options.find((o) => o.isAllow);
-        log.debug(
+        if (!allowOption) {
+          // No safe allow option found — do not auto-approve; let the permission gate time out
+          log.warn(
+            {
+              sessionId: session.id,
+              permissionId: permRequest.id,
+              description: permRequest.description,
+            },
+            'Headless session has no allow option for permission request — skipping auto-approve, will time out',
+          );
+          return new Promise<string>(() => {}); // never resolves; gate will time out
+        }
+        log.warn(
           {
             sessionId: session.id,
             permissionId: permRequest.id,
-            option: allowOption?.id,
+            option: allowOption.id,
           },
-          'Auto-approving permission for API session',
+          `Auto-approving permission "${permRequest.description}" for headless session ${session.id} — no adapter connected`,
         );
-        return allowOption?.id ?? permRequest.options[0]?.id ?? '';
+        return allowOption.id;
       };
     }
 
