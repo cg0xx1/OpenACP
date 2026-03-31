@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { DoctorCheck, DoctorContext, DoctorReport, CategoryResult, PendingFix, CheckResult } from "./types.js";
 import { ConfigManager, expandHome } from "../config/config.js";
-import { getGlobalRoot } from "../instance-context.js";
+import { getGlobalRoot } from "../instance/instance-context.js";
 
 import { configCheck } from "./checks/config.js";
 import { agentsCheck } from "./checks/agents.js";

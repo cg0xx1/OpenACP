@@ -151,7 +151,7 @@ describe('InstanceRegistry edge cases', () => {
   })
 
   it('handles corrupted JSON gracefully', async () => {
-    const { InstanceRegistry } = await import('../instance-registry.js')
+    const { InstanceRegistry } = await import('../instance/instance-registry.js')
     fs.writeFileSync(registryPath, '{invalid json!!!}')
 
     const registry = new InstanceRegistry(registryPath)
@@ -161,7 +161,7 @@ describe('InstanceRegistry edge cases', () => {
   })
 
   it('handles missing file gracefully', async () => {
-    const { InstanceRegistry } = await import('../instance-registry.js')
+    const { InstanceRegistry } = await import('../instance/instance-registry.js')
     const registry = new InstanceRegistry(path.join(tmpDir, 'nonexistent.json'))
     registry.load() // Should not throw
 
@@ -169,7 +169,7 @@ describe('InstanceRegistry edge cases', () => {
   })
 
   it('handles wrong version gracefully', async () => {
-    const { InstanceRegistry } = await import('../instance-registry.js')
+    const { InstanceRegistry } = await import('../instance/instance-registry.js')
     fs.writeFileSync(registryPath, JSON.stringify({ version: 99, instances: { a: { id: 'a', root: '/a' } } }))
 
     const registry = new InstanceRegistry(registryPath)
@@ -180,7 +180,7 @@ describe('InstanceRegistry edge cases', () => {
   })
 
   it('sync load/save methods work without await', async () => {
-    const { InstanceRegistry } = await import('../instance-registry.js')
+    const { InstanceRegistry } = await import('../instance/instance-registry.js')
     const registry = new InstanceRegistry(registryPath)
     // These should be sync (no Promise return needed)
     registry.load()
@@ -195,7 +195,7 @@ describe('InstanceRegistry edge cases', () => {
 
 describe('InstanceContext path completeness', () => {
   it('creates all 16 path fields', async () => {
-    const { createInstanceContext } = await import('../instance-context.js')
+    const { createInstanceContext } = await import('../instance/instance-context.js')
     const ctx = createInstanceContext({ id: 'test', root: '/tmp/test-root', isGlobal: false })
 
     const pathKeys = Object.keys(ctx.paths)

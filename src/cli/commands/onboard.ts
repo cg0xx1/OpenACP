@@ -4,7 +4,7 @@ export async function cmdOnboard(instanceRoot?: string): Promise<void> {
   const { ConfigManager } = await import('../../core/config/config.js')
   const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
   const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
-  const { getGlobalRoot } = await import('../../core/instance-context.js')
+  const { getGlobalRoot } = await import('../../core/instance/instance-context.js')
 
   const OPENACP_DIR = instanceRoot ?? getGlobalRoot()
   const PLUGINS_DATA_DIR = path.join(OPENACP_DIR, 'plugins', 'data')

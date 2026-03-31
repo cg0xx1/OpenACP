@@ -93,6 +93,7 @@ export class NgrokTunnelProvider implements TunnelProvider {
     const child = this.child
     if (!child) return
     this.child = null
+    this.exitCallback = null
 
     child.kill('SIGTERM')
 

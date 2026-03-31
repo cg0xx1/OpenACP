@@ -243,15 +243,14 @@ export class TunnelRegistry {
   async shutdown(): Promise<void> {
     this.shuttingDown = true
 
+    const stopPromises: Promise<void>[] = []
     for (const [, live] of this.entries) {
       if (live.retryTimer) clearTimeout(live.retryTimer)
-      if (live.spawnPromise) {
-        try { await live.spawnPromise } catch { /* ignore */ }
-      }
       if (live.process) {
-        await live.process.stop()
+        stopPromises.push(live.process.stop().catch(() => { /* ignore */ }))
       }
     }
+    await Promise.all(stopPromises)
     this.entries.clear()
     this.scheduleSave()
   }

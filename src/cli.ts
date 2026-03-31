@@ -31,7 +31,7 @@ import {
   cmdAttach,
   cmdRemote,
 } from './cli/commands/index.js'
-import { resolveInstanceRoot, getGlobalRoot } from './core/instance-context.js'
+import { resolveInstanceRoot, getGlobalRoot } from './core/instance/instance-context.js'
 
 export interface InstanceFlags {
   local: boolean
@@ -113,8 +113,8 @@ const commands: Record<string, () => Promise<void>> = {
     const { startServer } = await import('./main.js')
     const envRoot = process.env.OPENACP_INSTANCE_ROOT
     if (envRoot) {
-      const { createInstanceContext, getGlobalRoot: getGlobal } = await import('./core/instance-context.js')
-      const { InstanceRegistry } = await import('./core/instance-registry.js')
+      const { createInstanceContext, getGlobalRoot: getGlobal } = await import('./core/instance/instance-context.js')
+      const { InstanceRegistry } = await import('./core/instance/instance-registry.js')
       const registry = new InstanceRegistry(path.join(getGlobal(), 'instances.json'))
       await registry.load()
       const entry = registry.getByRoot(envRoot)

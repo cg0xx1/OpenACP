@@ -2,8 +2,8 @@
 
 import path from 'node:path'
 import { ConfigManager } from './core/config/config.js'
-import type { InstanceContext } from './core/instance-context.js'
-import { createInstanceContext, getGlobalRoot } from './core/instance-context.js'
+import type { InstanceContext } from './core/instance/instance-context.js'
+import { createInstanceContext, getGlobalRoot } from './core/instance/instance-context.js'
 import { OpenACPCore } from './core/core.js'
 import { initLogger, shutdownLogger, cleanupOldSessionLogs, log, muteLogger, unmuteLogger } from './core/utils/log.js'
 import { corePlugins } from './plugins/core-plugins.js'
@@ -13,7 +13,7 @@ import { CommandRegistry } from './core/command-registry.js'
 import { registerSystemCommands } from './core/commands/index.js'
 import type { IChannelAdapter } from './core/channel.js'
 import type { TunnelService } from './plugins/tunnel/tunnel-service.js'
-import { InstanceRegistry } from './core/instance-registry.js'
+import { InstanceRegistry } from './core/instance/instance-registry.js'
 import fs from 'node:fs'
 
 export const RESTART_EXIT_CODE = 75

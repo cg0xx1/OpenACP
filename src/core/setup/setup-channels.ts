@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { getGlobalRoot } from "../instance-context.js";
+import { getGlobalRoot } from "../instance/instance-context.js";
 import * as clack from "@clack/prompts";
 import type { Config } from "../config/config.js";
 import type { ConfiguredChannelAction, ChannelId, ChannelStatus } from "./types.js";

@@ -2,7 +2,7 @@ import { checkAndPromptUpdate } from '../version.js'
 import { printHelp } from './help.js'
 import path from 'node:path'
 import os from 'node:os'
-import { createInstanceContext, getGlobalRoot } from '../../core/instance-context.js'
+import { createInstanceContext, getGlobalRoot } from '../../core/instance/instance-context.js'
 import { printInstanceHint } from '../instance-hint.js'
 
 export async function cmdDefault(command: string | undefined, instanceRoot?: string): Promise<void> {

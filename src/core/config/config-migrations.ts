@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createChildLogger } from "../utils/log.js";
-import { getGlobalRoot } from "../instance-context.js";
+import { getGlobalRoot } from "../instance/instance-context.js";
 const log = createChildLogger({ module: "config-migrations" });
 
 type RawConfig = Record<string, unknown>;

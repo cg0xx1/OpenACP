@@ -101,6 +101,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
     const child = this.child
     if (!child) return
     this.child = null
+    this.exitCallback = null
 
     child.kill('SIGTERM')
 

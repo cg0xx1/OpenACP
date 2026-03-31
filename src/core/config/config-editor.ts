@@ -201,7 +201,7 @@ async function editDiscord(_config: Config, _updates: ConfigUpdates): Promise<vo
   if (plugin?.configure) {
     const { SettingsManager } = await import('../plugin/settings-manager.js')
     const { createInstallContext } = await import('../plugin/install-context.js')
-    const { getGlobalRoot } = await import('../instance-context.js')
+    const { getGlobalRoot } = await import('../instance/instance-context.js')
     const root = getGlobalRoot()
     const basePath = path.join(root, 'plugins')
     const settingsManager = new SettingsManager(basePath)

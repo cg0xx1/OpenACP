@@ -14,8 +14,8 @@ import {
 } from '../instance-context.js'
 import { InstanceRegistry } from '../instance-registry.js'
 import { copyInstance } from '../instance-copy.js'
-import { readInstanceInfo } from '../../cli/commands/status.js'
-import { applyMigrations, migrations } from '../config/config-migrations.js'
+import { readInstanceInfo } from '../../../cli/commands/status.js'
+import { applyMigrations, migrations } from '../../config/config-migrations.js'
 
 // ---------------------------------------------------------------------------
 // Helpers

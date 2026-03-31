@@ -1,5 +1,5 @@
 import { readApiPort, readApiSecret, apiCall } from '../api-client.js'
-import { InstanceRegistry } from '../../core/instance-registry.js'
+import { InstanceRegistry } from '../../core/instance/instance-registry.js'
 import path from 'node:path'
 import os from 'node:os'
 import qrcode from 'qrcode-terminal'

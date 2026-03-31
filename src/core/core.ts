@@ -12,9 +12,10 @@ import type { FileServiceInterface } from "./plugin/types.js";
 import { JsonFileSessionStore, type SessionStore } from "./sessions/session-store.js";
 import type { SecurityGuard } from "../plugins/security/security-guard.js";
 import { SessionFactory } from "./sessions/session-factory.js";
-import type { AgentEvent, IncomingMessage } from "./types.js";
+import type { IncomingMessage } from "./types.js";
 import type { TunnelService } from "../plugins/tunnel/tunnel-service.js";
 import { getAgentCapabilities } from "./agents/agent-registry.js";
+import { AgentSwitchHandler } from "./agent-switch-handler.js";
 import { AgentCatalog } from "./agents/agent-catalog.js";
 import { AgentStore } from "./agents/agent-store.js";
 import { EventBus } from "./event-bus.js";
@@ -25,8 +26,7 @@ import { ErrorTracker } from "./plugin/error-tracker.js";
 import { createChildLogger } from "./utils/log.js";
 import type { SpeechService } from "../plugins/speech/exports.js";
 import type { ContextManager } from "../plugins/context/context-manager.js";
-import type { ContextQuery, ContextOptions, ContextResult } from "../plugins/context/context-provider.js";
-import type { InstanceContext } from "./instance-context.js";
+import type { InstanceContext } from "./instance/instance-context.js";
 const log = createChildLogger({ module: "core" });
 
 export class OpenACPCore {
@@ -42,11 +42,10 @@ export class OpenACPCore {
   requestRestart: (() => Promise<void>) | null = null;
   private _tunnelService?: TunnelService;
   private sessionStore: SessionStore | null = null;
-  private resumeLocks: Map<string, Promise<Session | null>> = new Map();
-  private switchingLocks = new Set<string>();
   eventBus: EventBus;
   sessionFactory: SessionFactory;
   readonly lifecycleManager: LifecycleManager;
+  private agentSwitchHandler: AgentSwitchHandler;
   public readonly instanceContext?: InstanceContext;
 
   // --- Lazy getters: resolve from ServiceRegistry (populated by plugins during boot) ---
@@ -125,6 +124,26 @@ export class OpenACPCore {
     // Wire middleware chain to session factory and session manager
     this.sessionFactory.middlewareChain = this.lifecycleManager.middlewareChain;
     this.sessionManager.middlewareChain = this.lifecycleManager.middlewareChain;
+
+    // Wire lazy resume dependencies
+    this.sessionFactory.sessionStore = this.sessionStore;
+    this.sessionFactory.adapters = this.adapters;
+    this.sessionFactory.createFullSession = (params) => this.createSession(params);
+    this.sessionFactory.configManager = this.configManager;
+    this.sessionFactory.agentCatalog = this.agentCatalog;
+    this.sessionFactory.getContextManager = () => this.lifecycleManager.serviceRegistry.get<ContextManager>('context');
+
+    this.agentSwitchHandler = new AgentSwitchHandler({
+      sessionManager: this.sessionManager,
+      agentManager: this.agentManager,
+      configManager: this.configManager,
+      eventBus: this.eventBus,
+      adapters: this.adapters,
+      bridges: this.bridges,
+      createBridge: (session, adapter) => this.createBridge(session, adapter),
+      getMiddlewareChain: () => this.lifecycleManager?.middlewareChain,
+      getService: <T>(name: string) => this.lifecycleManager.serviceRegistry.get<T>(name),
+    });
 
     // Hot-reload: handle config changes that need side effects
     this.configManager.on(
@@ -277,16 +296,8 @@ export class OpenACPCore {
       return;
     }
 
-    // Find session by thread
-    let session = this.sessionManager.getSessionByThread(
-      message.channelId,
-      message.threadId,
-    );
-
-    // Lazy resume: try to restore session from store
-    if (!session) {
-      session = (await this.lazyResume(message)) ?? undefined;
-    }
+    // Find session by thread or lazy resume
+    let session = await this.sessionFactory.getOrResume(message.channelId, message.threadId);
 
     if (!session) {
       log.warn(
@@ -390,20 +401,7 @@ export class OpenACPCore {
     workspacePath?: string,
     options?: { createThread?: boolean },
   ): Promise<Session> {
-    const config = this.configManager.get();
-    const resolvedAgent = agentName || config.defaultAgent;
-    log.info({ channelId, agentName: resolvedAgent }, "New session request");
-    const agentDef = this.agentCatalog.resolve(resolvedAgent);
-    const resolvedWorkspace = this.configManager.resolveWorkspace(
-      workspacePath || agentDef?.workingDirectory,
-    );
-
-    return this.createSession({
-      channelId,
-      agentName: resolvedAgent,
-      workingDirectory: resolvedWorkspace,
-      createThread: options?.createThread,
-    });
+    return this.sessionFactory.handleNewSession(channelId, agentName, workspacePath, options);
   }
 
   async adoptSession(
@@ -540,374 +538,29 @@ export class OpenACPCore {
     };
   }
 
-  async handleNewChat(
-    channelId: string,
-    currentThreadId: string,
-  ): Promise<Session | null> {
-    const currentSession = this.sessionManager.getSessionByThread(
-      channelId,
-      currentThreadId,
-    );
-
-    if (currentSession) {
-      return this.handleNewSession(
-        channelId,
-        currentSession.agentName,
-        currentSession.workingDirectory,
-      );
-    }
-
-    // Fallback: look up from store (e.g. after restart before lazy resume)
-    const record = this.sessionManager.getRecordByThread(
-      channelId,
-      currentThreadId,
-    );
-    if (!record || record.status === "cancelled" || record.status === "error")
-      return null;
-
-    return this.handleNewSession(
-      channelId,
-      record.agentName,
-      record.workingDir,
-    );
+  async handleNewChat(channelId: string, currentThreadId: string): Promise<Session | null> {
+    return this.sessionFactory.handleNewChat(channelId, currentThreadId);
   }
 
   async createSessionWithContext(params: {
     channelId: string;
     agentName: string;
     workingDirectory: string;
-    contextQuery: ContextQuery;
-    contextOptions?: ContextOptions;
+    contextQuery: import("../plugins/context/context-provider.js").ContextQuery;
+    contextOptions?: import("../plugins/context/context-provider.js").ContextOptions;
     createThread?: boolean;
-  }): Promise<{ session: Session; contextResult: ContextResult | null }> {
-    let contextResult: ContextResult | null = null;
-    try {
-      contextResult = await this.contextManager.buildContext(
-        params.contextQuery,
-        params.contextOptions,
-      );
-    } catch (err) {
-      log.warn({ err }, "Context building failed, proceeding without context");
-    }
-
-    const session = await this.createSession({
-      channelId: params.channelId,
-      agentName: params.agentName,
-      workingDirectory: params.workingDirectory,
-      createThread: params.createThread,
-    });
-
-    if (contextResult) {
-      session.setContext(contextResult.markdown);
-    }
-
-    return { session, contextResult };
+  }): Promise<{ session: Session; contextResult: import("../plugins/context/context-provider.js").ContextResult | null }> {
+    return this.sessionFactory.createSessionWithContext(params);
   }
 
   // --- Agent Switch ---
 
   async switchSessionAgent(sessionId: string, toAgent: string): Promise<{ resumed: boolean }> {
-    // Prevent concurrent switches on the same session
-    if (this.switchingLocks.has(sessionId)) {
-      throw new Error('Switch already in progress');
-    }
-    this.switchingLocks.add(sessionId);
-    try {
-      return await this._doSwitchSessionAgent(sessionId, toAgent);
-    } finally {
-      this.switchingLocks.delete(sessionId);
-    }
+    return this.agentSwitchHandler.switch(sessionId, toAgent);
   }
 
-  private async _doSwitchSessionAgent(sessionId: string, toAgent: string): Promise<{ resumed: boolean }> {
-    const session = this.sessionManager.getSession(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
-
-    // Validate target agent exists before doing anything destructive
-    const agentDef = this.agentManager.getAgent(toAgent);
-    if (!agentDef) throw new Error(`Agent "${toAgent}" is not installed`);
-
-    const fromAgent = session.agentName;
-
-    // 1. Middleware: agent:beforeSwitch (blocking)
-    const middlewareChain = this.lifecycleManager.middlewareChain;
-    const result = await middlewareChain.execute('agent:beforeSwitch', {
-      sessionId,
-      fromAgent,
-      toAgent,
-    }, async (payload) => payload);
-    if (!result) throw new Error('Agent switch blocked by middleware');
-
-    // 2. Determine resume vs new
-    const lastEntry = session.findLastSwitchEntry(toAgent);
-    const caps = getAgentCapabilities(toAgent);
-    const canResume = !!(lastEntry && caps.supportsResume && lastEntry.promptCount === 0);
-    const resumed = canResume;
-
-    // Emit "starting" events so UI can reflect long-running switches
-    const startEvent: AgentEvent = {
-      type: "system_message",
-      message: `Switching from ${fromAgent} to ${toAgent}...`,
-    };
-    session.emit("agent_event", startEvent);
-    this.eventBus.emit("agent:event", {
-      sessionId,
-      event: startEvent,
-    });
-    this.eventBus.emit("session:agentSwitch", {
-      sessionId,
-      fromAgent,
-      toAgent,
-      status: "starting",
-    });
-
-    // 3. Disconnect bridge
-    const bridge = this.bridges.get(sessionId);
-    if (bridge) bridge.disconnect();
-
-    // Clear old agent's skill commands so they don't linger in the UI
-    const switchAdapter = this.adapters.get(session.channelId);
-    if (switchAdapter?.sendSkillCommands) {
-      await switchAdapter.sendSkillCommands(session.id, []);
-    }
-
-    // Clean up adapter-side per-session state (draft manager, activity tracker, etc.)
-    if (switchAdapter?.cleanupSessionState) {
-      await switchAdapter.cleanupSessionState(session.id);
-    }
-
-    // Capture pre-switch state for rollback
-    const fromAgentSessionId = session.agentSessionId;
-
-    // 4. Switch agent on session (with rollback on failure)
-    try {
-      await session.switchAgent(toAgent, async () => {
-        if (canResume) {
-          return this.agentManager.resume(toAgent, session.workingDirectory, lastEntry!.agentSessionId);
-        } else {
-          const instance = await this.agentManager.spawn(toAgent, session.workingDirectory);
-          // Inject context if context service available
-          try {
-            const contextService = this.lifecycleManager.serviceRegistry.get<ContextManager>('context');
-            if (contextService) {
-              const config = this.configManager.get();
-              const labelAgent = config.agentSwitch?.labelHistory ?? true;
-              const contextResult = await contextService.buildContext(
-                { type: 'session', value: sessionId, repoPath: session.workingDirectory },
-                { labelAgent },
-              );
-              if (contextResult?.markdown) {
-                session.setContext(contextResult.markdown);
-              }
-            }
-          } catch {
-            // Context injection is best-effort
-          }
-          return instance;
-        }
-      });
-
-      // On success, emit structured + system_message events
-      const successEvent: AgentEvent = {
-        type: "system_message",
-        message: resumed
-          ? `Switched to ${toAgent} (resumed previous session).`
-          : `Switched to ${toAgent} (new session).`,
-      };
-      session.emit("agent_event", successEvent);
-      this.eventBus.emit("agent:event", {
-        sessionId,
-        event: successEvent,
-      });
-      this.eventBus.emit("session:agentSwitch", {
-        sessionId,
-        fromAgent,
-        toAgent,
-        status: "succeeded",
-        resumed,
-      });
-    } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : String(err);
-
-      // Emit failure events before attempting rollback so UI can show error state
-      const failedEvent: AgentEvent = {
-        type: "system_message",
-        message: `Failed to switch to ${toAgent}: ${errorMessage}`,
-      };
-      session.emit("agent_event", failedEvent);
-      this.eventBus.emit("agent:event", {
-        sessionId,
-        event: failedEvent,
-      });
-      this.eventBus.emit("session:agentSwitch", {
-        sessionId,
-        fromAgent,
-        toAgent,
-        status: "failed",
-        error: errorMessage,
-      });
-
-      // Rollback: try to restore the old agent so the session isn't left broken
-      try {
-        let rollbackInstance;
-        try {
-          // Try resume first to preserve conversation history
-          rollbackInstance = await this.agentManager.resume(fromAgent, session.workingDirectory, fromAgentSessionId);
-        } catch {
-          // Fall back to fresh spawn if resume fails
-          rollbackInstance = await this.agentManager.spawn(fromAgent, session.workingDirectory);
-        }
-        const oldInstance = rollbackInstance;
-        // switchAgent already pushed to history, so undo it
-        session.agentSwitchHistory.pop();
-        session.agentInstance = oldInstance;
-        session.agentName = fromAgent;
-        session.agentSessionId = oldInstance.sessionId;
-        // Reconnect bridge after rollback
-        const adapter = this.adapters.get(session.channelId);
-        if (adapter) {
-          const rollbackBridge = this.createBridge(session, adapter);
-          rollbackBridge.connect();
-        }
-        log.warn({ sessionId, fromAgent, toAgent, err }, "Agent switch failed, rolled back to previous agent");
-      } catch (rollbackErr) {
-        session.fail(`Switch failed and rollback failed: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`);
-        log.error({ sessionId, fromAgent, toAgent, err, rollbackErr }, "Agent switch failed and rollback also failed");
-      }
-      throw err;
-    }
-
-    // 5. Reconnect bridge
-    if (bridge) {
-      // Re-create bridge with new agent instance wiring
-      const adapter = this.adapters.get(session.channelId);
-      if (adapter) {
-        const newBridge = this.createBridge(session, adapter);
-        newBridge.connect();
-      }
-    }
-
-    // 6. Persist
-    await this.sessionManager.patchRecord(sessionId, {
-      agentName: toAgent,
-      agentSessionId: session.agentSessionId,
-      firstAgent: session.firstAgent,
-      currentPromptCount: 0,
-      agentSwitchHistory: session.agentSwitchHistory,
-    });
-
-    // 7. Middleware: agent:afterSwitch (fire-and-forget)
-    middlewareChain.execute('agent:afterSwitch', {
-      sessionId,
-      fromAgent,
-      toAgent,
-      resumed,
-    }, async (p) => p).catch(() => {});
-
-    return { resumed };
-  }
-
-  // --- Lazy Resume ---
-
-  /**
-   * Get active session by thread, or attempt lazy resume from store.
-   * Used by adapter command handlers that need a session but don't go through handleMessage().
-   */
   async getOrResumeSession(channelId: string, threadId: string): Promise<Session | null> {
-    const session = this.sessionManager.getSessionByThread(channelId, threadId);
-    if (session) return session;
-    return this.lazyResume({ channelId, threadId, userId: "", text: "" });
-  }
-
-  private async lazyResume(message: IncomingMessage): Promise<Session | null> {
-    const store = this.sessionStore;
-    if (!store) return null;
-
-    const lockKey = `${message.channelId}:${message.threadId}`;
-
-    // Check for existing resume in progress
-    const existing = this.resumeLocks.get(lockKey);
-    if (existing) return existing;
-
-    const record = store.findByPlatform(
-      message.channelId,
-      (p) => String(p.topicId) === message.threadId,
-    );
-    if (!record) {
-      log.debug(
-        { threadId: message.threadId, channelId: message.channelId },
-        "No session record found for thread",
-      );
-      return null;
-    }
-
-    // Don't resume errored or cancelled sessions
-    if (record.status === "error" || record.status === "cancelled") {
-      log.debug(
-        {
-          threadId: message.threadId,
-          sessionId: record.sessionId,
-          status: record.status,
-        },
-        "Skipping resume of error session",
-      );
-      return null;
-    }
-
-    log.info(
-      {
-        threadId: message.threadId,
-        sessionId: record.sessionId,
-        status: record.status,
-      },
-      "Lazy resume: found record, attempting resume",
-    );
-
-    const resumePromise = (async (): Promise<Session | null> => {
-      try {
-        const session = await this.createSession({
-          channelId: record.channelId,
-          agentName: record.agentName,
-          workingDirectory: record.workingDir,
-          resumeAgentSessionId: record.agentSessionId,
-          existingSessionId: record.sessionId,
-          initialName: record.name,
-          threadId: message.threadId,
-        });
-        session.activate();
-        session.dangerousMode = record.dangerousMode ?? false;
-        if (record.firstAgent) session.firstAgent = record.firstAgent;
-        if (record.agentSwitchHistory) session.agentSwitchHistory = record.agentSwitchHistory;
-        if (record.currentPromptCount != null) session.promptCount = record.currentPromptCount;
-
-        log.info(
-          { sessionId: session.id, threadId: message.threadId },
-          "Lazy resume successful",
-        );
-        return session;
-      } catch (err) {
-        log.error({ err, record }, "Lazy resume failed");
-        // Send error feedback to user instead of silent drop
-        const adapter = this.adapters.get(message.channelId);
-        if (adapter) {
-          try {
-            await adapter.sendMessage(message.threadId, {
-              type: "error",
-              text: `⚠️ Failed to resume session: ${err instanceof Error ? err.message : String(err)}`,
-            });
-          } catch {
-            /* best effort */
-          }
-        }
-        return null;
-      } finally {
-        this.resumeLocks.delete(lockKey);
-      }
-    })();
-
-    this.resumeLocks.set(lockKey, resumePromise);
-    return resumePromise;
+    return this.sessionFactory.getOrResume(channelId, threadId);
   }
 
   // --- Event Wiring ---
