@@ -138,18 +138,21 @@ Toggle text-to-speech for the current session. Without an argument, enables TTS 
 
 ### `/outputmode low|medium|high`
 
-Set how much detail OpenACP shows for agent activity. You can also set a per-session override:
+Set how much detail OpenACP shows for agent activity. Supports a 3-level cascade: session override → adapter default → global default.
 
 ```
-/outputmode low             # set globally for this channel
-/outputmode high            # show full detail including inline output
-/outputmode session high    # override for the current session only
-/outputmode session reset   # clear the session override
+/outputmode low              # set adapter default to low
+/outputmode high             # set adapter default to high
+/outputmode reset            # reset adapter default to global default
+/outputmode session high     # override for the current session only
+/outputmode session reset    # clear the session override
 ```
 
-- `low` — minimal output, title only
-- `medium` — balanced (default)
-- `high` — full detail including inline output for short results, viewer links for long output
+- `low` — compact icon grid (minimal noise)
+- `medium` — tool titles, descriptions, output summaries (default)
+- `high` — full inline output, plan list, viewer links for long results, thinking viewer link
+
+On Discord, an action row with `[🔇 Low] [📊 Medium] [🔍 High] [❌ Cancel]` buttons appears below the tool card while the agent is working, so you can switch mode without typing a command.
 
 ### `/verbosity low|medium|high` (deprecated)
 

@@ -31,7 +31,7 @@ Channel adapters. Each adapter key under `channels` is an object. The built-in T
 | `channels.discord.forumChannelId` | string \| null | `null` | Forum channel ID for session threads |
 | `channels.discord.notificationChannelId` | string \| null | `null` | Channel ID for system notifications |
 | `channels.discord.assistantThreadId` | string \| null | `null` | Thread ID for the Assistant |
-| `channels.discord.outputMode` | `"low"` \| `"medium"` \| `"high"` | `"medium"` | Controls message verbosity. The legacy key `displayVerbosity` is accepted for backward compatibility. |
+| `channels.discord.outputMode` | `"low"` \| `"medium"` \| `"high"` | `"medium"` | Adapter-level output detail. Overridden per session via `/outputmode session`. 3-level cascade: session → adapter → global → `"medium"`. The legacy key `displayVerbosity` is auto-migrated on startup. |
 
 ### channels.slack.*
 

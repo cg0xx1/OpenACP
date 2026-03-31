@@ -109,6 +109,14 @@ export type { DisplayVerbosity, ToolCallMeta, ToolUpdateMeta, ViewerLinks } from
 export { STATUS_ICONS, KIND_ICONS } from './adapter-primitives/index.js'
 export { progressBar, formatTokens, truncateContent, stripCodeFences, splitMessage } from './adapter-primitives/index.js'
 export { extractContentText, formatToolSummary, formatToolTitle, resolveToolIcon } from './adapter-primitives/index.js'
+export { ToolStateMap, ThoughtBuffer } from './adapter-primitives/index.js'
+export type { ToolEntry } from './adapter-primitives/index.js'
+export { DisplaySpecBuilder } from './adapter-primitives/index.js'
+export type { ToolDisplaySpec, ThoughtDisplaySpec } from './adapter-primitives/index.js'
+export { OutputModeResolver } from './adapter-primitives/index.js'
+export type { OutputMode } from './adapter-primitives/index.js'
+export { ToolCardState } from './adapter-primitives/index.js'
+export type { ToolCardSnapshot, ToolCardStateConfig } from './adapter-primitives/index.js'
 
 // ─── Plugin types (for SDK re-exports) ──────────────────────────────────────
 export type {
