@@ -18,6 +18,12 @@ function createMockSession(overrides: Record<string, unknown> = {}) {
     threadId: 'thread-1',
     channelId: 'api',
     agentSessionId: 'agent-sess-1',
+    currentMode: undefined,
+    currentModel: undefined,
+    availableModes: [],
+    availableModels: [],
+    configOptions: [],
+    agentCapabilities: undefined,
     agentInstance: {
       onPermissionRequest: null,
     },

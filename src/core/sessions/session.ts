@@ -489,6 +489,12 @@ export class Session extends TypedEmitter<SessionEvents> {
     this.currentModel = modelId;
   }
 
+  /** Check if the agent supports a specific session capability */
+  supportsCapability(cap: 'list' | 'fork' | 'close' | 'loadSession'): boolean {
+    if (cap === 'loadSession') return this.agentCapabilities?.loadSession === true;
+    return this.agentCapabilities?.sessionCapabilities?.[cap] === true;
+  }
+
   /** Cancel the current prompt and clear the queue. Stays in active state. */
   async abortPrompt(): Promise<void> {
     // Hook: agent:beforeCancel — modifiable, can block

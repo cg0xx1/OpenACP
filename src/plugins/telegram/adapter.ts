@@ -131,6 +131,8 @@ export class TelegramAdapter extends MessagingAdapter {
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
   private callbackCache = new Map<string, string>();
   private callbackCounter = 0;
+  /** Pending skill commands queued when session.threadId was not yet set */
+  private _pendingSkillCommands = new Map<string, AgentCommand[]>();
 
   private getThreadId(sessionId: string): number {
     const threadId = this._sessionThreadIds.get(sessionId);
@@ -1351,10 +1353,15 @@ export class TelegramAdapter extends MessagingAdapter {
     this.getTracer(sessionId)?.log("telegram", { action: "thread:rename", sessionId, newName });
     const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
+    const threadId = Number(session.threadId);
+    if (!threadId) {
+      log.debug({ sessionId, newName }, "Cannot rename thread — threadId not set yet");
+      return;
+    }
     await renameSessionTopic(
       this.bot,
       this.telegramConfig.chatId,
-      Number(session.threadId),
+      threadId,
       newName,
     );
     await this.core.sessionManager.patchRecord(sessionId, { name: newName });
@@ -1387,8 +1394,24 @@ export class TelegramAdapter extends MessagingAdapter {
     const session = this.core.sessionManager.getSession(sessionId);
     if (!session) return;
     const threadId = Number(session.threadId);
-    if (!threadId) return;
+    if (!threadId) {
+      // Queue for later — flushed when threadId is assigned via flushPendingSkillCommands()
+      this._pendingSkillCommands.set(sessionId, commands);
+      return;
+    }
 
+    await this.skillManager.send(sessionId, threadId, commands);
+  }
+
+  /** Flush any skill commands that were queued before threadId was available */
+  async flushPendingSkillCommands(sessionId: string): Promise<void> {
+    const commands = this._pendingSkillCommands.get(sessionId);
+    if (!commands) return;
+    this._pendingSkillCommands.delete(sessionId);
+    const session = this.core.sessionManager.getSession(sessionId);
+    if (!session) return;
+    const threadId = Number(session.threadId);
+    if (!threadId) return;
     await this.skillManager.send(sessionId, threadId, commands);
   }
 

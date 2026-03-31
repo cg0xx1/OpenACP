@@ -35,6 +35,12 @@ export async function sessionRoutes(
         promptRunning: s.promptRunning,
         lastActiveAt:
           deps.core.sessionManager.getSessionRecord(s.id)?.lastActiveAt ?? null,
+        // ACP state
+        currentMode: s.currentMode ?? null,
+        currentModel: s.currentModel ?? null,
+        availableModes: s.availableModes?.length ? s.availableModes : undefined,
+        availableModels: s.availableModels?.length ? s.availableModels : undefined,
+        capabilities: s.agentCapabilities ?? null,
       })),
     };
   });
@@ -69,6 +75,13 @@ export async function sessionRoutes(
           threadId: session.threadId,
           channelId: session.channelId,
           agentSessionId: session.agentSessionId,
+          // ACP state
+          currentMode: session.currentMode ?? null,
+          currentModel: session.currentModel ?? null,
+          availableModes: session.availableModes?.length ? session.availableModes : undefined,
+          availableModels: session.availableModels?.length ? session.availableModels : undefined,
+          configOptions: session.configOptions?.length ? session.configOptions : undefined,
+          capabilities: session.agentCapabilities ?? null,
         },
       };
     },

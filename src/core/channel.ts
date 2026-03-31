@@ -38,6 +38,8 @@ export interface IChannelAdapter {
   // Skill commands — optional
   sendSkillCommands?(sessionId: string, commands: AgentCommand[]): Promise<void>
   cleanupSkillCommands?(sessionId: string): Promise<void>
+  /** Flush skill commands that were queued before threadId was available */
+  flushPendingSkillCommands?(sessionId: string): Promise<void>
 
   // Agent switch cleanup — optional, called when switching agents to clear adapter-side per-session state
   cleanupSessionState?(sessionId: string): Promise<void>

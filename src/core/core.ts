@@ -346,21 +346,9 @@ export class OpenACPCore {
       session.threadId = threadId;
     }
 
-    // 5. Connect SessionBridge
-    if (adapter) {
-      const bridge = this.createBridge(session, adapter);
-      bridge.connect();
-    }
-
-    // 5b-5c. Wire usage tracking and tunnel cleanup
-    this.sessionFactory.wireSideEffects(session, {
-      eventBus: this.eventBus,
-      notificationManager: this.notificationManager,
-      tunnelService: this._tunnelService,
-    });
-
-    // 6. Persist initial record
-    // Preserve existing platform data (e.g. topicId) when resuming an existing session
+    // 5. Persist initial record BEFORE bridge.connect() so that:
+    //    - Lazy resume can find the record by threadId
+    //    - sendSkillCommands/renameSessionThread have threadId available
     const existingRecord = this.sessionStore?.get(session.id);
     const platform: Record<string, unknown> = {
       ...(existingRecord?.platform ?? {}),
@@ -386,6 +374,30 @@ export class OpenACPCore {
       firstAgent: session.firstAgent,
       currentPromptCount: session.promptCount,
       agentSwitchHistory: session.agentSwitchHistory,
+      // Cache ACP state for display before agent reconnects on lazy resume
+      acpState: {
+        currentMode: session.currentMode,
+        availableModes: session.availableModes.length > 0 ? session.availableModes : undefined,
+        configOptions: session.configOptions.length > 0 ? session.configOptions : undefined,
+        currentModel: session.currentModel,
+        availableModels: session.availableModels.length > 0 ? session.availableModels : undefined,
+        agentCapabilities: session.agentCapabilities,
+      },
+    });
+
+    // 6. Connect SessionBridge — agent events can now fire with threadId available
+    if (adapter) {
+      const bridge = this.createBridge(session, adapter);
+      bridge.connect();
+      // Flush any skill commands that arrived before threadId was set (safety net)
+      adapter.flushPendingSkillCommands?.(session.id);
+    }
+
+    // 6b. Wire usage tracking and tunnel cleanup
+    this.sessionFactory.wireSideEffects(session, {
+      eventBus: this.eventBus,
+      notificationManager: this.notificationManager,
+      tunnelService: this._tunnelService,
     });
 
     log.info(

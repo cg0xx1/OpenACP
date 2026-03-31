@@ -179,7 +179,22 @@ export class SessionFactory {
       session.name = createParams.initialName;
     }
 
-    // 3. Register in SessionManager
+    // 3. Propagate ACP state from agent session response
+    const resp = agentInstance.initialSessionResponse;
+    if (resp) {
+      session.setInitialAcpState({
+        modes: (resp.modes as any) ?? null,
+        configOptions: (resp.configOptions as any) ?? null,
+        models: (resp.models as any) ?? null,
+        agentCapabilities: agentInstance.agentCapabilities ?? null,
+      });
+    } else if (agentInstance.agentCapabilities) {
+      session.setInitialAcpState({
+        agentCapabilities: agentInstance.agentCapabilities,
+      });
+    }
+
+    // 4. Register in SessionManager
     this.sessionManager.registerSession(session);
     this.eventBus.emit("session:created", {
       sessionId: session.id,
@@ -243,6 +258,21 @@ export class SessionFactory {
         if (record.firstAgent) session.firstAgent = record.firstAgent;
         if (record.agentSwitchHistory) session.agentSwitchHistory = record.agentSwitchHistory;
         if (record.currentPromptCount != null) session.promptCount = record.currentPromptCount;
+
+        // Hydrate cached ACP state (will be overridden by agent events on resume)
+        if (record.acpState) {
+          const s = record.acpState;
+          session.setInitialAcpState({
+            modes: s.currentMode && s.availableModes
+              ? { currentModeId: s.currentMode, availableModes: s.availableModes }
+              : null,
+            configOptions: s.configOptions ?? null,
+            models: s.currentModel && s.availableModels
+              ? { currentModelId: s.currentModel, availableModels: s.availableModels }
+              : null,
+            agentCapabilities: s.agentCapabilities ?? null,
+          });
+        }
 
         log.info({ sessionId: session.id, threadId }, "Lazy resume successful");
         return session;

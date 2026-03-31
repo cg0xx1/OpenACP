@@ -426,7 +426,7 @@ describe("ApiServer", () => {
 
     const res = await apiFetch(port, "/api/v1/sessions");
     const body = await res.json();
-    expect(body.sessions[0]).toEqual({
+    expect(body.sessions[0]).toMatchObject({
       id: "abc",
       agent: "claude",
       status: "active",

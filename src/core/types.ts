@@ -239,6 +239,15 @@ export interface SessionRecord<P = Record<string, unknown>> {
   firstAgent?: string;
   currentPromptCount?: number;
   agentSwitchHistory?: AgentSwitchEntry[];
+  // ACP state (cached — overridden by agent response on resume)
+  acpState?: {
+    currentMode?: string;
+    availableModes?: SessionMode[];
+    configOptions?: ConfigOption[];
+    currentModel?: string;
+    availableModels?: ModelInfo[];
+    agentCapabilities?: AgentCapabilities;
+  };
 }
 
 export interface TelegramPlatformData {

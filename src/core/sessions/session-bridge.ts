@@ -257,18 +257,21 @@ export class SessionBridge {
 
         case "current_mode_update":
           this.session.updateMode(event.modeId);
+          this.persistAcpState();
           outgoing = this.deps.messageTransformer.transform(event);
           this.sendMessage(this.session.id, outgoing);
           break;
 
         case "config_option_update":
           this.session.updateConfigOptions(event.options);
+          this.persistAcpState();
           outgoing = this.deps.messageTransformer.transform(event);
           this.sendMessage(this.session.id, outgoing);
           break;
 
         case "model_update":
           this.session.updateModel(event.modelId);
+          this.persistAcpState();
           outgoing = this.deps.messageTransformer.transform(event);
           this.sendMessage(this.session.id, outgoing);
           break;
@@ -295,6 +298,20 @@ export class SessionBridge {
       });
 
     return outgoing;
+  }
+
+  /** Persist current ACP state (mode, config, model) to session store as cache */
+  private persistAcpState(): void {
+    this.deps.sessionManager.patchRecord(this.session.id, {
+      acpState: {
+        currentMode: this.session.currentMode,
+        availableModes: this.session.availableModes.length > 0 ? this.session.availableModes : undefined,
+        configOptions: this.session.configOptions.length > 0 ? this.session.configOptions : undefined,
+        currentModel: this.session.currentModel,
+        availableModels: this.session.availableModels.length > 0 ? this.session.availableModels : undefined,
+        agentCapabilities: this.session.agentCapabilities,
+      },
+    });
   }
 
   private wirePermissions(): void {

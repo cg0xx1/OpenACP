@@ -163,6 +163,9 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
   sessionId!: string;
   agentName: string;
   promptCapabilities?: { image?: boolean; audio?: boolean };
+  agentCapabilities?: import("../types.js").AgentCapabilities;
+  /** Preserved from newSession/resumeSession response for ACP state propagation */
+  initialSessionResponse?: { modes?: unknown; configOptions?: unknown; models?: unknown };
   middlewareChain?: MiddlewareChain;
   debugTracer: DebugTracer | null = null;
 
@@ -273,6 +276,9 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
     instance.promptCapabilities =
       initResponse.agentCapabilities?.promptCapabilities;
 
+    // Store full agent capabilities for introspection (session list, fork, close, etc.)
+    instance.agentCapabilities = initResponse.agentCapabilities as import("../types.js").AgentCapabilities | undefined;
+
     log.info(
       { promptCapabilities: instance.promptCapabilities ?? {} },
       "Agent prompt capabilities",
@@ -326,6 +332,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
       mcpServers: resolvedMcp as any,
     });
     instance.sessionId = response.sessionId;
+    instance.initialSessionResponse = response as any;
     instance.debugTracer = createDebugTracer(response.sessionId, workingDirectory);
     instance.setupCrashDetection();
 
@@ -356,6 +363,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
         cwd: workingDirectory,
       });
       instance.sessionId = response.sessionId;
+      instance.initialSessionResponse = response as any;
       instance.debugTracer = createDebugTracer(response.sessionId, workingDirectory);
       log.info(
         { sessionId: response.sessionId, durationMs: Date.now() - spawnStart },
@@ -372,6 +380,7 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
         mcpServers: resolvedMcp as any,
       });
       instance.sessionId = response.sessionId;
+      instance.initialSessionResponse = response as any;
       instance.debugTracer = createDebugTracer(response.sessionId, workingDirectory);
       log.info(
         { sessionId: response.sessionId, durationMs: Date.now() - spawnStart },
