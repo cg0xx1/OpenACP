@@ -18,7 +18,7 @@ Three structural issues in the core module:
 
 ---
 
-## Phase 1: Split `core.ts` (~929 → ~350 lines)
+## Phase 1: Split `core.ts` (~929 → ~400 lines)
 
 ### 1a. Extract `AgentSwitchHandler`
 
@@ -51,50 +51,55 @@ async switchSessionAgent(sessionId: string, toAgent: string) {
 }
 ```
 
-### 1b. Move lazy resume into `SessionManager`
+### 1b. Move lazy resume into `SessionFactory`
 
-Move from `core.ts` into `SessionManager`:
+Move from `core.ts` into `SessionFactory`:
 - `lazyResume()` method
 - `getOrResumeSession()` method
 - `resumeLocks` map
 
-**Rationale**: SessionManager already manages session lookup by thread. Lazy resume is a "find or restore" operation — natural extension of SessionManager's responsibility.
+**Rationale**: `lazyResume()` calls `this.createSession()` on Core, which is a full pipeline (spawn agent, create thread, connect bridge, persist). Moving into `SessionManager` would require injecting this entire pipeline as a callback — awkward and creates implicit circular dependency. `SessionFactory` already owns session creation and has `agentManager` + `sessionManager`. It needs one additional callback `onSessionCreated(session, params)` for Core to handle thread creation + bridge wiring + persistence.
 
-**SessionManager gains**:
+**SessionFactory gains**:
 ```typescript
+// Callback for Core to wire thread + bridge + persist after factory creates the session
+onSessionCreated?: (session: Session, params: SessionCreateParams & { threadId?: string }) => Promise<void>;
+
 async getOrResume(channelId: string, threadId: string): Promise<Session | null>
 private async lazyResume(channelId: string, threadId: string): Promise<Session | null>
 ```
 
-**Requires**: SessionManager needs access to `createSession()` callback (injected, not circular dep).
+**SessionFactory needs**: Access to `SessionStore` (for `findByPlatform` lookup) and `adapters` map (for error feedback). These are injected via constructor.
 
-### 1c. Move session creation variants into `SessionFactory`
+### 1c. Move convenience session creation methods into `SessionFactory`
 
 Move from `core.ts` into `SessionFactory`:
-- `adoptSession()` (~130 lines)
-- `handleNewChat()` (~30 lines)
-- `createSessionWithContext()` (~30 lines)
-- `handleNewSession()` (~20 lines)
+- `handleNewSession()` (~20 lines) — resolves default agent + workspace, calls create
+- `handleNewChat()` (~30 lines) — finds current session's agent, creates new session
+- `createSessionWithContext()` (~30 lines) — creates session with context injection
 
-**`SessionFactory` gains**: Full session creation API. `OpenACPCore.createSession()` remains as the primary entry point, delegating to `SessionFactory`.
+**Keep in `core.ts`**:
+- `adoptSession()` (~130 lines) — This is an API endpoint handler that does validation (agent caps, cwd exists, session limit check, adapter lookup) before calling `createSession()`. It's orchestration logic, not factory logic.
+- `createSession()` — remains as the primary orchestration entry point
 
 ### Phase 1 Result
 
-`core.ts` retains only:
+`core.ts` retains:
 - Constructor + service getters (~80 lines)
 - `registerAdapter()`, `start()`, `stop()` (~50 lines)
-- `handleMessage()` — delegates to SessionManager for lookup/resume (~30 lines)
+- `handleMessage()` — delegates to SessionFactory for lookup/resume (~30 lines)
 - `createSession()` — thin orchestration: factory.create() + thread + bridge + persist (~70 lines)
+- `adoptSession()` — validation + orchestration (~130 lines)
 - `archiveSession()` (~30 lines)
 - `createBridge()` (~15 lines)
 
-**Estimated: ~350 lines**
+**Estimated: ~400 lines**
 
 ---
 
 ## Phase 2: Clean up `session.ts` (569 → ~400 lines)
 
-### 2a. Extract TTS/Voice logic into speech middleware
+### 2a. Extract TTS/Voice logic into speech plugin
 
 **Remove from `session.ts`**:
 - `TTS_PROMPT_INSTRUCTION` constant
@@ -103,15 +108,25 @@ Move from `core.ts` into `SessionFactory`:
 - `processTTSResponse()` method (~40 lines)
 - TTS accumulator logic in `processPrompt()` (~20 lines)
 
-**Move into speech plugin** as middleware:
-- Register `agent:beforePrompt` middleware — handles STT transcription of audio attachments
-- Register `turn:afterResponse` middleware (new hook) — handles TTS synthesis from response text
-- Speech plugin injects `TTS_PROMPT_INSTRUCTION` via `agent:beforePrompt` when voice mode is active
+**Challenge**: TTS is **stateful across the prompt lifecycle**:
+1. Before prompt: check voiceMode, inject `TTS_PROMPT_INSTRUCTION` into prompt text
+2. During prompt: accumulate text from `agent_event` emissions
+3. After prompt: extract `[TTS]` block from accumulated text, synthesize audio
+
+A single middleware hook cannot handle this because accumulation happens during prompt execution.
+
+**Solution — event-driven approach**:
+
+1. **STT (before prompt)**: Speech plugin registers `agent:beforePrompt` middleware. Middleware checks session voiceMode, transcribes audio attachments, injects `TTS_PROMPT_INSTRUCTION`. Session no longer knows about STT.
+
+2. **TTS (during + after prompt)**: Speech plugin listens on `EventBus` for `turn:start` (already emitted). On `turn:start`, plugin attaches a temporary `agent_event` listener on the session to accumulate text. On `turn:end` (already emitted), plugin detaches listener, extracts `[TTS]` block, synthesizes audio, and emits `audio_content` event back on the session.
+
+   The `turn:end` event payload already includes `sessionId`. Speech plugin looks up the session via SessionManager to emit back.
 
 **Session changes**:
 - `voiceMode` property stays on Session (it's session state)
-- `speechService` property removed from Session constructor
-- `processPrompt()` becomes simpler — no TTS/STT branching
+- `speechService` property removed from Session constructor and SessionFactory
+- `processPrompt()` becomes simpler — no TTS/STT branching, just: context injection → middleware → prompt → emit turn:end
 
 ### 2b. Keep auto-name in Session
 
@@ -141,7 +156,8 @@ Auto-name uses `agentInstance.prompt()` + `pause()/resume()` emitter. Tightly co
 
 **Change**: Extract viewer link enrichment into a post-transform middleware hook.
 
-**New middleware hook**: `message:afterTransform`
+**New middleware hook**: `message:afterTransform` — fired in `SessionBridge.handleAgentEvent()` after `messageTransformer.transform()` returns.
+
 ```typescript
 // Hook payload
 {
@@ -179,9 +195,9 @@ private getService<T>(name: string): T | undefined {
 ```
 
 **Impact on callers**:
-- `securityGuard` — if undefined, skip security check (allow all). Log warning on first access.
+- `securityGuard` — if undefined, **deny all requests** and log error. Security must fail closed, not open. A missing security plugin means misconfiguration, not "allow everyone".
 - `notificationManager` — if undefined, skip notifications silently.
-- `fileService` — if undefined, skip file operations.
+- `fileService` — if undefined, skip file operations (images/audio won't be saved).
 - `speechService` — if undefined, voice features disabled (already handled).
 - `contextManager` — if undefined, skip context injection.
 
@@ -189,22 +205,26 @@ private getService<T>(name: string): T | undefined {
 
 **Current**: `OpenACPCore` has `tunnelService` getter/setter that propagates to `MessageTransformer`.
 
-**Change**: Remove entirely. Tunnel plugin registers itself via ServiceRegistry. Tunnel middleware (from 3a) accesses tunnel service via ServiceRegistry directly.
+**Change**: Remove `tunnelService` property and `_tunnelService` field from Core. Tunnel plugin registers itself via ServiceRegistry. Tunnel middleware (from 3a) accesses tunnel service via ServiceRegistry directly.
+
+**Impact on `SessionFactory.wireSideEffects()`**: Currently receives `tunnelService` from Core for tunnel cleanup on session end. Change to: tunnel plugin registers `session:afterDestroy` middleware (already supported) to clean up its own tunnels. `wireSideEffects` no longer needs tunnel dependency — remove `tunnelService` from `SideEffectDeps` interface.
 
 ### Phase 3 Result
 
 - `MessageTransformer`: pure transform, no service deps (~200 lines)
 - `OpenACPCore`: no direct tunnel coupling, graceful service degradation
+- `SessionFactory`: no tunnel dependency
 - Plugin services fully decoupled — core never throws on missing optional service
 
 ---
 
 ## New Middleware Hooks
 
-| Hook | Phase | Type | Purpose |
-|------|-------|------|---------|
-| `message:afterTransform` | 3 | Modifiable | Enrich outgoing messages post-transform (viewer links, etc.) |
-| `turn:afterResponse` | 2 | Fire-and-forget | Post-response processing (TTS synthesis) |
+| Hook | Phase | Type | Fired from | Purpose |
+|------|-------|------|-----------|---------|
+| `message:afterTransform` | 3 | Modifiable | `SessionBridge.handleAgentEvent()` | Enrich outgoing messages post-transform (viewer links, etc.) |
+
+**No new hooks needed for Phase 2** — speech plugin uses existing `agent:beforePrompt` middleware + existing `turn:start`/`turn:end` events on EventBus.
 
 ---
 
@@ -214,6 +234,8 @@ private getService<T>(name: string): T | undefined {
 - **No config changes**: No new config fields.
 - **Plugin API**: New middleware hooks are additive. Existing hooks unchanged.
 - **Import paths**: New files are internal to core. No external consumers affected.
+- **Speech plugin**: Existing `speechService` import in Session/SessionFactory removed. Speech plugin must register middleware during `setup()`. If speech plugin is not loaded, voice features are silently disabled (same as today).
+- **Tunnel plugin**: Must register `message:afterTransform` middleware and `session:afterDestroy` middleware during `setup()`. If tunnel plugin is not loaded, no viewer links generated (same as today).
 
 ## Testing Strategy
 
@@ -226,6 +248,6 @@ Each phase includes:
 
 | Phase | New Files | Modified Files |
 |-------|-----------|---------------|
-| 1 | `core/agent-switch-handler.ts` | `core/core.ts`, `core/sessions/session-manager.ts`, `core/sessions/session-factory.ts` |
-| 2 | None | `core/sessions/session.ts`, `plugins/speech/` (middleware registration) |
-| 3 | None | `core/message-transformer.ts`, `core/core.ts`, `plugins/tunnel/` (middleware registration) |
+| 1 | `core/agent-switch-handler.ts` | `core/core.ts`, `core/sessions/session-factory.ts` |
+| 2 | None | `core/sessions/session.ts`, `core/sessions/session-factory.ts`, `plugins/speech/` (middleware registration) |
+| 3 | None | `core/message-transformer.ts`, `core/core.ts`, `core/sessions/session-bridge.ts`, `core/sessions/session-factory.ts`, `plugins/tunnel/` (middleware registration) |
