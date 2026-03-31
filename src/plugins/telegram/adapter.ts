@@ -1510,7 +1510,7 @@ export class TelegramAdapter extends MessagingAdapter {
     await this.draftManager.stripPattern(sessionId, /\[TTS\][\s\S]*?\[\/TTS\]/g);
   }
 
-  async archiveSessionTopic(sessionId: string): Promise<string> {
+  async archiveSessionTopic(sessionId: string): Promise<void> {
     this.getTracer(sessionId)?.log("telegram", { action: "thread:archive", sessionId });
     const core = this.core as OpenACPCore;
     const session = core.sessionManager.getSession(sessionId);
@@ -1534,16 +1534,7 @@ export class TelegramAdapter extends MessagingAdapter {
       this.sessionTrackers.delete(session.id);
     }
 
-    // 1. Delete old topic (removes all messages)
+    // Delete topic (removes all messages) — no recreation
     await deleteSessionTopic(this.bot, chatId, oldTopicId);
-
-    // 2. Create new topic with session name
-    const topicName = session.name ?? `Session ${session.id.slice(0, 6)}`;
-    const newTopicId = await createSessionTopic(this.bot, chatId, topicName);
-
-    // Clear archiving flag — messages can now be sent to new topic
-    session.archiving = false;
-
-    return String(newTopicId);
   }
 }

@@ -203,7 +203,7 @@ export class OpenACPCore {
 
   // --- Archive ---
 
-  async archiveSession(sessionId: string): Promise<{ ok: true; newThreadId: string } | { ok: false; error: string }> {
+  async archiveSession(sessionId: string): Promise<{ ok: true } | { ok: false; error: string }> {
     const session = this.sessionManager.getSession(sessionId);
     if (!session) return { ok: false, error: "Session not found (must be in memory)" };
 
@@ -217,26 +217,13 @@ export class OpenACPCore {
     if (!adapter.archiveSessionTopic) return { ok: false, error: "Adapter does not support topic archiving" };
 
     try {
-      // archiveSessionTopic handles: cleanup trackers → delete old topic → create new topic
-      const newThreadId = await adapter.archiveSessionTopic(session.id);
+      // archiveSessionTopic handles: cleanup trackers → delete topic
+      await adapter.archiveSessionTopic(session.id);
 
-      // Rewire session to new topic
-      session.threadId = newThreadId;
+      // Cancel session — stops agent, removes from active sessions, marks record as cancelled
+      await this.sessionManager.cancelSession(sessionId);
 
-      // Update session store with new topic ID (best-effort — topic is already recreated)
-      try {
-        const platform: Record<string, unknown> = {};
-        if (session.channelId === "telegram") {
-          platform.topicId = Number(newThreadId);
-        } else {
-          platform.threadId = newThreadId;
-        }
-        await this.sessionManager.patchRecord(sessionId, { platform });
-      } catch (patchErr) {
-        log.warn({ err: patchErr, sessionId }, "Failed to update session record after archive — session will work but may not survive restart");
-      }
-
-      return { ok: true, newThreadId };
+      return { ok: true };
     } catch (err) {
       // Clear archiving flag on error
       session.archiving = false;

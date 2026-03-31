@@ -164,7 +164,7 @@ Show a token usage and cost report. Without arguments, shows today, this week, a
 
 ### `/archive` (Telegram only)
 
-Archive the current session: stops the agent, removes the session record, and deletes the Telegram topic. This cannot be undone.
+Archive the current session: stops the agent, marks the session as cancelled, and permanently deletes the Telegram topic. This cannot be undone.
 
 ### `/summary` (Telegram only)
 
