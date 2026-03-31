@@ -5,7 +5,7 @@ import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { globalErrorHandler } from './middleware/error-handler.js';
-import { createAuthPreHandler, requireScopes, requireRole } from './middleware/auth.js';
+import { createAuthPreHandler } from './middleware/auth.js';
 
 export interface ApiServerOptions {
   port: number;
@@ -22,7 +22,7 @@ export interface ApiServerInstance {
 }
 
 export async function createApiServer(options: ApiServerOptions): Promise<ApiServerInstance> {
-  const app = Fastify({ logger: options.logger ?? false });
+  const app = Fastify({ logger: options.logger ?? false, forceCloseConnections: true });
 
   // Zod validation
   app.setValidatorCompiler(validatorCompiler);
@@ -46,28 +46,20 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiSer
   // Global error handler
   app.setErrorHandler(globalErrorHandler);
 
+  // Backward-compatible redirects: /api/* → /api/v1/*
+  app.addHook('onRequest', async (request, reply) => {
+    const url = request.url;
+    if (url.startsWith('/api/') && !url.startsWith('/api/v1/') && !url.startsWith('/api/docs')) {
+      const newUrl = url.replace('/api/', '/api/v1/');
+      return reply.redirect(newUrl, 308);
+    }
+  });
+
   // Auth pre-handler
   const authPreHandler = createAuthPreHandler(options.getSecret);
 
   // Decorate request with auth object
   app.decorateRequest('auth', null, []);
-
-  // System routes (no auth required for health)
-  await app.register(
-    async (app) => {
-      app.get('/health', async () => ({
-        status: 'ok',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage(),
-      }));
-
-      app.get('/version', { preHandler: authPreHandler }, async () => ({
-        version: process.env.npm_package_version ?? 'unknown',
-      }));
-    },
-    { prefix: '/api/v1/system' },
-  );
 
   return {
     app,
