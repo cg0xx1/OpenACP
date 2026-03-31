@@ -392,6 +392,25 @@ describe('TunnelRegistry — retry logic', () => {
     expect(registry.get(3100)).toBeNull()
   })
 
+  it('retries on initial start failure (e.g. rate limiting)', async () => {
+    // First attempt fails (simulates 429 rate limit)
+    nextMockOverride = () => createMockProvider({ failStart: true })
+
+    const registry = new TunnelRegistry()
+    await expect(registry.add(3100, { type: 'system', provider: 'cloudflare' }))
+      .rejects.toThrow('start failed')
+
+    // Entry should be failed but retry scheduled
+    expect(registry.get(3100)?.status).toBe('failed')
+
+    // Second attempt succeeds after retry delay (2s)
+    await vi.advanceTimersByTimeAsync(2_500)
+
+    const entry = registry.get(3100)
+    expect(entry?.status).toBe('active')
+    expect(entry?.publicUrl).toBe('https://test-tunnel.trycloudflare.com')
+  })
+
   it('does not retry during shutdown', async () => {
     const registry = new TunnelRegistry()
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })

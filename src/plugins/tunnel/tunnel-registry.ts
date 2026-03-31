@@ -60,7 +60,7 @@ export class TunnelRegistry {
     provider: string
     label?: string
     sessionId?: string
-  }): Promise<TunnelEntry> {
+  }, _autoRetry = true): Promise<TunnelEntry> {
     // Check if port already registered
     if (this.entries.has(port)) {
       const existing = this.entries.get(port)!
@@ -123,6 +123,17 @@ export class TunnelRegistry {
       entry.status = 'failed'
       log.error({ port, err: (err as Error).message }, 'Tunnel failed to start')
       this.scheduleSave()
+
+      // Schedule retry for initial start failures (e.g. rate limiting, transient errors)
+      // Skip when called from retry() — it manages its own retry scheduling
+      const live = this.entries.get(port)
+      if (_autoRetry && live && !this.shuttingDown && live.entry.retryCount < MAX_RETRIES) {
+        const delay = BASE_RETRY_DELAY_MS * Math.pow(2, live.entry.retryCount)
+        log.warn({ port, retry: live.entry.retryCount + 1, maxRetries: MAX_RETRIES, delayMs: delay },
+          'Scheduling retry after initial start failure')
+        live.retryTimer = setTimeout(() => this.retry(port, opts), delay)
+      }
+
       throw err
     })
 
@@ -152,7 +163,7 @@ export class TunnelRegistry {
     this.entries.delete(port)
 
     try {
-      const entry = await this.add(port, opts)
+      const entry = await this.add(port, opts, false)
       entry.retryCount = retryCount
     } catch (err) {
       log.error({ port, err: (err as Error).message, retry: retryCount }, 'Tunnel retry failed')

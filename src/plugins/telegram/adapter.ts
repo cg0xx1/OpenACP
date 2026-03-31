@@ -258,10 +258,8 @@ export class TelegramAdapter extends MessagingAdapter {
       return prev(method, payload, signal);
     });
 
-    // Register static commands for Telegram autocomplete
-    await this.bot.api.setMyCommands(STATIC_COMMANDS, {
-      scope: { type: "chat", chat_id: this.telegramConfig.chatId },
-    });
+    // Register static commands for Telegram autocomplete (non-critical, retry in background)
+    this.registerCommandsWithRetry();
 
     // Middleware: only accept updates from configured chatId
     this.bot.use((ctx, next) => {
@@ -270,21 +268,24 @@ export class TelegramAdapter extends MessagingAdapter {
       return next();
     });
 
-    // Ensure system topics exist
-    const topics = await ensureTopics(
-      this.bot,
-      this.telegramConfig.chatId,
-      this.telegramConfig,
-      async (updates) => {
-        if (this.saveTopicIds) {
-          await this.saveTopicIds(updates);
-        } else {
-          // Fallback for legacy usage without plugin settings
-          await this.core.configManager.save({
-            channels: { telegram: updates },
-          });
-        }
-      },
+    // Ensure system topics exist (retry on transient network failures)
+    const topics = await this.retryWithBackoff(
+      () => ensureTopics(
+        this.bot,
+        this.telegramConfig.chatId,
+        this.telegramConfig,
+        async (updates) => {
+          if (this.saveTopicIds) {
+            await this.saveTopicIds(updates);
+          } else {
+            // Fallback for legacy usage without plugin settings
+            await this.core.configManager.save({
+              channels: { telegram: updates },
+            });
+          }
+        },
+      ),
+      "ensureTopics",
     );
     this.notificationTopicId = topics.notificationTopicId;
     this.assistantTopicId = topics.assistantTopicId;
@@ -595,6 +596,47 @@ export class TelegramAdapter extends MessagingAdapter {
         )
         .catch(() => {});
     }
+  }
+
+  /**
+   * Retry an async operation with exponential backoff.
+   * Used for Telegram API calls that may fail due to transient network issues.
+   */
+  private async retryWithBackoff<T>(
+    fn: () => Promise<T>,
+    label: string,
+    maxRetries = 5,
+    baseDelayMs = 2000,
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (attempt === maxRetries) throw err;
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        log.warn(
+          { err, attempt, maxRetries, delayMs: delay, operation: label },
+          `${label} failed, retrying in ${delay}ms`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+    throw new Error("unreachable");
+  }
+
+  /**
+   * Register Telegram commands in the background with retries.
+   * Non-critical — bot works fine without autocomplete commands.
+   */
+  private registerCommandsWithRetry(): void {
+    this.retryWithBackoff(
+      () => this.bot.api.setMyCommands(STATIC_COMMANDS, {
+        scope: { type: "chat", chat_id: this.telegramConfig.chatId },
+      }),
+      "setMyCommands",
+    ).catch((err) => {
+      log.warn({ err }, "Failed to register Telegram commands after retries (non-critical)");
+    });
   }
 
   async stop(): Promise<void> {

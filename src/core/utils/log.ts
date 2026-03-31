@@ -111,7 +111,7 @@ export function initLogger(config: LoggingConfig): Logger {
         target: 'pino-pretty',
         options: {
           colorize: true,
-          translateTime: 'HH:mm:ss',
+          translateTime: 'SYS:HH:MM:ss',
           ignore: 'pid,hostname',
           singleLine: true,
         },

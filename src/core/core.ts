@@ -161,8 +161,19 @@ export class OpenACPCore {
     this.agentCatalog.refreshRegistryIfStale().catch((err) => {
       log.warn({ err }, "Background registry refresh failed");
     });
-    for (const adapter of this.adapters.values()) {
-      await adapter.start();
+    const failures: Array<{ name: string; error: unknown }> = [];
+    for (const [name, adapter] of this.adapters.entries()) {
+      try {
+        await adapter.start();
+      } catch (err) {
+        log.error({ err, adapter: name }, `Adapter "${name}" failed to start`);
+        failures.push({ name, error: err });
+      }
+    }
+    if (failures.length > 0 && failures.length === this.adapters.size) {
+      throw new Error(
+        `All adapters failed to start: ${failures.map((f) => f.name).join(", ")}`,
+      );
     }
   }
 
