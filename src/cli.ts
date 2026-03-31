@@ -29,6 +29,7 @@ import {
   cmdOnboard,
   cmdDev,
   cmdAttach,
+  cmdRemote,
 } from './cli/commands/index.js'
 import { resolveInstanceRoot, getGlobalRoot } from './core/instance-context.js'
 
@@ -107,6 +108,7 @@ const commands: Record<string, () => Promise<void>> = {
   'onboard': () => cmdOnboard(),
   'dev': () => cmdDev(args),
   'attach': () => cmdAttach(args, root),
+  'remote': () => cmdRemote(args, root),
   '--daemon-child': async () => {
     const { startServer } = await import('./main.js')
     const envRoot = process.env.OPENACP_INSTANCE_ROOT
