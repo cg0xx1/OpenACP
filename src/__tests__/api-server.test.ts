@@ -130,18 +130,28 @@ describe("ApiServer", () => {
     const { tunnelRoutes } = await import("../plugins/api-server/routes/tunnel.js");
     const { notifyRoutes } = await import("../plugins/api-server/routes/notify.js");
     const { commandRoutes } = await import("../plugins/api-server/routes/commands.js");
+    const { createAuthPreHandler } = await import("../plugins/api-server/middleware/auth.js");
+    const { TokenStore } = await import("../plugins/api-server/auth/token-store.js");
+
+    const tokenStore = new TokenStore(path.join(tmpDir, "tokens.json"));
+    const jwtSecret = crypto.randomBytes(32).toString("hex");
 
     server = await createApiServer({
       port: portOverride ?? 0,
       host: "127.0.0.1",
       getSecret: () => secret,
+      getJwtSecret: () => jwtSecret,
+      tokenStore,
     });
+
+    const authPreHandler = createAuthPreHandler(() => secret, () => jwtSecret, tokenStore);
 
     const deps = {
       core: mockCore as any,
       topicManager: mockTopicManager as any,
       startedAt: Date.now(),
       getVersion: () => "0.0.0-dev",
+      authPreHandler,
     };
 
     server.registerPlugin('/api/v1/sessions', async (app: any) => sessionRoutes(app, deps));
@@ -1509,12 +1519,12 @@ describe("ApiServer", () => {
       expect(res.status).toBe(200);
     });
 
-    it("allows version endpoint without auth", async () => {
+    it("requires auth for version endpoint", async () => {
       const port = await startServer();
       const res = await globalThis.fetch(
         `http://127.0.0.1:${port}/api/v1/system/version`,
       );
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
     });
 
     it("accepts requests with valid auth token", async () => {
