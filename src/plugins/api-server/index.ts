@@ -88,6 +88,7 @@ function createApiServerPlugin(): OpenACPPlugin {
   let server: ApiServerInstance | null = null
   let portFilePath = ''
   let actualPort = 0
+  let cleanupInterval: ReturnType<typeof setInterval> | null = null
 
   return {
     name: '@openacp/api-server',
@@ -176,10 +177,20 @@ function createApiServerPlugin(): OpenACPPlugin {
 
       portFilePath = path.join(instanceRoot, 'api.port')
       const secretFilePath = path.join(instanceRoot, 'api-secret')
+      const jwtSecretFilePath = path.join(instanceRoot, 'jwt-secret')
+      const tokensFilePath = path.join(instanceRoot, 'tokens.json')
       const startedAt = Date.now()
 
       // Load or create the API secret
       const secret = loadOrCreateSecret(secretFilePath)
+
+      // Load or create the JWT signing secret
+      const jwtSecret = loadOrCreateSecret(jwtSecretFilePath)
+
+      // Load token store
+      const { TokenStore } = await import('./auth/token-store.js')
+      const tokenStore = new TokenStore(tokensFilePath)
+      await tokenStore.load()
 
       // Lazy import to avoid loading Fastify unless needed
       const { createApiServer } = await import('./server.js')
@@ -197,12 +208,15 @@ function createApiServerPlugin(): OpenACPPlugin {
       const { tunnelRoutes } = await import('./routes/tunnel.js')
       const { notifyRoutes } = await import('./routes/notify.js')
       const { commandRoutes } = await import('./routes/commands.js')
+      const { authRoutes } = await import('./routes/auth.js')
 
       // Create Fastify server
       server = await createApiServer({
         port: apiConfig.port,
         host: apiConfig.host,
         getSecret: () => secret,
+        getJwtSecret: () => jwtSecret,
+        tokenStore,
       })
 
       // Resolve optional services for route deps
@@ -226,6 +240,7 @@ function createApiServerPlugin(): OpenACPPlugin {
       server.registerPlugin('/api/v1/tunnel', async (app) => tunnelRoutes(app, deps))
       server.registerPlugin('/api/v1/notify', async (app) => notifyRoutes(app, deps))
       server.registerPlugin('/api/v1/commands', async (app) => commandRoutes(app, deps))
+      server.registerPlugin('/api/v1/auth', async (app) => authRoutes(app, { tokenStore, getJwtSecret: () => jwtSecret }))
 
       // SSE manager
       const sseManager = new SSEManager(
@@ -267,7 +282,7 @@ function createApiServerPlugin(): OpenACPPlugin {
       }
 
       // Build auth pre-handler for the service
-      const authPreHandler = createAuthPreHandler(() => secret)
+      const authPreHandler = createAuthPreHandler(() => secret, () => jwtSecret, tokenStore)
 
       // Create and register the ApiServerService
       const apiService = createApiServerService(
@@ -282,6 +297,9 @@ function createApiServerPlugin(): OpenACPPlugin {
       )
 
       ctx.registerService('api-server', apiService)
+
+      // Periodic token cleanup (every hour)
+      cleanupInterval = setInterval(() => tokenStore.cleanup(), 60 * 60 * 1000)
 
       // Start on system:ready
       ctx.on('system:ready', async () => {
@@ -309,6 +327,10 @@ function createApiServerPlugin(): OpenACPPlugin {
     },
 
     async teardown() {
+      if (cleanupInterval) {
+        clearInterval(cleanupInterval)
+        cleanupInterval = null
+      }
       if (server) {
         await server.stop()
         server = null
