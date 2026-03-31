@@ -15,9 +15,9 @@ import { configureChannels } from "./setup-channels.js";
 import { RegistryClient } from "../plugin/registry-client.js";
 import type { SettingsManager } from "../plugin/settings-manager.js";
 import type { PluginRegistry } from "../plugin/plugin-registry.js";
-import { InstanceRegistry } from "../instance-registry.js";
-import { generateSlug, getGlobalRoot } from "../instance-context.js";
-import { copyInstance } from "../instance-copy.js";
+import { InstanceRegistry } from "../instance/instance-registry.js";
+import { generateSlug, getGlobalRoot } from "../instance/instance-context.js";
+import { copyInstance } from "../instance/instance-copy.js";
 
 // ─── Registry discovery ───
 

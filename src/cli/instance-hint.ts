@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
-import { getGlobalRoot } from '../core/instance-context.js'
+import { getGlobalRoot } from '../core/instance/instance-context.js'
 
 /**
  * Print which instance root is being used.

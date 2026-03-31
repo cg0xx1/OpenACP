@@ -26,7 +26,7 @@ import { createChildLogger } from "./utils/log.js";
 import type { SpeechService } from "../plugins/speech/exports.js";
 import type { ContextManager } from "../plugins/context/context-manager.js";
 import type { ContextQuery, ContextOptions, ContextResult } from "../plugins/context/context-provider.js";
-import type { InstanceContext } from "./instance-context.js";
+import type { InstanceContext } from "./instance/instance-context.js";
 const log = createChildLogger({ module: "core" });
 
 export class OpenACPCore {

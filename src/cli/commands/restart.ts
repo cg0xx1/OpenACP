@@ -2,7 +2,7 @@ import { wantsHelp } from './helpers.js'
 import { printInstanceHint } from '../instance-hint.js'
 import path from 'node:path'
 import os from 'node:os'
-import { createInstanceContext, getGlobalRoot } from '../../core/instance-context.js'
+import { createInstanceContext, getGlobalRoot } from '../../core/instance/instance-context.js'
 
 export async function cmdRestart(args: string[] = [], instanceRoot?: string): Promise<void> {
   const root = instanceRoot ?? path.join(os.homedir(), '.openacp')

@@ -1,5 +1,5 @@
-import { InstanceRegistry } from '../../core/instance-registry.js'
-import { getGlobalRoot } from '../../core/instance-context.js'
+import { InstanceRegistry } from '../../core/instance/instance-registry.js'
+import { getGlobalRoot } from '../../core/instance/instance-context.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'

@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "./config.js";
-import { getGlobalRoot } from "../instance-context.js";
+import { getGlobalRoot } from "../instance/instance-context.js";
 
 export interface ConfigFieldDef {
   path: string;
