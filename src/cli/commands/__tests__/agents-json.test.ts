@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('../../../core/agents/agent-catalog.js', () => {
-  const MockAgentCatalog = class {
+  class MockAgentCatalog {
     load = vi.fn();
     refreshRegistryIfStale = vi.fn().mockResolvedValue(undefined);
     getAvailable = vi.fn().mockReturnValue([
@@ -26,7 +26,7 @@ vi.mock('../../../core/agents/agent-catalog.js', () => {
         missingDeps: [],
       },
     ]);
-  };
+  }
   return { AgentCatalog: MockAgentCatalog };
 });
 
@@ -36,6 +36,10 @@ describe('agents list --json', () => {
   beforeEach(() => {
     output = '';
     vi.spyOn(console, 'log').mockImplementation((s: string) => { output += s; });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('outputs valid JSON array when --json flag is passed', async () => {
@@ -54,7 +58,7 @@ describe('agents list --json', () => {
 
   it('includes all required fields in each agent entry', async () => {
     const { cmdAgents } = await import('../agents.js');
-    await cmdAgents(['--json'], undefined);
+    await cmdAgents(['list', '--json'], undefined);
 
     const parsed = JSON.parse(output);
     const fields = ['key', 'name', 'version', 'distribution', 'description', 'installed', 'available', 'missingDeps'];

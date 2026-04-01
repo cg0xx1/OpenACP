@@ -63,7 +63,6 @@ bypassing the normal staleness check.
     case "run":
       return agentsRun(args[1], args.slice(2), wantsHelp(args), instanceRoot);
     case "list":
-    case "--json":
     case undefined:
       return agentsList(instanceRoot, args.includes("--json"));
     default: {
