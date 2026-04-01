@@ -148,7 +148,8 @@ function createTunnelPlugin(): OpenACPPlugin {
         path.join(instanceRoot, 'tunnels.json'),
         path.join(instanceRoot, 'bin'),
       )
-      const publicUrl = await tunnelSvc.start()
+      const apiPort = (config.port as number) ?? 3100
+      const publicUrl = await tunnelSvc.start(apiPort)
       service = tunnelSvc
 
       ctx.registerService('tunnel', tunnelSvc)
