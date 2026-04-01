@@ -13,7 +13,7 @@ function createTunnelPlugin(): OpenACPPlugin {
     version: '1.0.0',
     description: 'Expose local services to internet via tunnel providers',
     essential: false,
-    dependencies: ['@openacp/api-server'],
+    pluginDependencies: { '@openacp/api-server': '*' },
     permissions: ['services:register', 'kernel:access', 'commands:register'],
 
     async install(ctx: InstallContext) {
