@@ -10,7 +10,7 @@ export function buildDangerousModeKeyboard(
   enabled: boolean,
 ): InlineKeyboard {
   return new InlineKeyboard().text(
-    enabled ? "🔐 Disable Bypass Permissions" : "☠️ Enable Bypass Permissions",
+    enabled ? "🔐 Disable Bypass" : "☠️ Enable Bypass",
     `d:${sessionId}`,
   );
 }
@@ -33,8 +33,8 @@ export function setupDangerousModeCallbacks(bot: Bot, core: OpenACPCore): void {
         .catch(() => {});
 
       const toastText = newDangerousMode
-        ? "☠️ Bypass permissions enabled — permissions auto-approved"
-        : "🔐 Bypass permissions disabled — permissions shown normally";
+        ? "☠️ Bypass enabled — permissions auto-approved"
+        : "🔐 Bypass disabled — approvals required";
       try {
         await ctx.answerCallbackQuery({ text: toastText });
       } catch {
@@ -78,8 +78,8 @@ export function setupDangerousModeCallbacks(bot: Bot, core: OpenACPCore): void {
     );
 
     const toastText = newDangerousMode
-      ? "☠️ Bypass permissions enabled — permissions auto-approved"
-      : "🔐 Bypass permissions disabled — permissions shown normally";
+      ? "☠️ Bypass enabled — permissions auto-approved"
+      : "🔐 Bypass disabled — approvals required";
     try {
       await ctx.answerCallbackQuery({ text: toastText });
     } catch {
@@ -117,7 +117,7 @@ export async function handleEnableDangerous(
   );
   if (session) {
     if (session.clientOverrides.bypassPermissions) {
-      await ctx.reply("☠️ Bypass permissions is already enabled.", {
+      await ctx.reply("☠️ Bypass is already enabled.", {
         parse_mode: "HTML",
       });
       return;
@@ -139,7 +139,7 @@ export async function handleEnableDangerous(
       return;
     }
     if (record.clientOverrides?.bypassPermissions ?? record.dangerousMode) {
-      await ctx.reply("☠️ Bypass permissions is already enabled.", {
+      await ctx.reply("☠️ Bypass is already enabled.", {
         parse_mode: "HTML",
       });
       return;
@@ -149,7 +149,7 @@ export async function handleEnableDangerous(
       .catch(() => {});
   }
   await ctx.reply(
-    `⚠️ <b>Bypass permissions enabled</b>\n\nAll permission requests will be auto-approved. Claude can run arbitrary commands without asking.\n\nUse /disable_bypass to restore normal behaviour.`,
+    `☠️ <b>Bypass enabled</b>\n\nAll permission requests will be auto-approved — the agent can run any action without asking.\n\nUse /disable_bypass to turn this off.`,
     { parse_mode: "HTML" },
   );
 }
@@ -171,7 +171,7 @@ export async function handleDisableDangerous(
   );
   if (session) {
     if (!session.clientOverrides.bypassPermissions) {
-      await ctx.reply("🔐 Bypass permissions is already disabled.", {
+      await ctx.reply("🔐 Bypass is already disabled.", {
         parse_mode: "HTML",
       });
       return;
@@ -193,7 +193,7 @@ export async function handleDisableDangerous(
       return;
     }
     if (!(record.clientOverrides?.bypassPermissions ?? record.dangerousMode)) {
-      await ctx.reply("🔐 Bypass permissions is already disabled.", {
+      await ctx.reply("🔐 Bypass is already disabled.", {
         parse_mode: "HTML",
       });
       return;
@@ -203,7 +203,7 @@ export async function handleDisableDangerous(
       .catch(() => {});
   }
   await ctx.reply(
-    "🔐 <b>Bypass permissions disabled</b>\n\nPermission requests will be shown normally.",
+    "🔐 <b>Bypass disabled</b>\n\nYou will be asked to approve risky actions.",
     { parse_mode: "HTML" },
   );
 }
@@ -225,7 +225,7 @@ export function buildSessionControlKeyboard(
 ): InlineKeyboard {
   return new InlineKeyboard()
     .text(
-      dangerousMode ? "🔐 Disable Bypass Permissions" : "☠️ Enable Bypass Permissions",
+      dangerousMode ? "🔐 Disable Bypass" : "☠️ Enable Bypass",
       `d:${sessionId}`,
     )
     .row()
