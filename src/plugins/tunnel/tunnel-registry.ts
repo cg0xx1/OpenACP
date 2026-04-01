@@ -247,7 +247,7 @@ export class TunnelRegistry {
     for (const [, live] of this.entries) {
       if (live.retryTimer) clearTimeout(live.retryTimer)
       if (live.process) {
-        stopPromises.push(live.process.stop().catch(() => { /* ignore */ }))
+        stopPromises.push(live.process.stop(true).catch(() => { /* ignore */ }))
       }
     }
     await Promise.all(stopPromises)

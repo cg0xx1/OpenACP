@@ -89,11 +89,17 @@ export class NgrokTunnelProvider implements TunnelProvider {
     })
   }
 
-  async stop(): Promise<void> {
+  async stop(force = false): Promise<void> {
     const child = this.child
     if (!child) return
     this.child = null
     this.exitCallback = null
+
+    if (force) {
+      child.kill('SIGKILL')
+      log.info('ngrok tunnel force-killed')
+      return
+    }
 
     child.kill('SIGTERM')
 
