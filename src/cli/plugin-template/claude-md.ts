@@ -120,6 +120,14 @@ interface PluginContext {
   // Commands (requires 'commands:register')
   registerCommand(def: CommandDef): void
 
+  // Menu items (requires 'commands:register')
+  registerMenuItem(item: MenuItem): void
+  unregisterMenuItem(id: string): void
+
+  // Assistant context sections (requires 'commands:register')
+  registerAssistantSection(section: AssistantSection): void
+  unregisterAssistantSection(id: string): void
+
   // Storage (requires 'storage:read' / 'storage:write')
   storage: PluginStorage  // get, set, delete, list, getDataDir
 
