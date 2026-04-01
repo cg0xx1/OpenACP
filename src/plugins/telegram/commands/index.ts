@@ -201,4 +201,8 @@ export const STATIC_COMMANDS = [
   { command: "outputmode", description: "Control output display level (low/medium/high)" },
   { command: 'resume', description: 'Resume with conversation history from Entire checkpoints' },
   { command: 'switch', description: 'Switch agent in current session' },
+  { command: 'mode', description: 'Change session mode' },
+  { command: 'model', description: 'Change AI model' },
+  { command: 'thought', description: 'Change thinking level' },
+  { command: 'bypass', description: 'Toggle bypass permissions' },
 ];
