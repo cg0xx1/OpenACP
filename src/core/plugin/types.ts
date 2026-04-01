@@ -162,6 +162,20 @@ export type CommandResponse =
   | { type: 'error'; message: string }
   | { type: 'silent' }
 
+// ─── Menu Types ───
+
+export interface MenuItem {
+  id: string
+  label: string
+  priority: number
+  group?: string
+  action:
+    | { type: 'command'; command: string }
+    | { type: 'delegate'; prompt: string }
+    | { type: 'callback'; callbackData: string }
+  visible?: () => boolean
+}
+
 export interface MenuOption {
   label: string
   command: string
