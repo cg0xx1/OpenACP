@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { TokenStore } from '../auth/token-store.js'
+import { createApiServer } from '../server.js'
+import type { ApiServerInstance } from '../server.js'
+import { authRoutes } from '../routes/auth.js'
+import { ExchangeCodeBodySchema } from '../schemas/auth.js'
+import { signToken } from '../auth/jwt.js'
+import { parseDuration } from '../auth/token-store.js'
+import { AuthError } from '../middleware/error-handler.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -106,5 +113,195 @@ describe('TokenStore — codes', () => {
     expect(remaining).toHaveLength(1)
     expect(remaining[0].name).toBe('active')
     vi.useRealTimers()
+  })
+})
+
+describe('Auth code endpoints', () => {
+  let server: ApiServerInstance
+  let store: TokenStore
+  let tmpDir: string
+  const SECRET = 'test-secret-token'
+  const JWT_SECRET = 'test-jwt-secret-32charslong!!!!!'
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-code-routes-'))
+    const tokensPath = path.join(tmpDir, 'tokens.json')
+    store = new TokenStore(tokensPath)
+    await store.load()
+
+    server = await createApiServer({
+      port: 0,
+      host: '127.0.0.1',
+      getSecret: () => SECRET,
+      getJwtSecret: () => JWT_SECRET,
+      tokenStore: store,
+    })
+
+    // Register auth routes (code endpoints live here)
+    server.registerPlugin('/api/v1/auth', async (app) => {
+      await authRoutes(app, { tokenStore: store, getJwtSecret: () => JWT_SECRET })
+    })
+
+    // Exchange endpoint — NO auth (code in body IS the credential)
+    server.registerPlugin('/api/v1/auth', async (app) => {
+      app.post('/exchange', async (request, reply) => {
+        const body = ExchangeCodeBodySchema.parse(request.body)
+        const code = store.exchangeCode(body.code)
+        if (!code) {
+          throw new AuthError('INVALID_CODE', 'Code is invalid, expired, or already used', 401)
+        }
+        const token = store.create({
+          role: code.role,
+          name: code.name,
+          expire: code.expire,
+          scopes: code.scopes,
+        })
+        const rfd = new Date(token.refreshDeadline).getTime() / 1000
+        const accessToken = signToken(
+          { sub: token.id, role: token.role, scopes: token.scopes, rfd },
+          JWT_SECRET,
+          code.expire,
+        )
+        return reply.send({
+          accessToken,
+          tokenId: token.id,
+          expiresAt: new Date(Date.now() + parseDuration(code.expire)).toISOString(),
+          refreshDeadline: token.refreshDeadline,
+        })
+      })
+    }, { auth: false })
+
+    await server.app.ready()
+  })
+
+  afterEach(async () => {
+    await server.stop()
+    store.destroy()
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('POST /api/v1/auth/codes creates code with secret token', async () => {
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+      payload: { role: 'admin', name: 'test-remote', expire: '24h' },
+    })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.code).toMatch(/^[0-9a-f]{32}$/)
+    expect(body.expiresAt).toBeDefined()
+  })
+
+  it('POST /api/v1/auth/codes rejects non-secret auth', async () => {
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: 'Bearer some-jwt-token' },
+      payload: { role: 'admin', name: 'test', expire: '24h' },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('POST /api/v1/auth/exchange returns JWT for valid code', async () => {
+    const createRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+      payload: { role: 'admin', name: 'test', expire: '24h' },
+    })
+    const { code } = createRes.json()
+
+    const exchangeRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/exchange',
+      payload: { code },
+    })
+    expect(exchangeRes.statusCode).toBe(200)
+    const body = exchangeRes.json()
+    expect(body.accessToken).toBeDefined()
+    expect(body.tokenId).toMatch(/^tok_/)
+    expect(body.expiresAt).toBeDefined()
+    expect(body.refreshDeadline).toBeDefined()
+  })
+
+  it('POST /api/v1/auth/exchange rejects used code (one-time only)', async () => {
+    const createRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+      payload: { role: 'admin', name: 'test', expire: '24h' },
+    })
+    const { code } = createRes.json()
+
+    const first = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/exchange',
+      payload: { code },
+    })
+    expect(first.statusCode).toBe(200)
+
+    const second = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/exchange',
+      payload: { code },
+    })
+    expect(second.statusCode).toBe(401)
+  })
+
+  it('POST /api/v1/auth/exchange rejects invalid code', async () => {
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/exchange',
+      payload: { code: 'a'.repeat(32) },
+    })
+    expect(res.statusCode).toBe(401)
+  })
+
+  it('GET /api/v1/auth/codes lists active codes', async () => {
+    await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+      payload: { role: 'admin', name: 'code-1', expire: '24h' },
+    })
+    await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+      payload: { role: 'viewer', name: 'code-2', expire: '1h' },
+    })
+
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().codes).toHaveLength(2)
+  })
+
+  it('DELETE /api/v1/auth/codes/:code revokes code', async () => {
+    const createRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/codes',
+      headers: { authorization: `Bearer ${SECRET}` },
+      payload: { role: 'admin', name: 'to-revoke', expire: '24h' },
+    })
+    const { code } = createRes.json()
+
+    const delRes = await server.app.inject({
+      method: 'DELETE',
+      url: `/api/v1/auth/codes/${code}`,
+      headers: { authorization: `Bearer ${SECRET}` },
+    })
+    expect(delRes.statusCode).toBe(200)
+
+    const exchangeRes = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/auth/exchange',
+      payload: { code },
+    })
+    expect(exchangeRes.statusCode).toBe(401)
   })
 })

@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { CreateTokenBodySchema, RevokeTokenParamSchema, RefreshBodySchema } from '../schemas/auth.js';
+import { CreateTokenBodySchema, RevokeTokenParamSchema, RefreshBodySchema, CreateCodeBodySchema, RevokeCodeParamSchema } from '../schemas/auth.js';
 import { signToken, verifyForRefresh } from '../auth/jwt.js';
 import { parseDuration, type TokenStore } from '../auth/token-store.js';
 import { getRoleScopes } from '../auth/roles.js';
 import { AuthError, NotFoundError } from '../middleware/error-handler.js';
-import { requireScopes } from '../middleware/auth.js';
+import { requireScopes, requireRole } from '../middleware/auth.js';
 
 export interface AuthRouteDeps {
   tokenStore: TokenStore;
@@ -133,5 +133,38 @@ export async function authRoutes(
       role: auth.role,
       scopes: auth.scopes,
     };
+  });
+
+  // POST /codes — generate one-time code (secret token only)
+  app.post('/codes', {
+    preHandler: [requireRole('admin')],
+  }, async (request, reply) => {
+    if (request.auth.type !== 'secret') {
+      throw new AuthError('FORBIDDEN', 'Only secret token can create codes', 403);
+    }
+    const body = CreateCodeBodySchema.parse(request.body);
+    const code = tokenStore.createCode({
+      role: body.role,
+      name: body.name,
+      expire: body.expire,
+      scopes: body.scopes,
+    });
+    return reply.send({ code: code.code, expiresAt: code.expiresAt });
+  });
+
+  // GET /codes — list active codes (auth:manage scope)
+  app.get('/codes', {
+    preHandler: [requireScopes('auth:manage')],
+  }, async (_request, reply) => {
+    return reply.send({ codes: tokenStore.listCodes() });
+  });
+
+  // DELETE /codes/:code — revoke unused code (auth:manage scope)
+  app.delete<{ Params: { code: string } }>('/codes/:code', {
+    preHandler: [requireScopes('auth:manage')],
+  }, async (request, reply) => {
+    const { code } = RevokeCodeParamSchema.parse(request.params);
+    tokenStore.revokeCode(code);
+    return reply.send({ revoked: true, code });
   });
 }
