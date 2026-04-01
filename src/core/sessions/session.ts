@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import type { AgentInstance } from "../agents/agent-instance.js";
-import type { AgentCapabilities, AgentEvent, AgentSwitchEntry, Attachment, PermissionRequest, SessionStatus, SessionMode, ConfigOption, ModelInfo, SessionModeState, SessionModelState } from "../types.js";
+import type { AgentCapabilities, AgentEvent, AgentSwitchEntry, Attachment, PermissionRequest, SessionStatus, ConfigOption } from "../types.js";
 import { TypedEmitter } from "../utils/typed-emitter.js";
 import { PromptQueue } from "./prompt-queue.js";
 import { PermissionGate } from "./permission-gate.js";
@@ -47,12 +47,8 @@ export class Session extends TypedEmitter<SessionEvents> {
   name?: string;
   createdAt: Date = new Date();
   voiceMode: "off" | "next" | "on" = "off";
-  dangerousMode: boolean = false;
-  currentMode?: string;
-  availableModes: SessionMode[] = [];
   configOptions: ConfigOption[] = [];
-  currentModel?: string;
-  availableModels: ModelInfo[] = [];
+  clientOverrides: { bypassPermissions?: boolean } = {};
   agentCapabilities?: AgentCapabilities;
   archiving: boolean = false;
   promptCount: number = 0;
@@ -434,41 +430,32 @@ export class Session extends TypedEmitter<SessionEvents> {
 
   // --- ACP Mode / Config / Model State ---
 
-  setInitialAcpState(state: {
-    modes?: SessionModeState | null;
-    configOptions?: ConfigOption[] | null;
-    models?: SessionModelState | null;
-    agentCapabilities?: AgentCapabilities | null;
-  }): void {
-    if (state.modes) {
-      this.currentMode = state.modes.currentModeId;
-      this.availableModes = state.modes.availableModes;
-    }
-    if (state.configOptions) {
-      this.configOptions = state.configOptions;
-    }
-    if (state.models) {
-      this.currentModel = state.models.currentModelId;
-      this.availableModels = state.models.availableModels;
-    }
-    if (state.agentCapabilities) {
-      this.agentCapabilities = state.agentCapabilities;
-    }
+  setInitialConfigOptions(options: ConfigOption[]): void {
+    this.configOptions = options ?? [];
+  }
+
+  setAgentCapabilities(caps: AgentCapabilities | undefined): void {
+    this.agentCapabilities = caps;
+  }
+
+  getConfigOption(id: string): ConfigOption | undefined {
+    return this.configOptions.find(o => o.id === id);
+  }
+
+  getConfigByCategory(category: string): ConfigOption | undefined {
+    return this.configOptions.find(o => o.category === category);
+  }
+
+  getConfigValue(id: string): string | undefined {
+    const option = this.getConfigOption(id);
+    if (!option) return undefined;
+    return String(option.currentValue);
   }
 
   /** Set session name explicitly and emit 'named' event */
   setName(name: string): void {
     this.name = name;
     this.emit("named", name);
-  }
-
-  async updateMode(modeId: string): Promise<void> {
-    // Hook: mode:beforeChange — await-able, can block
-    if (this.middlewareChain) {
-      const result = await this.middlewareChain.execute('mode:beforeChange', { sessionId: this.id, fromMode: this.currentMode, toMode: modeId }, async (p) => p);
-      if (!result) return; // blocked by middleware
-    }
-    this.currentMode = modeId;
   }
 
   async updateConfigOptions(options: ConfigOption[]): Promise<void> {
@@ -480,23 +467,10 @@ export class Session extends TypedEmitter<SessionEvents> {
     this.configOptions = options;
   }
 
-  async updateModel(modelId: string): Promise<void> {
-    // Hook: model:beforeChange — await-able, can block
-    if (this.middlewareChain) {
-      const result = await this.middlewareChain.execute('model:beforeChange', { sessionId: this.id, fromModel: this.currentModel, toModel: modelId }, async (p) => p);
-      if (!result) return; // blocked by middleware
-    }
-    this.currentModel = modelId;
-  }
-
   /** Snapshot of current ACP state for persistence */
   toAcpStateSnapshot(): NonNullable<import("../types.js").SessionRecord["acpState"]> {
     return {
-      currentMode: this.currentMode,
-      availableModes: this.availableModes.length > 0 ? this.availableModes : undefined,
       configOptions: this.configOptions.length > 0 ? this.configOptions : undefined,
-      currentModel: this.currentModel,
-      availableModels: this.availableModels.length > 0 ? this.availableModels : undefined,
       agentCapabilities: this.agentCapabilities,
     };
   }
@@ -563,10 +537,6 @@ export class Session extends TypedEmitter<SessionEvents> {
 
     // Reset agent-specific ACP state (will be re-populated by new agent)
     this.agentCapabilities = undefined;
-    this.currentMode = undefined;
-    this.availableModes = [];
-    this.currentModel = undefined;
-    this.availableModels = [];
     this.configOptions = [];
 
     this.log.info({ from: this.agentSwitchHistory.at(-1)!.agentName, to: agentName }, "Agent switched");
