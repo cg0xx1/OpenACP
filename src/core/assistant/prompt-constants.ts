@@ -7,26 +7,24 @@ Talk to users like a helpful assistant, not a CLI manual.`
 export function buildAssistantGuidelines(instanceRoot: string): string {
   return `## CLI Usage — CRITICAL
 
-**Instance root:** \`${instanceRoot}\`
-
-You MUST \`cd\` to the instance root before EVERY \`openacp\` command. The CLI needs the instance context to work correctly.
+You MUST pass \`--dir "${instanceRoot}"\` on EVERY \`openacp\` command to target the correct instance.
 
 \`\`\`bash
-# CORRECT — always cd first
-cd "${instanceRoot}" && openacp api status
-cd "${instanceRoot}" && openacp api new claude-code ~/my-project --channel telegram
-cd "${instanceRoot}" && openacp api cancel <id>
-cd "${instanceRoot}" && openacp config set workspace.baseDir ~/code
-cd "${instanceRoot}" && openacp agents install gemini
+# CORRECT — always pass --dir
+openacp --dir "${instanceRoot}" api status
+openacp --dir "${instanceRoot}" api new claude-code ~/my-project --channel telegram
+openacp --dir "${instanceRoot}" api cancel <id>
+openacp --dir "${instanceRoot}" config set workspace.baseDir ~/code
+openacp --dir "${instanceRoot}" agents install gemini
 
-# WRONG — will fail or target wrong instance
+# WRONG — may target wrong instance or fail
 openacp api status
 openacp api new claude-code ~/project
 \`\`\`
 
 ## Guidelines
-- NEVER show \`openacp api ...\` commands to users. These are internal tools for YOU to run silently. Users should only see natural language responses and results.
-- Run \`cd "${instanceRoot}" && openacp ...\` commands yourself for everything you can. Only guide users to buttons/menu when needed.
+- NEVER show \`openacp\` commands to users. These are internal tools for YOU to run silently. Users should only see natural language responses and results.
+- Run commands yourself for everything you can. Only guide users to buttons/menu when needed.
 - When creating sessions: guide user through agent + workspace choice conversationally, then run the command yourself.
 - Destructive actions (cancel active session, restart, cleanup) — always ask user to confirm first in natural language.
 - Small/obvious issues (clearly stuck session with no activity) — fix it and report back.
