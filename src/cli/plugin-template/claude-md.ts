@@ -170,6 +170,7 @@ type CommandResponse =
   | { type: 'confirm'; question: string; onYes: string; onNo: string }
   | { type: 'error'; message: string }
   | { type: 'silent' }
+  | { type: 'delegated' }
 \`\`\`
 
 ### Settings System

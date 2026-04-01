@@ -10,8 +10,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     usage: '[agent-name]',
     category: 'system',
     handler: async (args) => {
-      const core = args.coreAccess as any
-      if (!core) return { type: 'error', message: 'Core access not available' }
       const parts = args.raw.trim().split(/\s+/).filter(Boolean)
       const agent = parts[0] || undefined
       const workspace = parts[1] || undefined
@@ -36,8 +34,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Cancel the current agent turn',
     category: 'system',
     handler: async (args) => {
-      const core = args.coreAccess as any
-      if (!core) return { type: 'error', message: 'Core access not available' }
       if (args.sessionId) {
         const session = core.sessionManager.getSession(args.sessionId)
         if (session) {
@@ -55,8 +51,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Show current session status',
     category: 'system',
     handler: async (args) => {
-      const core = args.coreAccess as any
-      if (!core) return { type: 'error', message: 'Core access not available' }
       if (args.sessionId) {
         const session = core.sessionManager.getSession(args.sessionId)
         if (session) {
@@ -74,8 +68,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'List all active sessions',
     category: 'system',
     handler: async (args) => {
-      const core = args.coreAccess as any
-      if (!core) return { type: 'error', message: 'Core access not available' }
       const records = core.sessionManager.listRecords()
       if (records.length === 0) return { type: 'text', text: 'No sessions.' }
       const items = records.map((r: any) => ({
@@ -91,8 +83,7 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     description: 'Clear session history',
     category: 'system',
     handler: async (args) => {
-      const core = args.coreAccess as any
-      if (!core?.assistantManager) return { type: 'error', message: 'Assistant not available' }
+      if (!core.assistantManager) return { type: 'error', message: 'Assistant not available' }
       const assistant = core.assistantManager.get(args.channelId)
       if (!assistant) return { type: 'error', message: 'No assistant session for this channel.' }
       await core.assistantManager.respawn(args.channelId, assistant.threadId)
@@ -106,8 +97,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     category: 'system',
     handler: async (args) => {
       if (!args.sessionId) return { type: 'text', text: 'Use /newchat inside a session topic.' }
-      const core = args.coreAccess as any
-      if (!core) return { type: 'error', message: 'Core access not available' }
       const session = core.sessionManager.getSession(args.sessionId)
       if (!session) return { type: 'error', message: 'No session in this topic.' }
       const newSession = await core.handleNewSession(args.channelId, session.agentName, session.workingDirectory)
@@ -121,8 +110,7 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     usage: '<session-number>',
     category: 'system',
     handler: async (args) => {
-      const core = args.coreAccess as any
-      const assistant = core?.assistantManager?.get(args.channelId)
+      const assistant = core.assistantManager?.get(args.channelId)
       if (assistant && !args.sessionId) {
         await assistant.enqueuePrompt('User wants to resume a previous session. Show available sessions and guide them.')
         return { type: 'delegated' }
@@ -138,8 +126,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
     category: 'system',
     handler: async (args) => {
       if (!args.sessionId) return { type: 'text', text: 'Use /handoff inside a session topic.' }
-      const core = args.coreAccess as any
-      if (!core) return { type: 'error', message: 'Core access not available' }
       const session = core.sessionManager.getSession(args.sessionId)
       if (!session) return { type: 'error', message: 'No session in this topic.' }
       const { getAgentCapabilities } = await import('../agents/agent-registry.js')
