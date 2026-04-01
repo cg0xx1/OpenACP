@@ -392,21 +392,11 @@ export interface MiddlewarePayloadMap {
   }
 
   // === Control ===
-  'mode:beforeChange': {
-    sessionId: string
-    fromMode: string | undefined
-    toMode: string
-  }
   'config:beforeChange': {
     sessionId: string
     configId: string
     oldValue: unknown
     newValue: unknown
-  }
-  'model:beforeChange': {
-    sessionId: string
-    fromModel: string | undefined
-    toModel: string
   }
   'agent:beforeCancel': {
     sessionId: string

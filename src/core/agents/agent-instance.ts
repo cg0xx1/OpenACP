@@ -527,10 +527,10 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
             break;
           }
           // NOTE: model_update is NOT a session update type in the ACP SDK schema.
-          // Model changes are applied via the unstable_setSessionModel() method and
-          // the response is synchronous — the SDK does not push a model_update
-          // notification to the client. Therefore AgentEvent "model_update" cannot
-          // originate from sessionUpdate and must be emitted by callers of setModel()
+          // Model changes are applied via setSessionConfigOption() and the response
+          // is synchronous — the SDK does not push a model_update notification to
+          // the client. Therefore AgentEvent "model_update" cannot originate from
+          // sessionUpdate and must be emitted by callers of setConfigOption()
           // if they need to propagate the change downstream.
           default:
             // Unknown update type — ignore
@@ -628,10 +628,6 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
 
   // ── New ACP methods ──────────────────────────────────────────────────
 
-  async setMode(modeId: string): Promise<void> {
-    await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
-  }
-
   async setConfigOption(
     configId: string,
     value: SetConfigOptionValue,
@@ -641,13 +637,6 @@ export class AgentInstance extends TypedEmitter<AgentInstanceEvents> {
       configId,
       ...value,
     } as any);
-  }
-
-  async setModel(modelId: string): Promise<void> {
-    await this.connection.unstable_setSessionModel({
-      sessionId: this.sessionId,
-      modelId,
-    });
   }
 
   async listSessions(

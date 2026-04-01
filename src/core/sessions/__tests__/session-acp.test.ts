@@ -12,9 +12,7 @@ function mockAgentInstance() {
     prompt: vi.fn().mockResolvedValue({ stopReason: 'end_turn' }),
     cancel: vi.fn().mockResolvedValue(undefined),
     destroy: vi.fn().mockResolvedValue(undefined),
-    setMode: vi.fn().mockResolvedValue(undefined),
     setConfigOption: vi.fn().mockResolvedValue({ configOptions: [] }),
-    setModel: vi.fn().mockResolvedValue(undefined),
     onPermissionRequest: vi.fn(),
   } as unknown as AgentInstance
 }

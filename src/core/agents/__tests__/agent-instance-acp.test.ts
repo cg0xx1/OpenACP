@@ -139,19 +139,9 @@ describe("AgentInstance tool event rawOutput field", () => {
 
 describe("AgentInstance new ACP methods exist", () => {
   // We import the class to verify method existence on the prototype
-  it("has setMode method", async () => {
-    const { AgentInstance } = await import("../agent-instance.js");
-    expect(typeof AgentInstance.prototype.setMode).toBe("function");
-  });
-
   it("has setConfigOption method", async () => {
     const { AgentInstance } = await import("../agent-instance.js");
     expect(typeof AgentInstance.prototype.setConfigOption).toBe("function");
-  });
-
-  it("has setModel method", async () => {
-    const { AgentInstance } = await import("../agent-instance.js");
-    expect(typeof AgentInstance.prototype.setModel).toBe("function");
   });
 
   it("has listSessions method", async () => {

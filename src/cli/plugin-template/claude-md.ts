@@ -249,9 +249,7 @@ Register with \`ctx.registerMiddleware(hook, { priority?, handler })\`. Return \
 - \`session:afterDestroy\` — after session destroyed (sessionId, reason, durationMs, promptCount)
 
 ### Control
-- \`mode:beforeChange\` — before mode change (sessionId, fromMode, toMode)
 - \`config:beforeChange\` — before config change (sessionId, configId, oldValue, newValue)
-- \`model:beforeChange\` — before model change (sessionId, fromModel, toModel)
 - \`agent:beforeCancel\` — before agent cancellation (sessionId, reason)
 - \`agent:beforeSwitch\` — **blocking** before agent switch (sessionId, fromAgent, toAgent). Return null/false to block.
 - \`agent:afterSwitch\` — **fire-and-forget** after agent switch (sessionId, fromAgent, toAgent, resumed). Observational only.
