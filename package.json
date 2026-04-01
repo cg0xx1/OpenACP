@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc && mkdir -p dist/data && cp src/data/registry-snapshot.json dist/data/",
     "build:publish": "tsx scripts/build-publish.ts",
-    "dev": "tsc --watch",
+    "dev": "./scripts/dev-loop.sh",
     "dev:loop": "./scripts/dev-loop.sh",
     "start": "node dist/cli.js",
     "debug": "OPENACP_DEBUG=true pnpm start 2>&1 | pino-pretty",
