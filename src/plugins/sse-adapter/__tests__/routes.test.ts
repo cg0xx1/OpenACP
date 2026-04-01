@@ -14,7 +14,7 @@ function createMockSession(overrides: Record<string, unknown> = {}) {
     name: 'Test Session',
     workingDirectory: '/tmp',
     createdAt: new Date(),
-    dangerousMode: false,
+    clientOverrides: {},
     queueDepth: 0,
     promptRunning: false,
     threadId: 'sess-1',

@@ -9,14 +9,9 @@ import type { FileServiceInterface } from "../plugin/types.js";
 import type { MiddlewareChain } from "../plugin/middleware-chain.js";
 import type { DebugTracer } from "../utils/debug-tracer.js";
 import { createChildLogger } from "../utils/log.js";
+import { isPermissionBypass } from "../utils/bypass-detection.js";
 
 const log = createChildLogger({ module: "session-bridge" });
-
-const BYPASS_KEYWORDS = ["bypass", "dangerous", "skip", "dontask", "dont_ask", "auto_accept"];
-function isPermissionBypass(value: string): boolean {
-  const lower = value.toLowerCase();
-  return BYPASS_KEYWORDS.some(kw => lower.includes(kw));
-}
 
 export interface BridgeDeps {
   messageTransformer: MessageTransformer;
@@ -292,7 +287,7 @@ export class SessionBridge {
     return outgoing;
   }
 
-  /** Persist current ACP state (mode, config, model) to session store as cache */
+  /** Persist current ACP state (configOptions, agentCapabilities) to session store as cache */
   private persistAcpState(): void {
     this.deps.sessionManager.patchRecord(this.session.id, {
       acpState: this.session.toAcpStateSnapshot(),

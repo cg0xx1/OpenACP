@@ -5,12 +5,8 @@ import type { ConfigOption, ConfigSelectChoice, ConfigSelectGroup } from '../typ
 
 // ── Bypass keyword detection ─────────────────────────────────────────
 
-const BYPASS_KEYWORDS = ['bypass', 'dangerous', 'skip', 'dontask', 'dont_ask', 'auto_accept']
-
-export function isPermissionBypass(value: string): boolean {
-  const lower = value.toLowerCase()
-  return BYPASS_KEYWORDS.some(kw => lower.includes(kw))
-}
+import { isPermissionBypass } from '../utils/bypass-detection.js'
+export { isPermissionBypass } from '../utils/bypass-detection.js'
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -167,7 +163,8 @@ function registerDangerousCommand(registry: CommandRegistry, core: OpenACPCore):
             { type: 'select', value: targetValue },
           )
           if (response.configOptions) {
-            await session.updateConfigOptions(response.configOptions as ConfigOption[])
+            // Direct assignment — skip middleware since config:beforeChange was already validated above via setConfigOption
+            session.configOptions = response.configOptions as ConfigOption[]
           }
           return {
             type: 'text',

@@ -68,9 +68,9 @@ export function setupDangerousModeCallbacks(bot: Bot, core: OpenACPCore): void {
       return;
     }
 
-    const newDangerousMode = !(record.dangerousMode ?? false);
+    const newDangerousMode = !(record.clientOverrides?.bypassPermissions ?? record.dangerousMode ?? false);
     core.sessionManager
-      .patchRecord(sessionId, { dangerousMode: newDangerousMode })
+      .patchRecord(sessionId, { clientOverrides: { bypassPermissions: newDangerousMode } })
       .catch(() => {});
     log.info(
       { sessionId, dangerousMode: newDangerousMode },
@@ -138,14 +138,14 @@ export async function handleEnableDangerous(
       });
       return;
     }
-    if (record.dangerousMode) {
+    if (record.clientOverrides?.bypassPermissions ?? record.dangerousMode) {
       await ctx.reply("☠️ Dangerous mode is already enabled.", {
         parse_mode: "HTML",
       });
       return;
     }
     core.sessionManager
-      .patchRecord(record.sessionId, { dangerousMode: true })
+      .patchRecord(record.sessionId, { clientOverrides: { bypassPermissions: true } })
       .catch(() => {});
   }
   await ctx.reply(
@@ -192,14 +192,14 @@ export async function handleDisableDangerous(
       });
       return;
     }
-    if (!record.dangerousMode) {
+    if (!(record.clientOverrides?.bypassPermissions ?? record.dangerousMode)) {
       await ctx.reply("🔐 Dangerous mode is already disabled.", {
         parse_mode: "HTML",
       });
       return;
     }
     core.sessionManager
-      .patchRecord(record.sessionId, { dangerousMode: false })
+      .patchRecord(record.sessionId, { clientOverrides: { bypassPermissions: false } })
       .catch(() => {});
   }
   await ctx.reply(

@@ -11,7 +11,7 @@ export interface EventBusEvents {
     sessionId: string;
     status?: SessionStatus;
     name?: string;
-    dangerousMode?: boolean;
+    clientOverrides?: { bypassPermissions?: boolean };
   }) => void;
   "session:deleted": (data: { sessionId: string }) => void;
   "agent:event": (data: { sessionId: string; event: AgentEvent }) => void;
