@@ -554,7 +554,7 @@ validate_args() {
         exit 1
     fi
 
-    # Validate --version: allow 'latest', 'main', semver (YYYY.MDD.patch), or simple dist-tag
+    # Validate --version: allow 'latest', 'main', semver (YYYY.MMDD.patch), or simple dist-tag
     if [[ "$INSTALL_TAG" != "latest" && "$INSTALL_TAG" != "main" ]]; then
         if ! [[ "$INSTALL_TAG" =~ ^[a-zA-Z0-9._-]+$ ]]; then
             echo "Error: --version contains invalid characters: $INSTALL_TAG" >&2
