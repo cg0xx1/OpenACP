@@ -125,9 +125,13 @@ export class TokenStore {
     }
   }
 
-  /** Wait for any in-flight save to complete */
+  /** Wait for any in-flight and pending saves to complete */
   async flush(): Promise<void> {
-    if (this.savePromise) await this.savePromise;
+    while (this.savePromise || this.savePending) {
+      if (this.savePromise) await this.savePromise;
+      // After awaiting, scheduleSave may have re-fired if savePending was true.
+      // Loop until fully drained.
+    }
   }
 
   destroy(): void {

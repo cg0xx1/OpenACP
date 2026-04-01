@@ -170,9 +170,12 @@ function createTunnelPlugin(): OpenACPPlugin {
         ctx.log.warn('API server not available — viewer links will be unavailable')
       }
 
-      // Start tunnel — pass API server port instead of booting separate Hono server
-      const apiPort = apiServer?.getPort() ?? 0
-      const publicUrl = await tunnelSvc.start(apiPort)
+      // Defer tunnel start until system:ready — API server is guaranteed to be listening by then
+      ctx.on('system:ready', async () => {
+        const apiPort = apiServer?.getPort() ?? 0
+        const publicUrl = await tunnelSvc.start(apiPort)
+        ctx.log.info(`Tunnel ready: ${publicUrl}`)
+      })
       service = tunnelSvc
 
       ctx.registerService('tunnel', tunnelSvc)
@@ -243,7 +246,6 @@ function createTunnelPlugin(): OpenACPPlugin {
         },
       })
 
-      ctx.log.info(`Tunnel ready: ${publicUrl}`)
     },
 
     async teardown() {

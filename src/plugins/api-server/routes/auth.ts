@@ -156,7 +156,11 @@ export async function authRoutes(
   app.get('/codes', {
     preHandler: [requireScopes('auth:manage')],
   }, async (_request, reply) => {
-    return reply.send({ codes: tokenStore.listCodes() });
+    const codes = tokenStore.listCodes().map(c => ({
+      ...c,
+      code: c.code.slice(0, 8) + '...',
+    }));
+    return reply.send({ codes });
   });
 
   // DELETE /codes/:code — revoke unused code (auth:manage scope)

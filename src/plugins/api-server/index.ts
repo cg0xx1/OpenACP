@@ -255,6 +255,8 @@ function createApiServerPlugin(): OpenACPPlugin {
       server.registerPlugin('/api/v1/auth', async (app) => authRoutes(app, { tokenStore, getJwtSecret: () => jwtSecret }))
 
       // Exchange endpoint — NO auth (code in body IS the credential)
+      // Fastify encapsulation makes dual registerPlugin on the same prefix safe —
+      // each registration gets its own scope with independent hooks.
       server.registerPlugin('/api/v1/auth', async (app) => {
         const { ExchangeCodeBodySchema } = await import('./schemas/auth.js')
         const { signToken } = await import('./auth/jwt.js')

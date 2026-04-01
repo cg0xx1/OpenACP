@@ -23,7 +23,8 @@ describe('TokenStore — codes', () => {
     await store.load()
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    await store.flush()
     store.destroy()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
@@ -176,6 +177,7 @@ describe('Auth code endpoints', () => {
 
   afterEach(async () => {
     await server.stop()
+    await store.flush()
     store.destroy()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
