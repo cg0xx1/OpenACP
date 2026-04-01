@@ -421,10 +421,12 @@ export class OpenACPCore {
       adapter.flushPendingSkillCommands?.(session.id).catch((err) => {
         log.warn({ err, sessionId: session.id }, "Failed to flush pending skill commands");
       });
-      // Notify adapter that session is fully ready (sends initial/control messages)
-      if (params.createThread) {
-        adapter.onSessionCreated?.(session.id).catch((err) => {
-          log.warn({ err, sessionId: session.id }, "onSessionCreated hook failed");
+      // Signal that thread is ready — all listeners (adapters, plugins, etc.) can react
+      if (params.createThread && session.threadId) {
+        this.eventBus.emit("session:threadReady", {
+          sessionId: session.id,
+          channelId: params.channelId,
+          threadId: session.threadId,
         });
       }
     }

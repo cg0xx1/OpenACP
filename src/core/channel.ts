@@ -43,12 +43,6 @@ export interface IChannelAdapter {
 
   // Agent switch cleanup — optional, called when switching agents to clear adapter-side per-session state
   cleanupSessionState?(sessionId: string): Promise<void>
-
-  /**
-   * Called by core after a session is fully created (thread assigned, record persisted, bridge connected).
-   * Adapters can implement this to send initial messages, control messages, etc.
-   */
-  onSessionCreated?(sessionId: string): Promise<void>
 }
 
 /**

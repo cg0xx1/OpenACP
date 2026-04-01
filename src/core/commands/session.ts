@@ -14,7 +14,7 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
       const agent = parts[0] || undefined
       const workspace = parts[1] || undefined
       if (agent && workspace) {
-        const session = await core.handleNewSession(args.channelId, agent, workspace)
+        const session = await core.handleNewSession(args.channelId, agent, workspace, { createThread: true })
         return { type: 'text', text: `✅ Session created: ${session.name || session.id}` }
       }
       const assistant = core.assistantManager?.get(args.channelId)
