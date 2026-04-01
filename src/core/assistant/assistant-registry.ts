@@ -36,9 +36,13 @@ export class AssistantRegistry {
     this.sections.delete(id)
   }
 
-  buildSystemPrompt(): string {
+  buildSystemPrompt(channelId?: string): string {
     const sorted = [...this.sections.values()].sort((a, b) => a.priority - b.priority)
     const parts: string[] = [ASSISTANT_PREAMBLE]
+
+    if (channelId) {
+      parts.push(`## Current Channel\nYou are responding on the **${channelId}** channel. Adapt your formatting and behavior to this platform.`)
+    }
 
     for (const section of sorted) {
       try {
