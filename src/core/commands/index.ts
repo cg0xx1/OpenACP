@@ -5,6 +5,7 @@ import { registerAdminCommands } from './admin.js'
 import { registerHelpCommand } from './help.js'
 import { registerMenuCommand } from './menu.js'
 import { registerSwitchCommands } from './switch.js'
+import { registerConfigCommands } from './config.js'
 
 export function registerSystemCommands(registry: CommandRegistry, core: unknown): void {
   registerSessionCommands(registry, core)
@@ -13,4 +14,5 @@ export function registerSystemCommands(registry: CommandRegistry, core: unknown)
   registerHelpCommand(registry, core)
   registerMenuCommand(registry, core)
   registerSwitchCommands(registry)
+  registerConfigCommands(registry, core)
 }
