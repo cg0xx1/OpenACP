@@ -383,8 +383,8 @@ describe("SessionBridge — Permission Auto-Approve", () => {
     expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it("auto-approves in dangerous mode", async () => {
-    session.dangerousMode = true;
+  it("auto-approves when clientOverrides.bypassPermissions is true", async () => {
+    session.clientOverrides = { bypassPermissions: true };
 
     const result = await agent.onPermissionRequest({
       id: "p2",
@@ -399,8 +399,8 @@ describe("SessionBridge — Permission Auto-Approve", () => {
     expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it("does not auto-approve in dangerous mode if no isAllow option", async () => {
-    session.dangerousMode = true;
+  it("does not auto-approve with bypass if no isAllow option", async () => {
+    session.clientOverrides = { bypassPermissions: true };
 
     const promise = agent.onPermissionRequest({
       id: "p3",

@@ -6,7 +6,7 @@ import type { IChannelAdapter } from "../../channel.js";
 import type { MessageTransformer } from "../../message-transformer.js";
 import type { NotificationManager } from "../../../plugins/notifications/notification.js";
 import type { SessionManager } from "../session-manager.js";
-import type { AgentEvent, PermissionRequest } from "../../types.js";
+import type { AgentEvent, PermissionRequest, ConfigOption } from "../../types.js";
 import { TypedEmitter } from "../../utils/typed-emitter.js";
 
 function createMockAgentInstance(): AgentInstance {
@@ -74,6 +74,16 @@ function makePermissionRequest(description: string): PermissionRequest {
   };
 }
 
+function makePermissionRequestNoAllow(description: string): PermissionRequest {
+  return {
+    id: "req-1",
+    description,
+    options: [
+      { id: "deny-1", label: "Deny", isAllow: false },
+    ],
+  };
+}
+
 describe("SessionBridge auto-approve", () => {
   let agent: AgentInstance;
   let session: Session;
@@ -108,8 +118,10 @@ describe("SessionBridge auto-approve", () => {
     expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
   });
 
-  it("auto-approves when dangerousMode is enabled", async () => {
-    session.dangerousMode = true;
+  // --- Client-side bypass via clientOverrides ---
+
+  it("auto-approves when clientOverrides.bypassPermissions is true", async () => {
+    session.clientOverrides = { bypassPermissions: true };
     const request = makePermissionRequest("Execute rm -rf /important");
 
     const result = await agent.onPermissionRequest(request);
@@ -117,6 +129,125 @@ describe("SessionBridge auto-approve", () => {
     expect(result).toBe("allow-1");
     expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
   });
+
+  // --- Agent-side bypass via configOptions with bypass keyword ---
+
+  it("auto-approves when agent mode config currentValue matches bypass keyword", async () => {
+    session.setInitialConfigOptions([
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "bypassPermissions",
+        options: [{ value: "bypassPermissions", label: "Bypass" }],
+      },
+    ]);
+    const request = makePermissionRequest("Delete important file");
+
+    const result = await agent.onPermissionRequest(request);
+
+    expect(result).toBe("allow-1");
+    expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  it("auto-approves when agent mode config currentValue contains 'dangerous'", async () => {
+    session.setInitialConfigOptions([
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "dangerous_mode",
+        options: [{ value: "dangerous_mode", label: "Dangerous" }],
+      },
+    ]);
+    const request = makePermissionRequest("Execute something risky");
+
+    const result = await agent.onPermissionRequest(request);
+
+    expect(result).toBe("allow-1");
+    expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  // --- No bypass scenarios ---
+
+  it("does NOT auto-approve when mode is 'code' (not a bypass keyword)", async () => {
+    session.setInitialConfigOptions([
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "code",
+        options: [{ value: "code", label: "Code" }],
+      },
+    ]);
+    const request = makePermissionRequest("Delete file");
+
+    const resultPromise = agent.onPermissionRequest(request);
+
+    expect(adapter.sendPermissionRequest).toHaveBeenCalled();
+
+    session.permissionGate.resolve("deny-1");
+    const result = await resultPromise;
+    expect(result).toBe("deny-1");
+  });
+
+  it("does NOT auto-approve when clientOverrides is empty and no bypass mode", async () => {
+    session.clientOverrides = {};
+    session.setInitialConfigOptions([]);
+    const request = makePermissionRequest("Delete file");
+
+    const resultPromise = agent.onPermissionRequest(request);
+
+    expect(adapter.sendPermissionRequest).toHaveBeenCalled();
+
+    session.permissionGate.resolve("deny-1");
+    const result = await resultPromise;
+    expect(result).toBe("deny-1");
+  });
+
+  // --- Either bypass source triggers auto-approve ---
+
+  it("auto-approves when EITHER agent bypass OR client bypass is true", async () => {
+    // Both are set
+    session.clientOverrides = { bypassPermissions: true };
+    session.setInitialConfigOptions([
+      {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        type: "select",
+        currentValue: "auto_accept",
+        options: [{ value: "auto_accept", label: "Auto Accept" }],
+      },
+    ]);
+    const request = makePermissionRequest("Delete something");
+
+    const result = await agent.onPermissionRequest(request);
+
+    expect(result).toBe("allow-1");
+    expect(adapter.sendPermissionRequest).not.toHaveBeenCalled();
+  });
+
+  // --- Edge case: no isAllow option even with bypass enabled ---
+
+  it("does not auto-approve if no isAllow option even with bypass enabled", async () => {
+    session.clientOverrides = { bypassPermissions: true };
+    const request = makePermissionRequestNoAllow("Something dangerous");
+
+    const resultPromise = agent.onPermissionRequest(request);
+
+    // Should fall through to normal UI flow since there's no allow option
+    expect(adapter.sendPermissionRequest).toHaveBeenCalled();
+
+    session.permissionGate.resolve("deny-1");
+    const result = await resultPromise;
+    expect(result).toBe("deny-1");
+  });
+
+  // --- Existing tests ---
 
   it("forwards normal requests to the adapter", async () => {
     const request = makePermissionRequest("Delete file foo.txt");
@@ -145,5 +276,35 @@ describe("SessionBridge auto-approve", () => {
 
     session.permissionGate.resolve("allow-1");
     await resultPromise;
+  });
+
+  // --- Bypass keyword coverage ---
+
+  it("recognizes all bypass keywords in mode values", async () => {
+    const keywords = ["bypass", "dangerous", "skip", "dontask", "dont_ask", "auto_accept"];
+
+    for (const kw of keywords) {
+      const agent = createMockAgentInstance();
+      const session = createSession(agent);
+      const adapter = createMockAdapter();
+      const deps = createMockDeps();
+      const bridge = new SessionBridge(session, adapter, deps);
+      bridge.connect();
+
+      session.setInitialConfigOptions([
+        {
+          id: "mode",
+          name: "Mode",
+          category: "mode",
+          type: "select",
+          currentValue: kw,
+          options: [{ value: kw, label: kw }],
+        },
+      ]);
+
+      const request = makePermissionRequest("Some action");
+      const result = await agent.onPermissionRequest(request);
+      expect(result).toBe("allow-1");
+    }
   });
 });

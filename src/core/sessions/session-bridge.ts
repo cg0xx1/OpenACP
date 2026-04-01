@@ -12,6 +12,12 @@ import { createChildLogger } from "../utils/log.js";
 
 const log = createChildLogger({ module: "session-bridge" });
 
+const BYPASS_KEYWORDS = ["bypass", "dangerous", "skip", "dontask", "dont_ask", "auto_accept"];
+function isPermissionBypass(value: string): boolean {
+  const lower = value.toLowerCase();
+  return BYPASS_KEYWORDS.some(kw => lower.includes(kw));
+}
+
 export interface BridgeDeps {
   messageTransformer: MessageTransformer;
   notificationManager: NotificationManager;
@@ -255,22 +261,8 @@ export class SessionBridge {
           this.sendMessage(this.session.id, outgoing);
           break;
 
-        case "current_mode_update":
-          this.session.updateMode(event.modeId);
-          this.persistAcpState();
-          outgoing = this.deps.messageTransformer.transform(event);
-          this.sendMessage(this.session.id, outgoing);
-          break;
-
         case "config_option_update":
           this.session.updateConfigOptions(event.options);
-          this.persistAcpState();
-          outgoing = this.deps.messageTransformer.transform(event);
-          this.sendMessage(this.session.id, outgoing);
-          break;
-
-        case "model_update":
-          this.session.updateModel(event.modelId);
           this.persistAcpState();
           outgoing = this.deps.messageTransformer.transform(event);
           this.sendMessage(this.session.id, outgoing);
@@ -357,13 +349,18 @@ export class SessionBridge {
         }
       }
 
-      // Dangerous mode: auto-approve all permissions
-      if (this.session.dangerousMode) {
+      // Bypass mode: auto-approve all permissions (agent-side or client-side)
+      const modeOption = this.session.getConfigByCategory("mode");
+      const isAgentBypass = modeOption && isPermissionBypass(
+        typeof modeOption.currentValue === "string" ? modeOption.currentValue : ""
+      );
+      const isClientBypass = this.session.clientOverrides.bypassPermissions;
+      if (isAgentBypass || isClientBypass) {
         const allowOption = permReq.options.find((o) => o.isAllow);
         if (allowOption) {
           log.info(
-            { sessionId: this.session.id, requestId: permReq.id, optionId: allowOption.id },
-            "Dangerous mode: auto-approving permission",
+            { sessionId: this.session.id, requestId: permReq.id, optionId: allowOption.id, agentBypass: !!isAgentBypass, clientBypass: !!isClientBypass },
+            "Bypass mode: auto-approving permission",
           );
           // Hook: permission:afterResolve — read-only, fire-and-forget
           if (mw) {
