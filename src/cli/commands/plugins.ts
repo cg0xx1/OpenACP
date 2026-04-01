@@ -46,7 +46,7 @@ Shows all plugins registered in the plugin registry.
  *   configure <name>    — Run interactive configuration for a plugin
  */
 export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Promise<void> {
-  const subcommand = args[1] // args[0] is 'plugin'
+  const subcommand = args[0]
 
   if (wantsHelp(args) || !subcommand) {
     console.log(`
@@ -55,7 +55,8 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 \x1b[1mUsage:\x1b[0m
   openacp plugin list                    List all plugins with status
   openacp plugin search <query>          Search the plugin registry
-  openacp plugin add <package>[@version]  Install a plugin package
+  openacp plugin add <package>[@version]  Install a plugin from npm
+  openacp plugin add <dir>               Install a plugin from local directory
   openacp plugin install <package>       Alias for add
   openacp plugin remove <package>        Remove a plugin package
   openacp plugin uninstall <package>     Alias for remove (--purge to delete data)
@@ -69,6 +70,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
   openacp plugin search telegram
   openacp plugin add @openacp/adapter-discord
   openacp plugin add translator@1.2.0
+  openacp plugin add ./my-plugin            Install from local directory
   openacp plugin enable @openacp/adapter-discord
   openacp plugin configure @openacp/adapter-discord
   openacp plugin remove @openacp/adapter-discord --purge
@@ -78,17 +80,17 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 
   switch (subcommand) {
     case 'list':
-      return cmdPlugins(args.slice(1), instanceRoot)
+      return cmdPlugins([], instanceRoot)
 
     case 'search': {
       const { cmdPluginSearch } = await import('./plugin-search.js')
-      await cmdPluginSearch(args.slice(2))
+      await cmdPluginSearch(args.slice(1))
       return
     }
 
     case 'add':
     case 'install': {
-      const pkg = args[2]
+      const pkg = args[1]
       if (!pkg) {
         console.error('Error: missing package name. Usage: openacp plugin add <package>')
         process.exit(1)
@@ -99,7 +101,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 
     case 'remove':
     case 'uninstall': {
-      const pkg = args[2]
+      const pkg = args[1]
       if (!pkg) {
         console.error('Error: missing package name. Usage: openacp plugin remove <package> [--purge]')
         process.exit(1)
@@ -110,7 +112,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
     }
 
     case 'enable': {
-      const name = args[2]
+      const name = args[1]
       if (!name) {
         console.error('Error: missing plugin name. Usage: openacp plugin enable <name>')
         process.exit(1)
@@ -120,7 +122,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
     }
 
     case 'disable': {
-      const name = args[2]
+      const name = args[1]
       if (!name) {
         console.error('Error: missing plugin name. Usage: openacp plugin disable <name>')
         process.exit(1)
@@ -130,7 +132,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
     }
 
     case 'configure': {
-      const name = args[2]
+      const name = args[1]
       if (!name) {
         console.error('Error: missing plugin name. Usage: openacp plugin configure <name>')
         process.exit(1)
