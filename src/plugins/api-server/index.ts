@@ -96,7 +96,7 @@ function createApiServerPlugin(): OpenACPPlugin {
     version: '1.0.0',
     description: 'REST API + SSE streaming server',
     essential: false,
-    permissions: ['services:register', 'kernel:access', 'events:read'],
+    permissions: ['services:register', 'services:use', 'kernel:access', 'events:read'],
 
     async install(ctx: InstallContext) {
       const { settings, legacyConfig, terminal } = ctx
@@ -176,6 +176,7 @@ function createApiServerPlugin(): OpenACPPlugin {
         host: (config.host as string) ?? '127.0.0.1',
       }
 
+      console.log(`[api-server] setup() called — port=${apiConfig.port}, host=${apiConfig.host}, instanceRoot=${instanceRoot}`)
       log.info(
         { port: apiConfig.port, host: apiConfig.host, instanceRoot },
         'API server plugin setup — config loaded',
@@ -314,6 +315,7 @@ function createApiServerPlugin(): OpenACPPlugin {
 
       // Start on system:ready
       ctx.on('system:ready', async () => {
+        console.log(`[api-server] system:ready fired — starting server on ${apiConfig.host}:${apiConfig.port}`)
         log.info(
           { configPort: apiConfig.port, configHost: apiConfig.host },
           'API server starting...',

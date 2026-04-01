@@ -19,7 +19,7 @@ const plugin: OpenACPPlugin = {
     '@openacp/security': '^1.0.0',
     '@openacp/notifications': '^1.0.0',
   },
-  permissions: ['services:register', 'kernel:access', 'events:read'],
+  permissions: ['services:register', 'services:use', 'kernel:access', 'events:read'],
 
   async setup(ctx) {
     const core = ctx.core as OpenACPCore;

@@ -263,6 +263,7 @@ export class LifecycleManager {
       } catch (err) {
         this._failed.add(plugin.name)
         ctx.cleanup()
+        console.error(`[lifecycle] Plugin ${plugin.name} setup() FAILED:`, err)
         this.getPluginLogger(plugin.name).error(`setup() failed: ${err}`)
         this.eventBus?.emit('plugin:failed', { name: plugin.name, error: String(err) })
       }
