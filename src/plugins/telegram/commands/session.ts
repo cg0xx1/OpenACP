@@ -353,6 +353,12 @@ export function setupSessionCallbacks(
         break;
     }
   });
+
+  // Refresh sessions list (button created by handleTopics)
+  bot.callbackQuery('m:topics', async (ctx) => {
+    try { await ctx.answerCallbackQuery() } catch { /* expired */ }
+    await handleTopics(ctx, core)
+  })
 }
 
 export async function handleArchive(

@@ -18,6 +18,7 @@ import { handleTunnel, handleTunnels, setupTunnelCallbacks } from "./tunnel.js";
 import { handleSwitch, setupSwitchCallbacks } from "./switch.js";
 import type { CommandRegistry } from "../../../core/command-registry.js";
 import type { MenuRegistry } from "../../../core/menu-registry.js";
+import { TELEGRAM_OVERRIDES } from './telegram-overrides.js'
 
 export function setupAllCallbacks(
   bot: Bot,
@@ -80,6 +81,19 @@ export function setupAllCallbacks(
 
     switch (item.action.type) {
       case 'command': {
+        // Check Telegram-specific override first
+        const cmdName = item.action.command.replace(/^\//, '').split(' ')[0]
+        const telegramOverride = TELEGRAM_OVERRIDES[cmdName]
+        if (telegramOverride) {
+          try {
+            await telegramOverride(ctx, core)
+          } catch (err) {
+            await ctx.reply(`⚠️ Command failed: ${String(err)}`).catch(() => {})
+          }
+          break
+        }
+
+        // Fallback: dispatch through CommandRegistry for commands without overrides
         if (!registry) return
         const response = await registry.execute(item.action.command, {
           raw: '',
@@ -127,9 +141,14 @@ export function setupAllCallbacks(
         }
         break
       }
-      case 'callback':
-        // Pass through to specific callback handlers
+      case 'callback': {
+        const cbData = item.action.callbackData
+        if (cbData === 's:settings') {
+          await handleSettings(ctx, core)
+        }
+        // ns: callbacks handled in Task 6 (New Session flow)
         break
+      }
     }
   })
 }
