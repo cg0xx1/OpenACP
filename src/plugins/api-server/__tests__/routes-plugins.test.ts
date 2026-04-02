@@ -284,6 +284,66 @@ describe('plugin routes', () => {
     })
   })
 
+  describe('DELETE /api/v1/plugins/:name', () => {
+    it('unloads and removes an npm plugin', async () => {
+      let unloaded: string[] = []
+      let removed: string[] = []
+
+      const lm = makeLifecycleManager({
+        registryEntries: {
+          '@openacp/translator': { source: 'npm', enabled: true },
+        },
+        loadedPlugins: ['@openacp/translator'],
+        unloadFn: async (name) => { unloaded.push(name) },
+      })
+      ;(lm.registry as any).remove = (name: string) => { removed.push(name) }
+
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'DELETE',
+        url: '/api/v1/plugins/@openacp%2Ftranslator',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(200)
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true })
+      expect(unloaded).toContain('@openacp/translator')
+      expect(removed).toContain('@openacp/translator')
+    })
+
+    it('returns 400 for builtin plugin', async () => {
+      const lm = makeLifecycleManager({
+        registryEntries: {
+          '@openacp/telegram': { source: 'builtin', enabled: true },
+        },
+      })
+
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'DELETE',
+        url: '/api/v1/plugins/@openacp%2Ftelegram',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(400)
+      expect(JSON.parse(res.body).error).toContain('Builtin')
+    })
+
+    it('returns 404 for unknown plugin', async () => {
+      await buildServer(makeLifecycleManager({}))
+
+      const res = await server!.app.inject({
+        method: 'DELETE',
+        url: '/api/v1/plugins/@openacp%2Funknown',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(404)
+    })
+  })
+
   describe('GET /api/v1/plugins/marketplace', () => {
     it('returns marketplace plugins with installed flag', async () => {
       const lm = makeLifecycleManager({

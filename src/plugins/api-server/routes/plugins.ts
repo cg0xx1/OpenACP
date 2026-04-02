@@ -132,6 +132,33 @@ export async function pluginRoutes(
     return { ok: true }
   })
 
+  // DELETE /plugins/:name — uninstall (remove from registry, unload)
+  app.delete('/:name', { preHandler: admin }, async (req, reply) => {
+    if (!lifecycleManager?.registry) {
+      return reply.status(503).send({ error: 'Plugin manager unavailable' })
+    }
+
+    const name = decodeURIComponent((req.params as { name: string }).name)
+    const registry = lifecycleManager.registry
+    const entry = registry.get(name)
+
+    if (!entry) {
+      return reply.status(404).send({ error: `Plugin "${name}" not found` })
+    }
+
+    if (entry.source === 'builtin') {
+      return reply
+        .status(400)
+        .send({ error: 'Builtin plugins cannot be uninstalled. Use disable instead.' })
+    }
+
+    await lifecycleManager.unloadPlugin(name)
+    registry.remove(name)
+    await registry.save()
+
+    return { ok: true }
+  })
+
   // GET /plugins/marketplace — proxy to RegistryClient with installed flag
   app.get('/marketplace', { preHandler: admin }, async (_req, reply) => {
     try {
