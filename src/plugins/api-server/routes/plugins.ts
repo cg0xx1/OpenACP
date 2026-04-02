@@ -40,6 +40,30 @@ export async function pluginRoutes(
     return { plugins }
   })
 
+  // GET /plugins/marketplace — proxy to RegistryClient with installed flag
+  app.get('/marketplace', { preHandler: admin }, async (_req, reply) => {
+    try {
+      const { RegistryClient } = await import('../../../core/plugin/registry-client.js')
+      const client = new RegistryClient()
+      const data = await client.getRegistry()
+
+      const installedNames = new Set(
+        lifecycleManager?.registry
+          ? Array.from(lifecycleManager.registry.list().keys())
+          : [],
+      )
+
+      const plugins = data.plugins.map((p) => ({
+        ...p,
+        installed: installedNames.has(p.name) || installedNames.has(p.npm),
+      }))
+
+      return { plugins, categories: data.categories }
+    } catch {
+      return reply.status(503).send({ error: 'Marketplace unavailable' })
+    }
+  })
+
   // POST /plugins/:name/enable — hot-load a disabled plugin
   app.post('/:name/enable', { preHandler: admin }, async (req, reply) => {
     if (!lifecycleManager?.registry) {
@@ -158,27 +182,4 @@ export async function pluginRoutes(
     return { ok: true }
   })
 
-  // GET /plugins/marketplace — proxy to RegistryClient with installed flag
-  app.get('/marketplace', { preHandler: admin }, async (_req, reply) => {
-    try {
-      const { RegistryClient } = await import('../../../core/plugin/registry-client.js')
-      const client = new RegistryClient()
-      const data = await client.getRegistry()
-
-      const installedNames = new Set(
-        lifecycleManager?.registry
-          ? Array.from(lifecycleManager.registry.list().keys())
-          : [],
-      )
-
-      const plugins = data.plugins.map((p) => ({
-        ...p,
-        installed: installedNames.has(p.name) || installedNames.has(p.npm),
-      }))
-
-      return { plugins, categories: data.categories }
-    } catch {
-      return reply.status(503).send({ error: 'Marketplace unavailable' })
-    }
-  })
 }
