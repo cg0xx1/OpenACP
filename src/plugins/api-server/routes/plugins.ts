@@ -102,6 +102,36 @@ export async function pluginRoutes(
     return { ok: true }
   })
 
+  // POST /plugins/:name/disable — unload and disable a plugin
+  app.post('/:name/disable', { preHandler: admin }, async (req, reply) => {
+    if (!lifecycleManager?.registry) {
+      return reply.status(503).send({ error: 'Plugin manager unavailable' })
+    }
+
+    const name = decodeURIComponent((req.params as { name: string }).name)
+    const registry = lifecycleManager.registry
+    const entry = registry.get(name)
+
+    if (!entry) {
+      return reply.status(404).send({ error: `Plugin "${name}" not found` })
+    }
+
+    // Check essential — look in loadOrder first, fall back to corePlugins
+    const def =
+      lifecycleManager.plugins.find((p) => p.name === name) ??
+      corePlugins.find((p) => p.name === name)
+
+    if (def?.essential) {
+      return reply.status(409).send({ error: 'Essential plugins cannot be disabled' })
+    }
+
+    await lifecycleManager.unloadPlugin(name)
+    registry.setEnabled(name, false)
+    await registry.save()
+
+    return { ok: true }
+  })
+
   // GET /plugins/marketplace — proxy to RegistryClient with installed flag
   app.get('/marketplace', { preHandler: admin }, async (_req, reply) => {
     try {

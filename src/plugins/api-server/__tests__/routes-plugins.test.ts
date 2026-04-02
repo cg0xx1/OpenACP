@@ -220,6 +220,70 @@ describe('plugin routes', () => {
     })
   })
 
+  describe('POST /api/v1/plugins/:name/disable', () => {
+    it('unloads and disables a loaded plugin', async () => {
+      let unloaded: string[] = []
+
+      const lm = makeLifecycleManager({
+        registryEntries: {
+          '@openacp/context': { source: 'builtin', enabled: true },
+        },
+        loadedPlugins: ['@openacp/context'],
+        pluginDefs: [
+          { name: '@openacp/context', version: '1.0.0', essential: false, setup: async () => {} } as unknown as OpenACPPlugin,
+        ],
+        unloadFn: async (name) => { unloaded.push(name) },
+      })
+
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/@openacp%2Fcontext/disable',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(200)
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true })
+      expect(unloaded).toContain('@openacp/context')
+    })
+
+    it('returns 409 for essential plugin', async () => {
+      const lm = makeLifecycleManager({
+        registryEntries: {
+          '@openacp/telegram': { source: 'builtin', enabled: true },
+        },
+        loadedPlugins: ['@openacp/telegram'],
+        pluginDefs: [
+          { name: '@openacp/telegram', version: '1.0.0', essential: true, setup: async () => {} } as unknown as OpenACPPlugin,
+        ],
+      })
+
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/@openacp%2Ftelegram/disable',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(409)
+      expect(JSON.parse(res.body).error).toContain('Essential')
+    })
+
+    it('returns 404 for unknown plugin', async () => {
+      await buildServer(makeLifecycleManager({}))
+
+      const res = await server!.app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/@openacp%2Funknown/disable',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(404)
+    })
+  })
+
   describe('GET /api/v1/plugins/marketplace', () => {
     it('returns marketplace plugins with installed flag', async () => {
       const lm = makeLifecycleManager({
