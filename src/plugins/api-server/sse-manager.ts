@@ -58,7 +58,7 @@ export class SSEManager {
         },
         sessions: stats,
       });
-    }, 30_000);
+    }, 15_000);
   }
 
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -81,6 +81,8 @@ export class SSEManager {
     }
     res.writeHead(200, corsHeaders);
     res.flushHeaders();
+    // Send initial comment immediately so proxies (Cloudflare, nginx) flush headers to client
+    res.write(': connected\n\n');
 
     // Store filter metadata on the response for broadcast
     (res as SSEResponse).sessionFilter = sessionFilter ?? undefined;
