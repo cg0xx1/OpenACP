@@ -218,6 +218,7 @@ function createApiServerPlugin(): OpenACPPlugin {
       const { commandRoutes } = await import('./routes/commands.js')
       const { authRoutes } = await import('./routes/auth.js')
       const { workspaceRoute } = await import('./routes/workspace.js')
+      const { pluginRoutes } = await import('./routes/plugins.js')
 
       // Create Fastify server
       server = await createApiServer({
@@ -244,6 +245,7 @@ function createApiServerPlugin(): OpenACPPlugin {
         commandRegistry,
         authPreHandler: routeAuthPreHandler,
         contextManager,
+        lifecycleManager: core.lifecycleManager,
       }
 
       // Register all route plugins under /api/v1/
@@ -256,6 +258,7 @@ function createApiServerPlugin(): OpenACPPlugin {
       server.registerPlugin('/api/v1/notify', async (app) => notifyRoutes(app, deps))
       server.registerPlugin('/api/v1/commands', async (app) => commandRoutes(app, deps))
       server.registerPlugin('/api/v1/auth', async (app) => authRoutes(app, { tokenStore, getJwtSecret: () => jwtSecret }))
+      server.registerPlugin('/api/v1/plugins', async (app) => pluginRoutes(app, deps))
 
       // Workspace info route (authenticated)
       const { InstanceRegistry } = await import('../../core/instance/instance-registry.js')
