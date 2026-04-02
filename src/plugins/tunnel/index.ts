@@ -133,11 +133,38 @@ function createTunnelPlugin(): OpenACPPlugin {
       }
     },
 
-    inheritableKeys: ['provider', 'maxUserTunnels', 'auth'],
-
     async setup(ctx) {
+      const { default: fs } = await import('node:fs')
+      const settingsPath = path.join(ctx.instanceRoot, 'plugins', 'data', ctx.pluginName, 'settings.json')
+
+      // If no settings.json exists yet, bootstrap defaults. This replaces the old
+      // inheritableKeys mechanism — plugin is now fully self-contained and does not
+      // read from config.json. New installs that went through install() already have
+      // settings.json; this handles any edge case where they don't.
+      if (!fs.existsSync(settingsPath)) {
+        const defaults = { enabled: true, provider: 'openacp', maxUserTunnels: 5, auth: { enabled: false } }
+        fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
+        fs.writeFileSync(settingsPath, JSON.stringify(defaults, null, 2))
+        Object.assign(ctx.pluginConfig, defaults)
+        ctx.log.info('Initialized tunnel settings with defaults (openacp provider)')
+      }
+
       const config = ctx.pluginConfig as Record<string, unknown>
-      // Default enabled to true — settings created via copyInstance omit this key
+
+      // Migrate existing cloudflare quick-tunnel users to openacp managed tunnel.
+      if (config.provider === 'cloudflare') {
+        try {
+          const current = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
+          current.provider = 'openacp'
+          fs.writeFileSync(settingsPath, JSON.stringify(current, null, 2))
+        } catch (err) {
+          ctx.log.warn(`Failed to migrate tunnel settings.json: ${(err as Error).message}`)
+        }
+        config.provider = 'openacp'
+        ctx.log.info('Auto-migrated tunnel provider: cloudflare → openacp (OpenACP managed tunnel)')
+      }
+
+      // Default enabled to true — settings created via copyInstance may omit this key
       const enabled = 'enabled' in config ? config.enabled : true
       if (!enabled) {
         ctx.log.info('Tunnel disabled')
