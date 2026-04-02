@@ -1,9 +1,10 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { captureJsonOutput, expectValidJsonSuccess } from './helpers/json-test-utils.js'
 
 vi.mock('../../../core/agents/agent-catalog.js', () => {
   class MockAgentCatalog {
-    load = vi.fn();
-    refreshRegistryIfStale = vi.fn().mockResolvedValue(undefined);
+    load = vi.fn()
+    refreshRegistryIfStale = vi.fn().mockResolvedValue(undefined)
     getAvailable = vi.fn().mockReturnValue([
       {
         key: 'claude-code',
@@ -25,45 +26,38 @@ vi.mock('../../../core/agents/agent-catalog.js', () => {
         available: true,
         missingDeps: [],
       },
-    ]);
+    ])
   }
-  return { AgentCatalog: MockAgentCatalog };
-});
+  return { AgentCatalog: MockAgentCatalog }
+})
 
 describe('agents list --json', () => {
-  let output: string;
-
-  beforeEach(() => {
-    output = '';
-    vi.spyOn(console, 'log').mockImplementation((s: string) => { output += s; });
-  });
-
   afterEach(() => {
-    vi.restoreAllMocks();
-  });
+    vi.restoreAllMocks()
+  })
 
-  it('outputs valid JSON array when --json flag is passed', async () => {
-    const { cmdAgents } = await import('../agents.js');
-    await cmdAgents(['list', '--json'], undefined);
-
-    const parsed = JSON.parse(output);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0]).toMatchObject({
-      key: 'claude-code',
-      installed: true,
-      available: true,
-    });
-  });
+  it('outputs envelope with agents array', async () => {
+    const { cmdAgents } = await import('../agents.js')
+    const result = await captureJsonOutput(async () => {
+      await cmdAgents(['list', '--json'], undefined)
+    })
+    expect(result.exitCode).toBe(0)
+    const data = expectValidJsonSuccess(result.stdout)
+    expect(data).toHaveProperty('agents')
+    expect(Array.isArray(data.agents)).toBe(true)
+    expect((data.agents as unknown[]).length).toBe(2)
+  })
 
   it('includes all required fields in each agent entry', async () => {
-    const { cmdAgents } = await import('../agents.js');
-    await cmdAgents(['list', '--json'], undefined);
-
-    const parsed = JSON.parse(output);
-    const fields = ['key', 'name', 'version', 'distribution', 'description', 'installed', 'available', 'missingDeps'];
+    const { cmdAgents } = await import('../agents.js')
+    const result = await captureJsonOutput(async () => {
+      await cmdAgents(['list', '--json'], undefined)
+    })
+    const data = expectValidJsonSuccess(result.stdout)
+    const agent = (data.agents as Record<string, unknown>[])[0]
+    const fields = ['key', 'name', 'version', 'distribution', 'description', 'installed', 'available', 'missingDeps']
     for (const field of fields) {
-      expect(parsed[0]).toHaveProperty(field);
+      expect(agent).toHaveProperty(field)
     }
-  });
-});
+  })
+})

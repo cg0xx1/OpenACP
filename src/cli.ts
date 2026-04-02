@@ -85,8 +85,8 @@ resolvedInstanceRoot = resolveInstanceRoot({
 const noInstanceCommands: Record<string, () => Promise<void>> = {
   '--help': async () => printHelp(),
   '-h': async () => printHelp(),
-  '--version': () => cmdVersion(),
-  '-v': () => cmdVersion(),
+  '--version': () => cmdVersion(args),
+  '-v': () => cmdVersion(args),
   'update': () => cmdUpdate(args),
   'adopt': () => cmdAdopt(args),
   'integrate': () => cmdIntegrate(args),
