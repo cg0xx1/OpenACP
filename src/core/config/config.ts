@@ -51,8 +51,8 @@ const TunnelSchema = z
     enabled: z.boolean().default(false),
     port: z.number().default(3100),
     provider: z
-      .enum(["cloudflare", "ngrok", "bore", "tailscale"])
-      .default("cloudflare"),
+      .enum(["openacp", "cloudflare", "ngrok", "bore", "tailscale"])
+      .default("openacp"),
     options: z.record(z.string(), z.unknown()).default({}),
     maxUserTunnels: z.number().default(5),
     storeTtlMinutes: z.number().default(60),
@@ -194,7 +194,7 @@ const DEFAULT_CONFIG = {
   tunnel: {
     enabled: true,
     port: 3100,
-    provider: "cloudflare",
+    provider: "openacp",
     options: {},
     storeTtlMinutes: 60,
     auth: { enabled: false },

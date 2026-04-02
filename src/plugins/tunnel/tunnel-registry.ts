@@ -8,6 +8,8 @@ import { CloudflareTunnelProvider } from './providers/cloudflare.js'
 import { NgrokTunnelProvider } from './providers/ngrok.js'
 import { BoreTunnelProvider } from './providers/bore.js'
 import { TailscaleTunnelProvider } from './providers/tailscale.js'
+import type { PluginStorage } from '../../core/plugin/types.js'
+import { OpenACPTunnelProvider } from './providers/openacp.js'
 
 const log = createChildLogger({ module: 'tunnel-registry' })
 
@@ -52,12 +54,14 @@ export class TunnelRegistry {
   private shuttingDown = false
 
   private binDir: string | undefined
+  private storage: PluginStorage | null
 
-  constructor(opts: { maxUserTunnels?: number; providerOptions?: Record<string, unknown>; registryPath?: string; binDir?: string } = {}) {
+  constructor(opts: { maxUserTunnels?: number; providerOptions?: Record<string, unknown>; registryPath?: string; binDir?: string; storage?: PluginStorage } = {}) {
     this.maxUserTunnels = opts.maxUserTunnels ?? 5
     this.providerOptions = opts.providerOptions ?? {}
     this.registryPath = opts.registryPath ?? path.join(os.homedir(), '.openacp', 'tunnels.json')
     this.binDir = opts.binDir
+    this.storage = opts.storage ?? null
   }
 
   async add(port: number, opts: {
@@ -324,6 +328,12 @@ export class TunnelRegistry {
 
   private createProvider(name: string): TunnelProvider {
     switch (name) {
+      case 'openacp': {
+        if (!this.storage) {
+          throw new Error('OpenACPTunnelProvider requires storage — ensure tunnel plugin has storage:read and storage:write permissions')
+        }
+        return new OpenACPTunnelProvider(this.providerOptions, this.binDir ?? '', this.storage)
+      }
       case 'cloudflare':
         return new CloudflareTunnelProvider(this.providerOptions, this.binDir)
       case 'ngrok':
@@ -333,8 +343,12 @@ export class TunnelRegistry {
       case 'tailscale':
         return new TailscaleTunnelProvider(this.providerOptions)
       default:
-        log.warn({ provider: name }, 'Unknown provider, falling back to cloudflare')
-        return new CloudflareTunnelProvider(this.providerOptions, this.binDir)
+        log.warn({ provider: name }, 'Unknown provider, falling back to openacp')
+        if (!this.storage) {
+          log.warn('No storage available for openacp fallback, using cloudflare quick tunnel')
+          return new CloudflareTunnelProvider(this.providerOptions, this.binDir)
+        }
+        return new OpenACPTunnelProvider(this.providerOptions, this.binDir ?? '', this.storage)
     }
   }
 

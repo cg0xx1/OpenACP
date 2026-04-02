@@ -14,7 +14,7 @@ function createTunnelPlugin(): OpenACPPlugin {
     description: 'Expose local services to internet via tunnel providers',
     essential: false,
     pluginDependencies: { '@openacp/api-server': '*' },
-    permissions: ['services:register', 'services:use', 'kernel:access', 'commands:register', 'events:read'],
+    permissions: ['services:register', 'services:use', 'kernel:access', 'commands:register', 'events:read', 'storage:read', 'storage:write'],
 
     async install(ctx: InstallContext) {
       const { terminal, settings, legacyConfig } = ctx
@@ -25,7 +25,7 @@ function createTunnelPlugin(): OpenACPPlugin {
         if (tunnelCfg) {
           await settings.setAll({
             enabled: tunnelCfg.enabled ?? true,
-            provider: tunnelCfg.provider ?? 'cloudflare',
+            provider: tunnelCfg.provider ?? 'openacp',
             port: tunnelCfg.port ?? 3100,
             options: tunnelCfg.options ?? {},
             maxUserTunnels: tunnelCfg.maxUserTunnels ?? 5,
@@ -41,7 +41,8 @@ function createTunnelPlugin(): OpenACPPlugin {
       const provider = await terminal.select({
         message: 'Tunnel provider:',
         options: [
-          { value: 'cloudflare', label: 'Cloudflare (cloudflared)', hint: 'Free, no account needed' },
+          { value: 'openacp', label: 'OpenACP Managed', hint: 'Recommended — stable URL, no account needed' },
+          { value: 'cloudflare', label: 'Cloudflare quick tunnel', hint: 'Rate-limited, random URL' },
           { value: 'ngrok', label: 'ngrok', hint: 'Requires auth token' },
           { value: 'bore', label: 'bore', hint: 'Self-hostable' },
           { value: 'tailscale', label: 'Tailscale Funnel' },
@@ -97,7 +98,8 @@ function createTunnelPlugin(): OpenACPPlugin {
         const provider = await terminal.select({
           message: 'Tunnel provider:',
           options: [
-            { value: 'cloudflare', label: 'Cloudflare' },
+            { value: 'openacp', label: 'OpenACP Managed', hint: 'Recommended' },
+            { value: 'cloudflare', label: 'Cloudflare quick tunnel' },
             { value: 'ngrok', label: 'ngrok' },
             { value: 'bore', label: 'bore' },
             { value: 'tailscale', label: 'Tailscale' },
@@ -159,6 +161,7 @@ function createTunnelPlugin(): OpenACPPlugin {
         config as unknown as TunnelConfig,
         path.join(instanceRoot, 'tunnels.json'),
         path.join(instanceRoot, 'bin'),
+        ctx.storage,
       )
 
       // Get API server service (new dependency)
