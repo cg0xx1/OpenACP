@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createApiServer } from '../server.js'
 import { TokenStore } from '../auth/token-store.js'
 import { pluginRoutes } from '../routes/plugins.js'
@@ -9,6 +9,33 @@ import type { OpenACPPlugin } from '../../../core/plugin/types.js'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
+
+// Mock registry-client to avoid real network calls
+vi.mock('../../../core/plugin/registry-client.js', () => ({
+  RegistryClient: class {
+    async getRegistry() {
+      return {
+        plugins: [
+          {
+            name: '@openacp/translator',
+            npm: '@openacp/translator',
+            displayName: 'Translator',
+            description: 'Translation plugin',
+            version: '1.0.0',
+            minCliVersion: '0.0.0',
+            category: 'productivity',
+            tags: ['translate'],
+            icon: '🌐',
+            author: 'OpenACP',
+            verified: true,
+            featured: false,
+          },
+        ],
+        categories: [{ id: 'productivity', name: 'Productivity', icon: '⚡' }],
+      }
+    }
+  },
+}))
 
 const SECRET = 'b'.repeat(64)
 const JWT_SECRET = 'plugin-test-jwt-secret'
@@ -353,19 +380,38 @@ describe('plugin routes', () => {
       })
       await buildServer(lm)
 
-      // Mock the RegistryClient by intercepting the dynamic import
-      // We can test via the actual fetch, but for unit test we rely on
-      // the 503 path when the registry is unreachable.
       const res = await server!.app.inject({
         method: 'GET',
         url: '/api/v1/plugins/marketplace',
         headers: authHeaders(),
       })
 
-      // Registry fetch will fail in test env (no internet) — expect 503
-      expect(res.statusCode).toBe(503)
+      expect(res.statusCode).toBe(200)
       const body = JSON.parse(res.body)
-      expect(body.error).toBe('Marketplace unavailable')
+      expect(body.plugins).toHaveLength(1)
+      expect(body.plugins[0]).toMatchObject({
+        name: '@openacp/translator',
+        installed: false,  // not in registry
+      })
+      expect(body.categories).toHaveLength(1)
+    })
+
+    it('returns 503 when registry fetch fails', async () => {
+      // Override the mock for this specific test to throw
+      const { RegistryClient } = await import('../../../core/plugin/registry-client.js')
+      vi.spyOn(RegistryClient.prototype, 'getRegistry').mockRejectedValueOnce(new Error('Network error'))
+
+      const lm = makeLifecycleManager({})
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'GET',
+        url: '/api/v1/plugins/marketplace',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(503)
+      expect(JSON.parse(res.body)).toMatchObject({ error: 'Marketplace unavailable' })
     })
 
     it('returns 401 without auth', async () => {
