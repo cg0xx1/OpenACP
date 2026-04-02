@@ -29,6 +29,7 @@ import {
   buildMenuKeyboard,
   STATIC_COMMANDS,
 } from "./commands/index.js";
+import { TELEGRAM_OVERRIDES } from './commands/telegram-overrides.js'
 import { buildSessionStatusText, buildSessionControlKeyboard, isBypassActive } from "./commands/admin.js";
 import type { TelegramPlatformData } from "../../core/types.js";
 import { PermissionHandler } from "./permissions.js";
@@ -344,6 +345,17 @@ export class TelegramAdapter extends MessagingAdapter {
         atIdx === -1 ? rawCommand : rawCommand.slice(0, atIdx);
       const def = registry.get(commandName);
       if (!def) return next(); // not in registry, fall through to existing handlers
+
+      // Telegram-specific override — use rich handler instead of core CommandRegistry
+      const telegramOverride = TELEGRAM_OVERRIDES[commandName]
+      if (telegramOverride) {
+        try {
+          await telegramOverride(ctx, this.core as OpenACPCore)
+        } catch (err) {
+          await ctx.reply(`⚠️ Command failed: ${String(err)}`)
+        }
+        return
+      }
 
       const chatId = ctx.chat.id;
       const topicId = ctx.message.message_thread_id;
