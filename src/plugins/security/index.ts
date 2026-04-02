@@ -121,22 +121,6 @@ function createSecurityPlugin(): OpenACPPlugin {
       // Register SecurityGuard as the service directly
       ctx.registerService('security', guard)
 
-      ctx.registerCommand({
-        name: 'bypass',
-        description: 'Toggle bypass permissions (auto-approve all permissions)',
-        usage: 'on|off',
-        category: 'plugin',
-        handler: async (args) => {
-          const mode = args.raw.trim().toLowerCase()
-          if (mode === 'on') return { type: 'text', text: 'Bypass permissions enabled — all permissions will be auto-approved.' }
-          if (mode === 'off') return { type: 'text', text: 'Bypass permissions disabled — permissions require manual approval.' }
-          return { type: 'menu', title: 'Bypass Permissions', options: [
-            { label: 'Enable', command: '/bypass on' },
-            { label: 'Disable', command: '/bypass off' },
-          ]}
-        },
-      })
-
       ctx.log.info('Security service ready')
     },
   }
