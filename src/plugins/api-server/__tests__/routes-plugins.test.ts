@@ -161,6 +161,65 @@ describe('plugin routes', () => {
     })
   })
 
+  describe('POST /api/v1/plugins/:name/enable', () => {
+    it('enables and boots a disabled builtin plugin', async () => {
+      let booted: string[] = []
+      let registryEnabled: Record<string, boolean> = {}
+
+      const lm = makeLifecycleManager({
+        registryEntries: {
+          '@openacp/context': { source: 'builtin', enabled: false },
+        },
+        loadedPlugins: [],
+        pluginDefs: [],
+        bootFn: async (plugins) => { booted = plugins.map(p => p.name) },
+      })
+      ;(lm.registry as any).setEnabled = (name: string, val: boolean) => { registryEnabled[name] = val }
+
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/@openacp%2Fcontext/enable',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(200)
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true })
+    })
+
+    it('is idempotent when plugin is already loaded', async () => {
+      const lm = makeLifecycleManager({
+        registryEntries: {
+          '@openacp/context': { source: 'builtin', enabled: true },
+        },
+        loadedPlugins: ['@openacp/context'],
+      })
+
+      await buildServer(lm)
+
+      const res = await server!.app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/@openacp%2Fcontext/enable',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(200)
+    })
+
+    it('returns 404 for unknown plugin', async () => {
+      await buildServer(makeLifecycleManager({}))
+
+      const res = await server!.app.inject({
+        method: 'POST',
+        url: '/api/v1/plugins/@openacp%2Funknown/enable',
+        headers: authHeaders(),
+      })
+
+      expect(res.statusCode).toBe(404)
+    })
+  })
+
   describe('GET /api/v1/plugins/marketplace', () => {
     it('returns marketplace plugins with installed flag', async () => {
       const lm = makeLifecycleManager({

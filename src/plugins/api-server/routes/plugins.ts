@@ -38,6 +38,70 @@ export async function pluginRoutes(
     return { plugins }
   })
 
+  // POST /plugins/:name/enable — hot-load a disabled plugin
+  app.post('/:name/enable', { preHandler: admin }, async (req, reply) => {
+    if (!lifecycleManager?.registry) {
+      return reply.status(503).send({ error: 'Plugin manager unavailable' })
+    }
+
+    const name = decodeURIComponent((req.params as { name: string }).name)
+    const registry = lifecycleManager.registry
+    const entry = registry.get(name)
+
+    if (!entry) {
+      return reply.status(404).send({ error: `Plugin "${name}" not found` })
+    }
+
+    // Idempotent — already loaded
+    if (lifecycleManager.loadedPlugins.includes(name)) {
+      registry.setEnabled(name, true)
+      await registry.save()
+      return { ok: true }
+    }
+
+    // Resolve plugin definition
+    let pluginDef = lifecycleManager.plugins.find((p) => p.name === name)
+
+    if (!pluginDef) {
+      if (entry.source === 'builtin') {
+        pluginDef = corePlugins.find((p) => p.name === name)
+      } else {
+        // npm / local — dynamic import
+        const { importFromDir } = await import('../../../core/plugin/plugin-installer.js')
+        const instanceRoot =
+          lifecycleManager.instanceRoot ??
+          (await import('node:path')).default.join(
+            (await import('node:os')).default.homedir(),
+            '.openacp',
+          )
+        const pluginsDir = (await import('node:path')).default.join(instanceRoot, 'plugins')
+        try {
+          const mod = await importFromDir(name, pluginsDir)
+          pluginDef = mod.default ?? mod
+        } catch {
+          return reply
+            .status(500)
+            .send({ error: 'Plugin module could not be loaded. Try restarting the server.' })
+        }
+      }
+    }
+
+    if (!pluginDef) {
+      return reply.status(500).send({ error: `Plugin definition not found for "${name}"` })
+    }
+
+    registry.setEnabled(name, true)
+    await registry.save()
+
+    await lifecycleManager.boot([pluginDef])
+
+    if (lifecycleManager.failedPlugins.includes(name)) {
+      return reply.status(500).send({ error: `Plugin "${name}" failed to start` })
+    }
+
+    return { ok: true }
+  })
+
   // GET /plugins/marketplace — proxy to RegistryClient with installed flag
   app.get('/marketplace', { preHandler: admin }, async (_req, reply) => {
     try {
