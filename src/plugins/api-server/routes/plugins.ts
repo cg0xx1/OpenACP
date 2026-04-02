@@ -4,6 +4,10 @@ import type { FastifyInstance } from 'fastify'
 import type { RouteDeps } from './types.js'
 import { requireScopes } from '../middleware/auth.js'
 import { corePlugins } from '../../../plugins/core-plugins.js'
+import { RegistryClient } from '../../../core/plugin/registry-client.js'
+
+// Singleton so the 1-minute TTL cache is shared across requests
+const registryClient = new RegistryClient()
 
 export async function pluginRoutes(
   app: FastifyInstance,
@@ -43,9 +47,7 @@ export async function pluginRoutes(
   // GET /plugins/marketplace — proxy to RegistryClient with installed flag
   app.get('/marketplace', { preHandler: admin }, async (_req, reply) => {
     try {
-      const { RegistryClient } = await import('../../../core/plugin/registry-client.js')
-      const client = new RegistryClient()
-      const data = await client.getRegistry()
+      const data = await registryClient.getRegistry()
 
       const installedNames = new Set(
         lifecycleManager?.registry
