@@ -79,6 +79,8 @@ export class SSEManager {
       corsHeaders["Access-Control-Allow-Origin"] = origin;
       corsHeaders["Access-Control-Allow-Credentials"] = "true";
     }
+    // Disable Nagle's algorithm so small SSE chunks are sent immediately
+    res.socket?.setNoDelay(true);
     res.writeHead(200, corsHeaders);
     res.flushHeaders();
     // Send initial comment immediately so proxies (Cloudflare, nginx) flush headers to client
