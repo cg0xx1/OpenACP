@@ -1,7 +1,11 @@
 import { wantsHelp } from './helpers.js'
+import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
 export async function cmdPlugins(args: string[] = [], instanceRoot?: string): Promise<void> {
-  if (wantsHelp(args)) {
+  const json = isJsonMode(args)
+  if (json) await muteForJson()
+
+  if (!json && wantsHelp(args)) {
     console.log(`
 \x1b[1mopenacp plugins\x1b[0m — List installed plugins
 
@@ -23,6 +27,21 @@ Shows all plugins registered in the plugin registry.
   await registry.load()
 
   const plugins = registry.list()
+
+  if (json) {
+    const pluginList: Record<string, unknown>[] = []
+    for (const [name, entry] of plugins) {
+      pluginList.push({
+        name,
+        version: entry.version,
+        enabled: entry.enabled !== false,
+        source: entry.source ?? 'unknown',
+        description: entry.description ?? '',
+      })
+    }
+    jsonSuccess({ plugins: pluginList })
+  }
+
   if (plugins.size === 0) {
     console.log("No plugins installed.")
   } else {
@@ -80,7 +99,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 
   switch (subcommand) {
     case 'list':
-      return cmdPlugins([], instanceRoot)
+      return cmdPlugins(isJsonMode(args) ? ['--json'] : [], instanceRoot)
 
     case 'search': {
       const { cmdPluginSearch } = await import('./plugin-search.js')
@@ -114,20 +133,22 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
     case 'enable': {
       const name = args[1]
       if (!name) {
+        if (isJsonMode(args)) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Plugin name is required')
         console.error('Error: missing plugin name. Usage: openacp plugin enable <name>')
         process.exit(1)
       }
-      await setPluginEnabled(name, true, instanceRoot)
+      await setPluginEnabled(name, true, instanceRoot, isJsonMode(args))
       return
     }
 
     case 'disable': {
       const name = args[1]
       if (!name) {
+        if (isJsonMode(args)) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Plugin name is required')
         console.error('Error: missing plugin name. Usage: openacp plugin disable <name>')
         process.exit(1)
       }
-      await setPluginEnabled(name, false, instanceRoot)
+      await setPluginEnabled(name, false, instanceRoot, isJsonMode(args))
       return
     }
 
@@ -154,7 +175,9 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
   }
 }
 
-async function setPluginEnabled(name: string, enabled: boolean, instanceRoot?: string): Promise<void> {
+async function setPluginEnabled(name: string, enabled: boolean, instanceRoot?: string, json = false): Promise<void> {
+  if (json) await muteForJson()
+
   const os = await import('node:os')
   const path = await import('node:path')
   const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
@@ -166,12 +189,14 @@ async function setPluginEnabled(name: string, enabled: boolean, instanceRoot?: s
 
   const entry = registry.get(name)
   if (!entry) {
+    if (json) jsonError(ErrorCodes.PLUGIN_NOT_FOUND, `Plugin "${name}" not found.`)
     console.error(`Plugin "${name}" not found. Run "openacp plugin list" to see installed plugins.`)
     process.exit(1)
   }
 
   registry.setEnabled(name, enabled)
   await registry.save()
+  if (json) jsonSuccess({ plugin: name, enabled })
   console.log(`Plugin ${name} ${enabled ? 'enabled' : 'disabled'}. Restart to apply.`)
 }
 
