@@ -9,8 +9,7 @@ import type { PluginStorage } from '../../../core/plugin/types.js'
 const log = createChildLogger({ module: 'openacp-tunnel' })
 
 export const DEFAULT_WORKER_URL = 'https://tunnel-worker.openacp.ai'
-// TODO: replace with the real shared API key before shipping; rotatable via CLI release
-export const DEFAULT_API_KEY = 'OPENACP_SHARED_KEY_V1'
+export const DEFAULT_API_KEY = 'saG87sc26gZKbA24tQm0tqsJ0jo3z'
 
 const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
 // 15s instead of the spec's suggested 10s: cloudflared can take a few seconds to
