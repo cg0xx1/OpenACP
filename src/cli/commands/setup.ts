@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
@@ -10,32 +11,24 @@ export async function cmdSetup(args: string[], instanceRoot: string): Promise<vo
   const workspace = parseFlag(args, '--workspace');
   const agentRaw = parseFlag(args, '--agent');
   const json = args.includes('--json');
+  if (json) await muteForJson()
 
   if (!workspace) {
-    if (json) {
-      console.log(JSON.stringify({ success: false, error: '--workspace is required' }));
-    } else {
-      console.error('  Error: --workspace <path> is required');
-    }
+    if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, '--workspace is required')
+    console.error('  Error: --workspace <path> is required');
     process.exit(1);
   }
 
   if (!agentRaw) {
-    if (json) {
-      console.log(JSON.stringify({ success: false, error: '--agent is required' }));
-    } else {
-      console.error('  Error: --agent <name> is required');
-    }
+    if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, '--agent is required')
+    console.error('  Error: --agent <name> is required');
     process.exit(1);
   }
 
   const rawRunMode = parseFlag(args, '--run-mode') ?? 'daemon';
   if (rawRunMode !== 'daemon' && rawRunMode !== 'foreground') {
-    if (json) {
-      console.log(JSON.stringify({ success: false, error: `--run-mode must be 'daemon' or 'foreground'` }));
-    } else {
-      console.error(`  Error: --run-mode must be 'daemon' or 'foreground'`);
-    }
+    if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, `--run-mode must be 'daemon' or 'foreground'`)
+    console.error(`  Error: --run-mode must be 'daemon' or 'foreground'`);
     process.exit(1);
   }
   const runMode = rawRunMode as 'daemon' | 'foreground';
@@ -74,7 +67,7 @@ export async function cmdSetup(args: string[], instanceRoot: string): Promise<vo
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
   if (json) {
-    console.log(JSON.stringify({ success: true, configPath }));
+    jsonSuccess({ configPath });
   } else {
     console.log(`\n  \x1b[32m✓ Setup complete.\x1b[0m Config written to ${configPath}\n`);
   }

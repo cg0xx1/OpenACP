@@ -1,4 +1,5 @@
 import { wantsHelp } from './helpers.js'
+import { jsonSuccess, muteForJson } from '../output.js'
 
 async function createCatalog(instanceRoot?: string) {
   const { AgentCatalog } = await import("../../core/agents/agent-catalog.js");
@@ -78,6 +79,7 @@ bypassing the normal staleness check.
 }
 
 async function agentsList(instanceRoot?: string, json = false): Promise<void> {
+  if (json) await muteForJson()
   const catalog = await createCatalog(instanceRoot);
   catalog.load();
   await catalog.refreshRegistryIfStale();
@@ -85,17 +87,18 @@ async function agentsList(instanceRoot?: string, json = false): Promise<void> {
   const items = catalog.getAvailable();
 
   if (json) {
-    console.log(JSON.stringify(items.map((item) => ({
-      key: item.key,
-      name: item.name,
-      version: item.version,
-      distribution: item.distribution,
-      description: item.description ?? "",
-      installed: item.installed,
-      available: item.available ?? true,
-      missingDeps: item.missingDeps ?? [],
-    }))));
-    return;
+    jsonSuccess({
+      agents: items.map((item) => ({
+        key: item.key,
+        name: item.name,
+        version: item.version,
+        distribution: item.distribution,
+        description: item.description ?? "",
+        installed: item.installed,
+        available: item.available ?? true,
+        missingDeps: item.missingDeps ?? [],
+      })),
+    });
   }
 
   const installed = items.filter((i) => i.installed);
