@@ -438,10 +438,7 @@ export async function sessionRoutes(
           'History store not available',
         );
       }
-      const history = await deps.contextManager.getHistory(sessionId);
-      if (!history) {
-        throw new NotFoundError('HISTORY_NOT_FOUND', `No history for session "${sessionId}"`);
-      }
+      const history = await deps.contextManager.getHistory(sessionId) ?? null;
       return { history };
     },
   );
