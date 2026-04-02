@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import type { AgentInstance } from "../agents/agent-instance.js";
-import type { AgentCapabilities, AgentEvent, AgentSwitchEntry, Attachment, PermissionRequest, SessionStatus, ConfigOption } from "../types.js";
+import type { AgentCapabilities, AgentCommand, AgentEvent, AgentSwitchEntry, Attachment, PermissionRequest, SessionStatus, ConfigOption } from "../types.js";
 import { TypedEmitter } from "../utils/typed-emitter.js";
 import { PromptQueue } from "./prompt-queue.js";
 import { PermissionGate } from "./permission-gate.js";
@@ -57,6 +57,8 @@ export class Session extends TypedEmitter<SessionEvents> {
   isAssistant: boolean = false;
   log: Logger;
   middlewareChain?: MiddlewareChain;
+  /** Latest commands emitted by the agent — buffered before bridge connects so they're not lost */
+  latestCommands: AgentCommand[] | null = null;
 
   readonly permissionGate = new PermissionGate();
   private readonly queue: PromptQueue;
@@ -91,6 +93,13 @@ export class Session extends TypedEmitter<SessionEvents> {
         this.log.error({ err }, "Prompt execution failed");
       },
     );
+
+    // Buffer the latest commands_update so it survives until the bridge connects
+    this.agentInstance.on("agent_event", (event: AgentEvent) => {
+      if (event.type === "commands_update") {
+        this.latestCommands = event.commands;
+      }
+    });
   }
 
   // --- State Machine ---
