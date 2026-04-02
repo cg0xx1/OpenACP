@@ -17,11 +17,15 @@ vi.mock('../../core/instance/instance-registry.js', () => ({
 
 vi.mock('../../core/instance/instance-context.js', () => ({
   getGlobalRoot: vi.fn().mockReturnValue('/Users/user/.openacp'),
+  generateSlug: vi.fn().mockImplementation((name: string) => name.toLowerCase().replace(/[^a-z0-9-]/g, '-')),
 }))
 
-import { buildInstanceListEntries } from '../../cli/commands/instances.js'
+vi.mock('node:fs')
+
+import { buildInstanceListEntries, cmdInstancesCreate } from '../../cli/commands/instances.js'
 import { readInstanceInfo } from '../../cli/commands/status.js'
 import { InstanceRegistry } from '../../core/instance/instance-registry.js'
+import fs from 'node:fs'
 
 describe('buildInstanceListEntries', () => {
   beforeEach(() => { vi.clearAllMocks() })
@@ -89,5 +93,35 @@ describe('buildInstanceListEntries', () => {
     const result = await buildInstanceListEntries()
     expect(result[0]!.directory).toBe('/Users/user/my-project')
     expect(result[0]!.root).toBe('/Users/user/my-project/.openacp')
+  })
+})
+
+describe('cmdInstancesCreate', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('errors when --dir is missing', async () => {
+    const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit') }) as any)
+    const mockError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(cmdInstancesCreate([])).rejects.toThrow('exit')
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('--dir'))
+    mockExit.mockRestore()
+    mockError.mockRestore()
+  })
+
+  it('errors when .openacp already exists and is registered', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    const mockRegistry = {
+      load: vi.fn(),
+      list: vi.fn().mockReturnValue([]),
+      getByRoot: vi.fn().mockReturnValue({ id: 'existing', root: '/path/.openacp' }),
+    }
+    vi.mocked(InstanceRegistry).mockImplementation(function() { return mockRegistry } as any)
+
+    const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('exit') }) as any)
+    const mockError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(cmdInstancesCreate(['--dir', '/path'])).rejects.toThrow('exit')
+    expect(mockError).toHaveBeenCalledWith(expect.stringContaining('existing'))
+    mockExit.mockRestore()
+    mockError.mockRestore()
   })
 })
