@@ -1,7 +1,10 @@
 import type { CommandRegistry } from '../command-registry.js'
 import type { CommandResponse } from '../plugin/types.js'
+import type { OpenACPCore } from '../core.js'
 
-export function registerSwitchCommands(registry: CommandRegistry): void {
+export function registerSwitchCommands(registry: CommandRegistry, _core: unknown): void {
+  const core = _core as OpenACPCore;
+
   registry.register({
     name: 'switch',
     description: 'Switch to a different agent',
@@ -16,12 +19,53 @@ export function registerSwitchCommands(registry: CommandRegistry): void {
         if (value !== 'on' && value !== 'off') {
           return { type: 'error', message: 'Usage: /switch label on|off' } satisfies CommandResponse
         }
-        return { type: 'silent' } satisfies CommandResponse
+        await core.configManager.save(
+          { agentSwitch: { labelHistory: value === 'on' } },
+          'agentSwitch.labelHistory',
+        )
+        return { type: 'text', text: `Agent label in history: ${value}` } satisfies CommandResponse
       }
 
-      // /switch (no args) → show menu, or /switch <agent> → direct switch
-      // Both delegated to adapter handler
-      return { type: 'silent' } satisfies CommandResponse
+      // Resolve session from context
+      const session = args.sessionId
+        ? core.sessionManager.getSession(args.sessionId)
+        : null
+      if (!session) {
+        return { type: 'error', message: 'No active session in this topic.' } satisfies CommandResponse
+      }
+
+      // /switch <agentName> → direct switch
+      if (raw) {
+        if (session.promptRunning) {
+          await session.abortPrompt()
+        }
+
+        try {
+          const { resumed } = await core.switchSessionAgent(session.id, raw)
+          const status = resumed ? 'resumed' : 'new session'
+          return { type: 'text', text: `✅ Switched to ${raw} (${status})` } satisfies CommandResponse
+        } catch (err: any) {
+          return { type: 'error', message: `Failed to switch agent: ${err.message || err}` } satisfies CommandResponse
+        }
+      }
+
+      // /switch (no args) → show agent menu
+      const agents = core.agentManager.getAvailableAgents()
+      const currentAgent = session.agentName
+      const options = agents.filter((a) => a.name !== currentAgent)
+
+      if (options.length === 0) {
+        return { type: 'text', text: 'No other agents available.' } satisfies CommandResponse
+      }
+
+      return {
+        type: 'menu',
+        title: `Switch Agent\nCurrent: ${currentAgent}\n\nSelect an agent:`,
+        options: options.map((a) => ({
+          label: a.name,
+          command: `/switch ${a.name}`,
+        })),
+      } satisfies CommandResponse
     },
   })
 }

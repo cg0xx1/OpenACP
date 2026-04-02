@@ -384,7 +384,7 @@ export class TelegramAdapter extends MessagingAdapter {
           return;
         }
         if (response.type === "silent") {
-          // Silent means fall through to adapter-specific handlers (backward compat)
+          // Silent means fall through to message routing (backward compat for commands not yet migrated)
           return next();
         }
         await this.renderCommandResponse(response, chatId, topicId);
@@ -736,8 +736,8 @@ export class TelegramAdapter extends MessagingAdapter {
       if (threadId === this.notificationTopicId) return;
 
       // Strip leading "/" from unrecognized commands — registered commands
-      // (e.g. /new, /cancel) are already handled by bot.command() above.
-      // Unrecognized slash commands can cause agent subprocesses to hang.
+      // are handled by the CommandRegistry dispatch middleware above.
+      // Unrecognized slash commands are stripped to avoid agent subprocess hangs.
       const forwardText = text.startsWith("/") ? text.slice(1) : text;
 
       // All topics (including assistant) → forward to core
