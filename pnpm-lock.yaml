@@ -17,9 +17,6 @@ importers:
       '@clack/prompts':
         specifier: ^1.1.0
         version: 1.1.0
-      '@fastify/cors':
-        specifier: ^11.2.0
-        version: 11.2.0
       '@fastify/rate-limit':
         specifier: ^10.3.0
         version: 10.3.0
