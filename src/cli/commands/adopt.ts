@@ -89,6 +89,7 @@ as a messaging thread. Requires a running daemon.
       process.exit(1);
     }
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('process.exit')) throw err
     if (json) jsonError(ErrorCodes.API_ERROR, `Failed to connect to OpenACP: ${err instanceof Error ? err.message : err}`)
     console.log(`Failed to connect to OpenACP: ${err instanceof Error ? err.message : err}`);
     process.exit(1);

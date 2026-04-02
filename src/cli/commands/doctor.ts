@@ -49,9 +49,9 @@ Fixable issues can be auto-repaired when not using --dry-run.
 
   if (json) {
     jsonSuccess({
-      categories: report.categories.map((c: any) => ({
+      categories: report.categories.map((c) => ({
         name: c.name,
-        results: c.results.map((r: any) => ({ status: r.status, message: r.message })),
+        results: c.results.map((r) => ({ status: r.status, message: r.message })),
       })),
       summary: {
         passed: report.summary.passed,

@@ -27,7 +27,7 @@ export async function cmdSetup(args: string[], instanceRoot: string): Promise<vo
 
   const rawRunMode = parseFlag(args, '--run-mode') ?? 'daemon';
   if (rawRunMode !== 'daemon' && rawRunMode !== 'foreground') {
-    if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, `--run-mode must be 'daemon' or 'foreground'`)
+    if (json) jsonError(ErrorCodes.CONFIG_INVALID, `--run-mode must be 'daemon' or 'foreground'`)
     console.error(`  Error: --run-mode must be 'daemon' or 'foreground'`);
     process.exit(1);
   }

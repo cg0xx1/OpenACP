@@ -119,7 +119,7 @@ export async function cmdExample(args: string[], instanceRoot?: string): Promise
 | `agents info <key>` | `{ key, name, version, distribution, description, installed, binaryPath?, command?, registryId? }` |
 | `plugins` / `plugin list` | `{ plugins: [{ name, version, enabled, source, description }] }` |
 | `plugin search <q>` | `{ results: [{ name, version, description }] }` |
-| `status` | `{ instances: [{ id, name, status, pid, dir, mode, channels, api, tunnel }] }` |
+| `status` | `{ instances: [{ id, name, status, pid, dir, mode, channels, apiPort, tunnelPort }] }` |
 | `status --id <id>` | `{ id, name, status, pid, dir, mode, channels, apiPort, tunnelPort }` |
 | `config set <k> <v>` | `{ path, value, needsRestart }` |
 | `doctor --json` | `{ categories: [{ name, results: [{ status, message }] }], summary: { passed, warnings, failed } }` |

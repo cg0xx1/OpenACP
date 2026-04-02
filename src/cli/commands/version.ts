@@ -1,10 +1,13 @@
-import { isJsonMode, jsonSuccess } from '../output.js'
+import { isJsonMode, jsonSuccess, muteForJson } from '../output.js'
 
 export async function cmdVersion(args: string[] = []): Promise<void> {
+  const json = isJsonMode(args)
+  if (json) await muteForJson()
+
   const { getCurrentVersion } = await import('../version.js')
   const version = getCurrentVersion()
 
-  if (isJsonMode(args)) {
+  if (json) {
     jsonSuccess({ version })
   }
 

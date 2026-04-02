@@ -51,7 +51,8 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
       console.error('API server is not responding. Try restarting with `openacp restart`')
       process.exit(1)
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('process.exit')) throw err
     if (json) jsonError(ErrorCodes.API_ERROR, 'Cannot connect to API server. Is OpenACP running?')
     console.error('Cannot connect to API server. Is OpenACP running?')
     process.exit(1)
@@ -95,6 +96,7 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
 
     codeData = await res.json() as typeof codeData
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('process.exit')) throw err
     if (json) jsonError(ErrorCodes.API_ERROR, `Failed to generate code: ${(err as Error).message}`)
     console.error(`Failed to generate code: ${(err as Error).message}`)
     process.exit(1)

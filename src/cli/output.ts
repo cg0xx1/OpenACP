@@ -47,7 +47,7 @@ export function jsonSuccess(data: unknown): never {
   process.exit(0)
 }
 
-export function jsonError(code: string, message: string): never {
+export function jsonError(code: ErrorCode, message: string): never {
   console.log(JSON.stringify({ success: false, error: { code, message } }))
   process.exit(1)
 }
