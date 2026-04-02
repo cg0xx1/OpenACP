@@ -21,8 +21,8 @@ interface AssistantManagerCore {
 
 export class AssistantManager {
   private sessions = new Map<string, Session>()
-  private readyState = new Map<string, Promise<void>>()
   private respawning = new Set<string>()
+  private pendingSystemPrompts = new Map<string, string>()
 
   constructor(
     private core: AssistantManagerCore,
@@ -40,24 +40,27 @@ export class AssistantManager {
     session.threadId = threadId
     this.sessions.set(channelId, session)
 
-    // Bridge is already connected by createSession() — no need to call connectSessionBridge().
-    // Just enqueue system prompt in background so assistant is ready for user messages.
+    // Store system prompt for lazy initialization — it will be prepended
+    // to the first real user message so no unsolicited AI response is sent on startup.
     const systemPrompt = this.registry.buildSystemPrompt(channelId)
-    const ready = session
-      .enqueuePrompt(systemPrompt)
-      .then(() => {
-        log.info({ sessionId: session.id, channelId }, 'Assistant ready')
-      })
-      .catch((err) => {
-        log.warn({ err, channelId }, 'Assistant system prompt failed')
-      })
-    this.readyState.set(channelId, ready)
+    this.pendingSystemPrompts.set(channelId, systemPrompt)
+    log.info({ sessionId: session.id, channelId }, 'Assistant spawned (system prompt deferred)')
 
     return session
   }
 
   get(channelId: string): Session | null {
     return this.sessions.get(channelId) ?? null
+  }
+
+  /**
+   * Consume and return any pending system prompt for a channel.
+   * Should be prepended to the first real user message.
+   */
+  consumePendingSystemPrompt(channelId: string): string | undefined {
+    const prompt = this.pendingSystemPrompts.get(channelId)
+    if (prompt) this.pendingSystemPrompts.delete(channelId)
+    return prompt
   }
 
   isAssistant(sessionId: string): boolean {
@@ -81,7 +84,4 @@ export class AssistantManager {
     }
   }
 
-  async waitReady(channelId: string): Promise<void> {
-    await this.readyState.get(channelId)
-  }
 }
