@@ -347,8 +347,17 @@ export class OpenACPCore {
       lastActiveAt: new Date().toISOString(),
     });
 
+    // For assistant sessions, prepend deferred system prompt on first real message
+    let text = message.text;
+    if (this.assistantManager?.isAssistant(session.id)) {
+      const pending = this.assistantManager.consumePendingSystemPrompt(message.channelId);
+      if (pending) {
+        text = `${pending}\n\n---\n\nUser message:\n${text}`;
+      }
+    }
+
     // Forward to session
-    await session.enqueuePrompt(message.text, message.attachments);
+    await session.enqueuePrompt(text, message.attachments);
   }
 
   // --- Unified Session Creation Pipeline ---

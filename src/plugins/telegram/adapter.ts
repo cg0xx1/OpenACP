@@ -489,7 +489,11 @@ export class TelegramAdapter extends MessagingAdapter {
         if (!assistant) return undefined;
         return {
           topicId: this.assistantTopicId,
-          enqueuePrompt: (p: string) => assistant.enqueuePrompt(p),
+          enqueuePrompt: (p: string) => {
+            const pending = this.core.assistantManager?.consumePendingSystemPrompt('telegram');
+            const text = pending ? `${pending}\n\n---\n\nUser message:\n${p}` : p;
+            return assistant.enqueuePrompt(text);
+          },
         };
       },
       (sessionId: string, msgId: number) => {
@@ -565,6 +569,7 @@ export class TelegramAdapter extends MessagingAdapter {
         totalCount: allRecords.length,
         agents: agents.map((a) => a.name),
         defaultAgent: config.defaultAgent,
+        workspace: this.core.configManager.resolveWorkspace(),
       });
 
       await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {

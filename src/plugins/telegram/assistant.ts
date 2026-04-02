@@ -4,10 +4,11 @@ export interface WelcomeContext {
   totalCount: number;
   agents: string[];
   defaultAgent: string;
+  workspace: string;
 }
 
 export function buildWelcomeMessage(ctx: WelcomeContext): string {
-  const { activeCount, errorCount, totalCount, agents, defaultAgent } = ctx;
+  const { activeCount, errorCount, totalCount, agents, defaultAgent, workspace } = ctx;
 
   const agentList = agents
     .map((a) => `${a}${a === defaultAgent ? " (default)" : ""}`)
@@ -15,13 +16,18 @@ export function buildWelcomeMessage(ctx: WelcomeContext): string {
 
   // Variant 1: No sessions
   if (totalCount === 0) {
-    return `👋 <b>OpenACP is ready!</b>\n\nNo sessions yet. Tap 🆕 New Session to start, or ask me anything!`;
+    return (
+      `👋 <b>OpenACP is ready!</b>\n\n` +
+      `📂 ${workspace}\n\n` +
+      `No sessions yet. Tap 🆕 New Session to start, or ask me anything!`
+    );
   }
 
   // Variant 2: Has errors
   if (errorCount > 0) {
     return (
       `👋 <b>OpenACP is ready!</b>\n\n` +
+      `📂 ${workspace}\n` +
       `📊 ${activeCount} active, ${errorCount} errors / ${totalCount} total\n` +
       `⚠️ ${errorCount} session${errorCount > 1 ? "s have" : " has"} errors — ask me to check if you'd like.\n\n` +
       `Agents: ${agentList}`
@@ -31,6 +37,7 @@ export function buildWelcomeMessage(ctx: WelcomeContext): string {
   // Variant 3/4: Has active or fallback
   return (
     `👋 <b>OpenACP is ready!</b>\n\n` +
+    `📂 ${workspace}\n` +
     `📊 ${activeCount} active / ${totalCount} total\n` +
     `Agents: ${agentList}`
   );
