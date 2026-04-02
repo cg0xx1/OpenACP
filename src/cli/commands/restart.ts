@@ -1,12 +1,16 @@
 import { wantsHelp } from './helpers.js'
+import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 import { printInstanceHint } from '../instance-hint.js'
 import path from 'node:path'
 import os from 'node:os'
 import { createInstanceContext, getGlobalRoot } from '../../core/instance/instance-context.js'
 
 export async function cmdRestart(args: string[] = [], instanceRoot?: string): Promise<void> {
+  const json = isJsonMode(args)
+  if (json) await muteForJson()
+
   const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
-  if (wantsHelp(args)) {
+  if (!json && wantsHelp(args)) {
     console.log(`
 \x1b[1mopenacp restart\x1b[0m — Restart the background daemon
 
@@ -16,6 +20,10 @@ export async function cmdRestart(args: string[] = [], instanceRoot?: string): Pr
   openacp restart --daemon        Restart as background daemon
 
 Stops the running daemon (if any) and starts a new one.
+
+\x1b[1mOptions:\x1b[0m
+  --json          Output result as JSON
+  -h, --help      Show this help message
 
 \x1b[1mSee also:\x1b[0m
   openacp start       Start the daemon
@@ -44,6 +52,7 @@ Stops the running daemon (if any) and starts a new one.
 
   const cm = new ConfigManager()
   if (!(await cm.exists())) {
+    if (json) jsonError(ErrorCodes.CONFIG_NOT_FOUND, 'No config found. Run "openacp" first to set up.')
     console.error('No config found. Run "openacp" first to set up.')
     process.exit(1)
   }
@@ -51,8 +60,8 @@ Stops the running daemon (if any) and starts a new one.
   await cm.load()
   const config = cm.get()
 
-  // Determine mode: explicit flag > config
-  const useForeground = forceForeground || (!forceDaemon && config.runMode !== 'daemon')
+  // Determine mode: explicit flag > config; --json always uses daemon mode
+  const useForeground = json ? false : (forceForeground || (!forceDaemon && config.runMode !== 'daemon'))
 
   if (useForeground) {
     markRunning(root)
@@ -68,9 +77,11 @@ Stops the running daemon (if any) and starts a new one.
   } else {
     const result = startDaemon(pidPath, config.logging.logDir, root)
     if ('error' in result) {
+      if (json) jsonError(ErrorCodes.DAEMON_NOT_RUNNING, result.error)
       console.error(result.error)
       process.exit(1)
     }
+    if (json) jsonSuccess({ pid: result.pid, instanceId: path.basename(root), dir: root })
     printInstanceHint(root)
     console.log(`OpenACP daemon started (PID ${result.pid})`)
   }

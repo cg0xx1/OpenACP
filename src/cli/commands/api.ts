@@ -1,5 +1,6 @@
 import { readApiPort, removeStalePortFile, apiCall } from '../api-client.js'
 import { wantsHelp } from './helpers.js'
+import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
 function printApiHelp(): void {
   console.log(`
@@ -42,6 +43,7 @@ function printApiHelp(): void {
   openacp api version                      Show daemon version
 
 \x1b[1mOptions:\x1b[0m
+  --json                                   Output result as JSON
   -h, --help                               Show this help message
 `)
 }
@@ -272,8 +274,12 @@ Shows the version of the currently running daemon process.
     return
   }
 
+  const json = isJsonMode(args)
+  if (json) await muteForJson()
+
   const port = readApiPort(undefined, instanceRoot)
   if (port === null) {
+    if (json) jsonError(ErrorCodes.DAEMON_NOT_RUNNING, 'OpenACP is not running.')
     console.error('OpenACP is not running. Start with `openacp start`')
     process.exit(1)
   }
@@ -299,9 +305,11 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       console.log('Session created')
       console.log(`  ID        : ${data.sessionId}`)
       console.log(`  Agent     : ${data.agent}`)
@@ -313,6 +321,7 @@ Shows the version of the currently running daemon process.
     } else if (subCmd === 'cancel') {
       const sessionId = args[1]
       if (!sessionId) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Session ID is required')
         console.error('Usage: openacp api cancel <session-id>')
         process.exit(1)
       }
@@ -321,14 +330,17 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess({ cancelled: true, sessionId })
       console.log(`Session ${sessionId} cancelled`)
 
     } else if (subCmd === 'status') {
       const res = await call('/api/sessions')
       const data = await res.json() as { sessions: Array<{ id: string; agent: string; status: string; name: string | null }> }
+      if (json) jsonSuccess(data)
       if (data.sessions.length === 0) {
         console.log('No active sessions.')
       } else {
@@ -342,6 +354,7 @@ Shows the version of the currently running daemon process.
     } else if (subCmd === 'agents') {
       const res = await call('/api/agents')
       const data = await res.json() as { agents: Array<{ name: string; command: string; args: string[] }>; default: string }
+      if (json) jsonSuccess(data)
       console.log('Available agents:')
       for (const a of data.agents) {
         const isDefault = a.name === data.default ? ' (default)' : ''
@@ -354,6 +367,7 @@ Shows the version of the currently running daemon process.
       const query = statusParam ? `?status=${encodeURIComponent(statusParam)}` : ''
       const res = await call(`/api/topics${query}`)
       const data = await res.json() as { topics: Array<{ sessionId: string; topicId: number | null; name: string | null; status: string; agentName: string; lastActiveAt: string }> }
+      if (json) jsonSuccess(data)
       if (data.topics.length === 0) {
         console.log('No topics found.')
       } else {
@@ -368,6 +382,7 @@ Shows the version of the currently running daemon process.
     } else if (subCmd === 'delete-topic') {
       const sessionId = args[1]
       if (!sessionId) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Session ID is required')
         console.error('Usage: openacp api delete-topic <session-id> [--force]')
         process.exit(1)
       }
@@ -377,13 +392,16 @@ Shows the version of the currently running daemon process.
       const data = await res.json() as Record<string, unknown>
       if (res.status === 409) {
         const session = data.session as Record<string, unknown> | undefined
+        if (json) jsonError(ErrorCodes.API_ERROR, `Session "${sessionId}" is active (${session?.status}). Use --force to delete.`)
         console.error(`Session "${sessionId}" is active (${session?.status}). Use --force to delete.`)
         process.exit(1)
       }
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       const topicLabel = data.topicId ? `Topic #${data.topicId}` : 'headless session'
       console.log(`${topicLabel} deleted (session ${sessionId})`)
 
@@ -398,6 +416,7 @@ Shows the version of the currently running daemon process.
         body: JSON.stringify(body),
       })
       const data = await res.json() as { deleted: string[]; failed: Array<{ sessionId: string; error: string }> }
+      if (json) jsonSuccess(data)
       if (data.deleted.length === 0 && data.failed.length === 0) {
         console.log('Nothing to clean up.')
       } else {
@@ -410,11 +429,13 @@ Shows the version of the currently running daemon process.
     } else if (subCmd === 'send') {
       const sessionId = args[1]
       if (!sessionId) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Session ID is required')
         console.error('Usage: openacp api send <session-id> <prompt>')
         process.exit(1)
       }
       const prompt = args.slice(2).join(' ')
       if (!prompt) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Prompt is required')
         console.error('Usage: openacp api send <session-id> <prompt>')
         process.exit(1)
       }
@@ -425,23 +446,28 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       console.log(`Prompt sent to session ${sessionId} (queue depth: ${data.queueDepth})`)
 
     } else if (subCmd === 'session') {
       const sessionId = args[1]
       if (!sessionId) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Session ID is required')
         console.error('Usage: openacp api session <session-id>')
         process.exit(1)
       }
       const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}`)
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       const s = (data.session ?? data) as Record<string, unknown>
       console.log(`Session details:`)
       console.log(`  ID             : ${s.id}`)
@@ -459,11 +485,13 @@ Shows the version of the currently running daemon process.
     } else if (subCmd === 'dangerous' || subCmd === 'bypass') {
       const sessionId = args[1]
       if (!sessionId) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Session ID is required')
         console.error('Usage: openacp api bypass <session-id> [on|off]')
         process.exit(1)
       }
       const toggle = args[2]
       if (!toggle || (toggle !== 'on' && toggle !== 'off')) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Toggle value (on|off) is required')
         console.error('Usage: openacp api bypass <session-id> [on|off]')
         process.exit(1)
       }
@@ -474,9 +502,11 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       const state = toggle === 'on' ? 'enabled' : 'disabled'
       console.log(`Bypass permissions ${state} for session ${sessionId}`)
 
@@ -484,9 +514,11 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/health')
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       const uptimeMs = typeof data.uptime === 'number' ? data.uptime : 0
       const uptimeSeconds = Math.floor(uptimeMs / 1000)
       const hours = Math.floor(uptimeSeconds / 3600)
@@ -509,9 +541,11 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/restart', { method: 'POST' })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess({ restarted: true })
       console.log('Restart signal sent. OpenACP is restarting...')
 
     } else if (subCmd === 'config') {
@@ -521,14 +555,17 @@ Shows the version of the currently running daemon process.
         const res = await call('/api/config')
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
+          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
           console.error(`Error: ${data.error}`)
           process.exit(1)
         }
+        if (json) jsonSuccess(data)
         console.log(JSON.stringify(data.config, null, 2))
       } else if (subSubCmd === 'set') {
         const configPath = args[2]
         const configValue = args[3]
         if (!configPath || configValue === undefined) {
+          if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Config path and value are required')
           console.error('Usage: openacp api config set <path> <value>')
           process.exit(1)
         }
@@ -545,14 +582,17 @@ Shows the version of the currently running daemon process.
         })
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
+          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
           console.error(`Error: ${data.error}`)
           process.exit(1)
         }
+        if (json) jsonSuccess(data)
         console.log(`Config updated: ${configPath} = ${JSON.stringify(value)}`)
         if (data.needsRestart) {
           console.log('Note: restart required for this change to take effect.')
         }
       } else {
+        if (json) jsonError(ErrorCodes.UNKNOWN_COMMAND, `Unknown config subcommand: ${subSubCmd}`)
         console.error(`Unknown config subcommand: ${subSubCmd}`)
         console.log('  openacp api config                       Show runtime config')
         console.log('  openacp api config set <key> <value>     Update config value')
@@ -563,9 +603,11 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/adapters')
       const data = await res.json() as { adapters: Array<{ name: string; type: string }> }
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String((data as Record<string, unknown>).error ?? 'API request failed'))
         console.error(`Error: ${(data as Record<string, unknown>).error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       console.log('Registered adapters:')
       for (const a of data.adapters) {
         console.log(`  ${a.name}  (${a.type})`)
@@ -575,9 +617,11 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/tunnel')
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       if (data.enabled) {
         console.log(`Tunnel provider : ${data.provider}`)
         console.log(`Tunnel URL      : ${data.url}`)
@@ -588,6 +632,7 @@ Shows the version of the currently running daemon process.
     } else if (subCmd === 'notify') {
       const message = args.slice(1).join(' ')
       if (!message) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Message is required')
         console.error('Usage: openacp api notify <message>')
         process.exit(1)
       }
@@ -598,23 +643,28 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess({ sent: true })
       console.log('Notification sent to all channels.')
 
     } else if (subCmd === 'version') {
       const res = await call('/api/version')
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess(data)
       console.log(`Daemon version: ${data.version}`)
 
     } else if (subCmd === 'session-config') {
       const sessionId = args[1]
       if (!sessionId) {
+        if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Session ID is required')
         console.error('Usage: openacp api session-config <session-id> [set <opt> <value> | overrides | dangerous [on|off]]')
         process.exit(1)
       }
@@ -625,9 +675,11 @@ Shows the version of the currently running daemon process.
         const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}/config`)
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
+          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
           console.error(`Error: ${data.error}`)
           process.exit(1)
         }
+        if (json) jsonSuccess(data)
         const configOptions = data.configOptions as Array<Record<string, unknown>> | undefined
         const clientOverrides = data.clientOverrides as Record<string, unknown> | undefined
         if (!configOptions || configOptions.length === 0) {
@@ -660,6 +712,7 @@ Shows the version of the currently running daemon process.
         const configId = args[3]
         const value = args[4]
         if (!configId || value === undefined) {
+          if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Config ID and value are required')
           console.error('Usage: openacp api session-config <session-id> set <config-id> <value>')
           process.exit(1)
         }
@@ -670,9 +723,11 @@ Shows the version of the currently running daemon process.
         })
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
+          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
           console.error(`Error: ${data.error}`)
           process.exit(1)
         }
+        if (json) jsonSuccess(data)
         console.log(`Config option "${configId}" updated to "${value}"`)
         const configOptions = data.configOptions as Array<Record<string, unknown>> | undefined
         const updated = configOptions?.find((o) => o.id === configId)
@@ -685,9 +740,11 @@ Shows the version of the currently running daemon process.
         const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}/config/overrides`)
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
+          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
           console.error(`Error: ${data.error}`)
           process.exit(1)
         }
+        if (json) jsonSuccess(data)
         const overrides = data.clientOverrides as Record<string, unknown> | undefined
         if (!overrides || Object.keys(overrides).length === 0) {
           console.log('No client overrides set.')
@@ -701,6 +758,7 @@ Shows the version of the currently running daemon process.
       } else if (configSubCmd === 'dangerous') {
         const toggle = args[3]
         if (toggle && toggle !== 'on' && toggle !== 'off') {
+          if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Toggle value must be on or off')
           console.error('Usage: openacp api session-config <session-id> dangerous [on|off]')
           process.exit(1)
         }
@@ -713,9 +771,11 @@ Shows the version of the currently running daemon process.
           })
           const data = await res.json() as Record<string, unknown>
           if (!res.ok) {
+            if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
             console.error(`Error: ${data.error}`)
             process.exit(1)
           }
+          if (json) jsonSuccess(data)
           const state = toggle === 'on' ? 'enabled' : 'disabled'
           console.log(`bypassPermissions ${state} for session ${sessionId}`)
         } else {
@@ -723,15 +783,18 @@ Shows the version of the currently running daemon process.
           const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}/config/overrides`)
           const data = await res.json() as Record<string, unknown>
           if (!res.ok) {
+            if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
             console.error(`Error: ${data.error}`)
             process.exit(1)
           }
+          if (json) jsonSuccess(data)
           const overrides = data.clientOverrides as Record<string, unknown> | undefined
           const bypass = overrides?.bypassPermissions
           console.log(`bypassPermissions: ${bypass ?? false}`)
         }
 
       } else {
+        if (json) jsonError(ErrorCodes.UNKNOWN_COMMAND, `Unknown session-config subcommand: ${configSubCmd}`)
         console.error(`Unknown session-config subcommand: ${configSubCmd}`)
         console.log('  openacp api session-config <id>                    List config options')
         console.log('  openacp api session-config <id> set <opt> <value>  Set a config option')
@@ -748,17 +811,22 @@ Shows the version of the currently running daemon process.
         'config', 'adapters', 'tunnel', 'notify', 'version', 'session-config',
       ]
       const suggestion = suggestMatch(subCmd ?? '', apiSubcommands)
+      if (json) jsonError(ErrorCodes.UNKNOWN_COMMAND, `Unknown api command: ${subCmd || '(none)'}`)
       console.error(`Unknown api command: ${subCmd || '(none)'}\n`)
       if (suggestion) console.error(`Did you mean: ${suggestion}?\n`)
       printApiHelp()
       process.exit(1)
     }
   } catch (err) {
+    // jsonSuccess/jsonError call process.exit which may throw in certain environments
+    if (err instanceof Error && err.message.startsWith('process.exit')) throw err
     if (err instanceof TypeError && (err.cause as Record<string, unknown> | undefined)?.code === 'ECONNREFUSED') {
+      if (json) jsonError(ErrorCodes.API_ERROR, 'OpenACP is not running (stale port file)')
       console.error('OpenACP is not running (stale port file)')
       removeStalePortFile(undefined, instanceRoot)
       process.exit(1)
     }
+    if (json) jsonError(ErrorCodes.API_ERROR, (err as Error).message)
     throw err
   }
 }

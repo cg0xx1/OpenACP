@@ -3,8 +3,12 @@ import { InstanceRegistry } from '../../core/instance/instance-registry.js'
 import path from 'node:path'
 import os from 'node:os'
 import qrcode from 'qrcode-terminal'
+import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
 export async function cmdRemote(args: string[], instanceRoot?: string): Promise<void> {
+  const json = isJsonMode(args)
+  if (json) await muteForJson()
+
   // Parse flags
   const role = extractFlag(args, '--role') ?? 'admin'
   const expire = extractFlag(args, '--expire') ?? '24h'
@@ -24,6 +28,7 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
     await registry.load()
     const entry = registry.get(instanceId)
     if (!entry) {
+      if (json) jsonError(ErrorCodes.INSTANCE_NOT_FOUND, `Workspace "${instanceId}" not found. Run "openacp status" to see workspaces.`)
       console.error(`Workspace "${instanceId}" not found. Run "openacp status" to see workspaces.`)
       process.exit(1)
     }
@@ -33,6 +38,7 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
   // Check if API server is running
   const port = readApiPort(undefined, resolvedInstanceRoot)
   if (port === null) {
+    if (json) jsonError(ErrorCodes.DAEMON_NOT_RUNNING, 'OpenACP is not running. Start with `openacp start`')
     console.error('OpenACP is not running. Start with `openacp start`')
     process.exit(1)
   }
@@ -41,10 +47,13 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
   try {
     const healthRes = await apiCall(port, '/api/v1/system/health', undefined, resolvedInstanceRoot)
     if (!healthRes.ok) {
+      if (json) jsonError(ErrorCodes.API_ERROR, 'API server is not responding. Try restarting with `openacp restart`')
       console.error('API server is not responding. Try restarting with `openacp restart`')
       process.exit(1)
     }
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('process.exit')) throw err
+    if (json) jsonError(ErrorCodes.API_ERROR, 'Cannot connect to API server. Is OpenACP running?')
     console.error('Cannot connect to API server. Is OpenACP running?')
     process.exit(1)
   }
@@ -52,6 +61,7 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
   // Read api-secret for auth
   const secret = readApiSecret(undefined, resolvedInstanceRoot)
   if (!secret) {
+    if (json) jsonError(ErrorCodes.API_ERROR, 'Cannot read API secret. Make sure OpenACP is running with the API server enabled.')
     console.error('Cannot read API secret. Make sure OpenACP is running with the API server enabled.')
     process.exit(1)
   }
@@ -79,12 +89,15 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
 
     if (!res.ok) {
       const err = await res.json() as Record<string, unknown>
+      if (json) jsonError(ErrorCodes.API_ERROR, `Failed to generate code: ${err.error ?? err.message ?? 'Unknown error'}`)
       console.error(`Failed to generate code: ${err.error ?? err.message ?? 'Unknown error'}`)
       process.exit(1)
     }
 
     codeData = await res.json() as typeof codeData
   } catch (err) {
+    if (err instanceof Error && err.message.startsWith('process.exit')) throw err
+    if (json) jsonError(ErrorCodes.API_ERROR, `Failed to generate code: ${(err as Error).message}`)
     console.error(`Failed to generate code: ${(err as Error).message}`)
     process.exit(1)
   }
@@ -116,6 +129,20 @@ export async function cmdRemote(args: string[], instanceRoot?: string): Promise<
 
   // Format expiry for display
   const expireDisplay = expiresAt
+
+  if (json) {
+    jsonSuccess({
+      code,
+      name: tokenName,
+      role,
+      expiresAt,
+      urls: {
+        local: localUrl,
+        tunnel: tunnelLink ?? undefined,
+        app: appLink ?? undefined,
+      },
+    })
+  }
 
   // Display output — metadata in box, links outside as plain text
   const W = 64

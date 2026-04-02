@@ -41,18 +41,18 @@ describe('cmdSetup', () => {
   });
 
   it('outputs JSON result when --json flag is passed', async () => {
-    let output = '';
-    vi.spyOn(console, 'log').mockImplementation((s: string) => { output += s; });
-
+    const { captureJsonOutput, expectValidJsonSuccess } = await import('./helpers/json-test-utils.js');
     const { cmdSetup } = await import('../setup.js');
-    await cmdSetup(
-      ['--workspace', '/tmp/ws', '--agent', 'claude-code', '--json'],
-      tmpDir,
-    );
-
-    const result = JSON.parse(output);
-    expect(result.success).toBe(true);
-    expect(result.configPath).toContain('config.json');
+    const result = await captureJsonOutput(async () => {
+      await cmdSetup(
+        ['--workspace', '/tmp/ws', '--agent', 'claude-code', '--json'],
+        tmpDir,
+      );
+    });
+    expect(result.exitCode).toBe(0);
+    const data = expectValidJsonSuccess(result.stdout);
+    expect(data).toHaveProperty('configPath');
+    expect((data.configPath as string)).toContain('config.json');
   });
 
   it('exits with code 1 when --workspace is missing', async () => {
