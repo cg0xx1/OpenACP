@@ -727,41 +727,43 @@ print_nvm_upgrade_hint() {
 
 install_node() {
     if [[ "$OS" == "macos" ]]; then
-        # Install via Homebrew
-        if ! command -v brew &>/dev/null; then
-            ui_info "Homebrew not found, installing"
-            run_quiet_step "Installing Homebrew" bash -c 'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"'
-            if [[ -f "/opt/homebrew/bin/brew" ]]; then
-                eval "$(/opt/homebrew/bin/brew shellenv)"
-            elif [[ -f "/usr/local/bin/brew" ]]; then
-                eval "$(/usr/local/bin/brew shellenv)"
-            fi
-        fi
-        ui_info "Installing Node.js via Homebrew"
-        run_quiet_step "Installing node@${NODE_DEFAULT_MAJOR}" brew install "node@${NODE_DEFAULT_MAJOR}"
-        brew link "node@${NODE_DEFAULT_MAJOR}" --overwrite --force 2>/dev/null || true
-
-        # Ensure brew node is on PATH
-        local brew_node_prefix=""
-        brew_node_prefix="$(brew --prefix "node@${NODE_DEFAULT_MAJOR}" 2>/dev/null || true)"
-        if [[ -n "$brew_node_prefix" && -x "${brew_node_prefix}/bin/node" ]]; then
-            export PATH="${brew_node_prefix}/bin:$PATH"
-            hash -r 2>/dev/null || true
+        # Install via nvm (no sudo required)
+        if [[ -z "${NVM_DIR:-}" ]] && [[ ! -s "${HOME}/.nvm/nvm.sh" ]] && [[ ! -s "${XDG_CONFIG_HOME:-}/nvm/nvm.sh" ]]; then
+            ui_info "Installing nvm (Node Version Manager)"
+            local nvm_install
+            nvm_install="$(mktempfile)"
+            download_file "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" "$nvm_install"
+            run_quiet_step "Installing nvm" bash "$nvm_install"
+            export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
+            # shellcheck source=/dev/null
+            [[ -s "${NVM_DIR}/nvm.sh" ]] && source "${NVM_DIR}/nvm.sh"
         fi
 
-        ui_success "Node.js installed"
+        if [[ -s "${NVM_DIR:-${HOME}/.nvm}/nvm.sh" ]]; then
+            # shellcheck source=/dev/null
+            source "${NVM_DIR:-${HOME}/.nvm}/nvm.sh"
+            ui_info "Installing Node.js v${NODE_DEFAULT_MAJOR} via nvm"
+            run_quiet_step "Installing Node.js" nvm install "${NODE_DEFAULT_MAJOR}"
+            nvm use "${NODE_DEFAULT_MAJOR}" 2>/dev/null || true
+            nvm alias default "${NODE_DEFAULT_MAJOR}" 2>/dev/null || true
+        else
+            ui_error "Could not install nvm. Please install Node.js ${NODE_DEFAULT_MAJOR} manually: https://nodejs.org"
+            exit 1
+        fi
+
+        ui_success "Node.js v${NODE_DEFAULT_MAJOR} installed"
 
     elif [[ "$OS" == "linux" ]]; then
         # Check for nvm first, install it if not present.
         # Note: nvm is a shell function, not a binary — command -v nvm is unreliable.
         # Always detect nvm via NVM_DIR / nvm.sh presence.
-        if [[ -z "${NVM_DIR:-}" ]] && [[ ! -s "${HOME}/.nvm/nvm.sh" ]]; then
+        if [[ -z "${NVM_DIR:-}" ]] && [[ ! -s "${HOME}/.nvm/nvm.sh" ]] && [[ ! -s "${XDG_CONFIG_HOME:-}/nvm/nvm.sh" ]]; then
             ui_info "Installing nvm (Node Version Manager)"
             local nvm_install
             nvm_install="$(mktempfile)"
-            download_file "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh" "$nvm_install"
+            download_file "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh" "$nvm_install"
             run_quiet_step "Installing nvm" bash "$nvm_install"
-            export NVM_DIR="${HOME}/.nvm"
+            export NVM_DIR="$([ -z "${XDG_CONFIG_HOME-}" ] && printf %s "${HOME}/.nvm" || printf %s "${XDG_CONFIG_HOME}/nvm")"
             # shellcheck source=/dev/null
             [[ -s "${NVM_DIR}/nvm.sh" ]] && source "${NVM_DIR}/nvm.sh"
         fi
@@ -1260,8 +1262,6 @@ main() {
     ui_stage "Installing OpenACP"
 
     if [[ "$INSTALL_METHOD" == "git" ]]; then
-        install_openacp_from_git "$GIT_DIR"
-    else
         if ! check_git; then
             install_git
             if ! command -v git &>/dev/null; then
@@ -1270,6 +1270,8 @@ main() {
             fi
             hash -r 2>/dev/null || true
         fi
+        install_openacp_from_git "$GIT_DIR"
+    else
         fix_npm_permissions
 
         local install_spec=""
