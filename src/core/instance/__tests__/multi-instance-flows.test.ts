@@ -244,19 +244,17 @@ describe('instance copy flow: create new from existing', () => {
     fs.rmSync(baseDir, { recursive: true, force: true })
   })
 
-  it('copies config but strips instanceName and ports', async () => {
+  it('copies config but strips instanceName and migrated plugin sections', async () => {
     await copyInstance(srcDir, dstDir, {})
     const config = JSON.parse(fs.readFileSync(path.join(dstDir, 'config.json'), 'utf-8'))
 
-    // Stripped fields
+    // Stripped fields (instanceName + migrated plugin sections)
     expect(config.instanceName).toBeUndefined()
-    expect(config.api?.port).toBeUndefined()
-    expect(config.tunnel?.port).toBeUndefined()
+    expect(config.api).toBeUndefined()
+    expect(config.tunnel).toBeUndefined()
 
-    // Preserved fields
-    expect(config.channels.telegram.botToken).toBe('secret-token')
-    expect(config.api?.secret).toBe('abc')
-    expect(config.tunnel?.provider).toBe('cloudflare')
+    // Plugin-owned channel fields stripped
+    expect(config.channels.telegram.botToken).toBeUndefined()
   })
 
   it('copies installed plugins and agents but not runtime files', async () => {

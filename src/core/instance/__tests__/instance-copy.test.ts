@@ -39,12 +39,14 @@ describe('copyInstance', () => {
     fs.rmSync(baseDir, { recursive: true, force: true })
   })
 
-  it('copies config.json with port fields and instanceName removed', async () => {
+  it('copies config.json with migrated sections and instanceName stripped', async () => {
     await copyInstance(srcDir, dstDir, {})
     const config = JSON.parse(fs.readFileSync(path.join(dstDir, 'config.json'), 'utf-8'))
     expect(config.instanceName).toBeUndefined()
-    expect(config.api?.port).toBeUndefined()
-    expect(config.channels.telegram.botToken).toBe('secret') // non-port fields preserved
+    // Migrated plugin sections are stripped (plugins read from settings.json now)
+    expect(config.api).toBeUndefined()
+    // Plugin-owned channel fields stripped, core channel fields preserved
+    expect(config.channels.telegram.botToken).toBeUndefined()
   })
 
   it('copies plugins.json', async () => {
