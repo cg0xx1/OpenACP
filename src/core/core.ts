@@ -1,5 +1,6 @@
 import path from "node:path";
 import os from "node:os";
+import type { SettingsManager } from "./plugin/settings-manager.js";
 import { ConfigManager } from "./config/config.js";
 import { AgentManager } from "./agents/agent-manager.js";
 import { SessionManager } from "./sessions/session-manager.js";
@@ -83,6 +84,10 @@ export class OpenACPCore {
     return this.getService<ContextManager>('context');
   }
 
+  get settingsManager(): SettingsManager | undefined {
+    return this.lifecycleManager.settingsManager;
+  }
+
   constructor(configManager: ConfigManager, ctx?: InstanceContext) {
     this.configManager = configManager;
     this.instanceContext = ctx;
@@ -162,15 +167,29 @@ export class OpenACPCore {
           log.info({ level: value }, "Log level changed at runtime");
         }
         if (configPath.startsWith("speech.")) {
-          const speechSvc = this.speechService;
+          const speechSvc = this.lifecycleManager.serviceRegistry.get<SpeechService>('speech');
           if (speechSvc) {
-            const newConfig = this.configManager.get();
-            const newSpeechConfig = newConfig.speech ?? {
-              stt: { provider: null, providers: {} },
-              tts: { provider: null, providers: {} },
-            };
-            speechSvc.refreshProviders(newSpeechConfig);
-            log.info("Speech service config updated at runtime");
+            const settingsMgr = this.settingsManager;
+            if (settingsMgr) {
+              const pluginCfg = await settingsMgr.loadSettings('@openacp/speech');
+              const groqApiKey = pluginCfg.groqApiKey as string | undefined;
+              const sttProviders: Record<string, { apiKey: string }> = {};
+              if (groqApiKey) {
+                sttProviders.groq = { apiKey: groqApiKey };
+              }
+              const newSpeechConfig = {
+                stt: {
+                  provider: groqApiKey ? 'groq' : null,
+                  providers: sttProviders,
+                },
+                tts: {
+                  provider: (pluginCfg.ttsProvider as string) ?? null,
+                  providers: {} as Record<string, never>,
+                },
+              };
+              speechSvc.refreshProviders(newSpeechConfig);
+              log.info("Speech service config updated at runtime (from plugin settings)");
+            }
           }
         }
       },
@@ -309,7 +328,7 @@ export class OpenACPCore {
     }
 
     // Security: check user access and session limits
-    const access = this.securityGuard.checkAccess(message);
+    const access = await this.securityGuard.checkAccess(message);
     if (!access.allowed) {
       log.warn({ userId: message.userId, reason: access.reason }, "Access denied");
       if (access.reason.includes("Session limit")) {

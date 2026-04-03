@@ -11,14 +11,33 @@ export async function copyInstance(src: string, dst: string, opts: CopyOptions):
   const { inheritableKeys = {}, onProgress } = opts
   fs.mkdirSync(dst, { recursive: true })
 
-  // 1. config.json — remove instanceName and port fields
+  // 1. config.json — strip instance-specific fields and migrated plugin sections
   const configSrc = path.join(src, 'config.json')
   if (fs.existsSync(configSrc)) {
     onProgress?.('Configuration', 'start')
     const config = JSON.parse(fs.readFileSync(configSrc, 'utf-8'))
+    // Remove instance-specific fields
     delete config.instanceName
-    if (config.api) delete config.api.port
-    if (config.tunnel) delete config.tunnel.port
+    // Remove migrated plugin sections — plugins read from settings.json now.
+    // Leaving these would cause lifecycle-manager fallback to leak unfiltered settings.
+    delete config.security
+    delete config.tunnel
+    delete config.api
+    delete config.speech
+    delete config.usage
+    // channels: strip plugin-owned fields, keep only core fields (enabled, outputMode, adapter, displayVerbosity)
+    if (config.channels && typeof config.channels === 'object') {
+      const CORE_CHANNEL_KEYS = new Set(['enabled', 'outputMode', 'adapter', 'displayVerbosity'])
+      for (const ch of Object.values(config.channels)) {
+        if (ch && typeof ch === 'object') {
+          for (const key of Object.keys(ch as Record<string, unknown>)) {
+            if (!CORE_CHANNEL_KEYS.has(key)) {
+              delete (ch as Record<string, unknown>)[key]
+            }
+          }
+        }
+      }
+    }
     fs.writeFileSync(path.join(dst, 'config.json'), JSON.stringify(config, null, 2))
     onProgress?.('Configuration', 'done')
   }
