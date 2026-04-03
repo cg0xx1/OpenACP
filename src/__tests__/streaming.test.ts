@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { MessageDraft } from '../adapters/telegram/streaming.js'
-import { TelegramSendQueue } from '../adapters/telegram/send-queue.js'
+import { MessageDraft } from '../plugins/telegram/streaming.js'
+import { SendQueue } from '../core/adapter-primitives/primitives/send-queue.js'
 
 function createMockBot() {
   return {
@@ -13,13 +13,13 @@ function createMockBot() {
 
 describe('MessageDraft', () => {
   let bot: ReturnType<typeof createMockBot>
-  let queue: TelegramSendQueue
+  let queue: SendQueue
   let draft: MessageDraft
 
   beforeEach(() => {
     vi.useFakeTimers()
     bot = createMockBot()
-    queue = new TelegramSendQueue(100)
+    queue = new SendQueue({ minInterval: 100 })
     draft = new MessageDraft(bot, 123, 456, queue, 'session-1')
   })
 

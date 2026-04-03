@@ -2,14 +2,21 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import { ConfigManager } from '../core/config.js'
+import { ConfigManager } from '../core/config/config.js'
 
-// Mock @inquirer/prompts before importing setup
-vi.mock('@inquirer/prompts', () => ({
-  input: vi.fn(),
+// Mock @clack/prompts before importing setup
+vi.mock('@clack/prompts', () => ({
+  text: vi.fn(),
   select: vi.fn(),
   confirm: vi.fn(),
-  checkbox: vi.fn(),
+  multiselect: vi.fn(),
+  autocompleteMultiselect: vi.fn().mockResolvedValue([]),
+  spinner: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
+  intro: vi.fn(),
+  outro: vi.fn(),
+  cancel: vi.fn(),
+  note: vi.fn(),
+  isCancel: vi.fn(() => false),
 }))
 
 // Mock child_process for agent detection
@@ -29,7 +36,7 @@ vi.mock('../core/autostart.js', () => ({
 }))
 
 // Mock AgentCatalog to avoid real registry/fs operations during setup
-vi.mock('../core/agent-catalog.js', () => {
+vi.mock('../core/agents/agent-catalog.js', () => {
   class MockAgentCatalog {
     load = vi.fn()
     refreshRegistryIfStale = vi.fn().mockResolvedValue(undefined)
@@ -47,7 +54,7 @@ vi.mock('../core/agent-catalog.js', () => {
 })
 
 // Mock AgentStore for the fallback path in setupAgents
-vi.mock('../core/agent-store.js', () => {
+vi.mock('../core/agents/agent-store.js', () => {
   class MockAgentStore {
     load = vi.fn()
     addAgent = vi.fn()
@@ -57,12 +64,31 @@ vi.mock('../core/agent-store.js', () => {
   }
 })
 
-import { input, select, confirm } from '@inquirer/prompts'
-import { runSetup } from '../core/setup.js'
+// Mock cloudflared download to avoid real network calls
+vi.mock('../tunnel/providers/install-cloudflared.js', () => ({
+  ensureCloudflared: vi.fn(() => Promise.resolve('/usr/local/bin/cloudflared')),
+}))
 
-const mockedInput = vi.mocked(input)
-const mockedSelect = vi.mocked(select)
-const mockedConfirm = vi.mocked(confirm)
+// Track plugin install calls
+const telegramInstallFn = vi.fn()
+
+// Mock the telegram plugin module — install writes to settings via ctx
+vi.mock('../plugins/telegram/index.js', () => ({
+  default: {
+    name: '@openacp/telegram',
+    version: '1.0.0',
+    description: 'Telegram adapter with forum topics',
+    install: telegramInstallFn,
+  },
+}))
+
+import * as clack from '@clack/prompts'
+import { runSetup, runReconfigure } from '../core/setup/index.js'
+
+const mockedText = vi.mocked(clack.text)
+const mockedSelect = vi.mocked(clack.select)
+const mockedConfirm = vi.mocked(clack.confirm)
+const mockedMultiselect = vi.mocked(clack.multiselect)
 
 describe('runSetup integration', () => {
   let tmpDir: string
@@ -121,6 +147,9 @@ describe('runSetup integration', () => {
       }
       return Promise.reject(new Error(`unexpected URL: ${url}`))
     }))
+
+    telegramInstallFn.mockReset()
+    telegramInstallFn.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -133,42 +162,178 @@ describe('runSetup integration', () => {
     vi.restoreAllMocks()
   })
 
-  it('creates valid config file and auto-starts', async () => {
-    // Input call order:
-    // 1. setupTelegram: bot token
+  it('creates valid config file via plugin install and auto-starts', { timeout: 15000 }, async () => {
+    // text() call order:
+    // 1. Instance name prompt
+    mockedText.mockResolvedValueOnce('Main' as any)
     // 2. setupWorkspace: workspace base dir
-    let inputCallIndex = 0
-    mockedInput.mockImplementation((() => {
-      const responses = [
-        '123:FAKE_TOKEN',    // bot token
-        '~/my-workspace',   // workspace dir
-      ]
-      return Promise.resolve(responses[inputCallIndex++])
-    }) as any)
+    mockedText.mockResolvedValueOnce('~/my-workspace' as any)
 
     // Confirm call order:
     // 1. Claude CLI integration prompt (decline to avoid needing ClaudeIntegration mock)
     mockedConfirm.mockResolvedValueOnce(false as any)
 
+    // Multiselect: channel selection (Telegram only)
+    mockedMultiselect.mockResolvedValueOnce(['telegram'] as any)
+
     // Select call order:
     // 1. setupRunMode: run mode selection
     mockedSelect.mockResolvedValueOnce('foreground' as any)
 
+    // Create mock settingsManager and pluginRegistry
+    const pluginsDir = path.join(tmpDir, 'plugins')
+    fs.mkdirSync(pluginsDir, { recursive: true })
+
+    const mockSettingsManager = {
+      getBasePath: () => pluginsDir,
+      getSettingsPath: (name: string) => path.join(pluginsDir, name, 'settings.json'),
+      createAPI: () => ({
+        get: vi.fn(),
+        set: vi.fn(),
+        getAll: vi.fn().mockResolvedValue({}),
+        setAll: vi.fn(),
+        clear: vi.fn(),
+      }),
+    }
+
+    const registeredPlugins = new Map<string, Record<string, unknown>>()
+    const mockPluginRegistry = {
+      register: vi.fn((name: string, entry: Record<string, unknown>) => {
+        registeredPlugins.set(name, entry)
+      }),
+      get: vi.fn((name: string) => registeredPlugins.get(name)),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+
     const cm = new ConfigManager()
-    const shouldStart = await runSetup(cm)
+    const shouldStart = await runSetup(cm, {
+      settingsManager: mockSettingsManager as any,
+      pluginRegistry: mockPluginRegistry as any,
+    })
 
     expect(shouldStart).toBe(true)
     expect(fs.existsSync(configPath)).toBe(true)
 
+    // Telegram plugin install was called
+    expect(telegramInstallFn).toHaveBeenCalledOnce()
+
+    // Plugin was registered in the registry
+    expect(mockPluginRegistry.register).toHaveBeenCalledWith(
+      '@openacp/telegram',
+      expect.objectContaining({
+        version: '1.0.0',
+        source: 'builtin',
+        enabled: true,
+      }),
+    )
+
     const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-    expect(written.channels.telegram.enabled).toBe(true)
-    expect(written.channels.telegram.botToken).toBe('123:FAKE_TOKEN')
-    expect(written.channels.telegram.chatId).toBe(-1001234567890)
+    // Channels are now managed by plugins, core config has empty channels
+    expect(written.channels).toEqual({})
     // agents are now stored in agents.json, not config.json
     expect(written.agents).toEqual({})
     expect(written.defaultAgent).toBe('claude')
     expect(written.workspace.baseDir).toBe('~/my-workspace')
     expect(written.security.maxConcurrentSessions).toBe(20)
     expect(written.security.sessionTimeoutMinutes).toBe(60)
+
+    // Built-in plugins were auto-registered
+    expect(mockPluginRegistry.save).toHaveBeenCalled()
+  })
+})
+
+describe('runReconfigure integration', () => {
+  let tmpDir: string
+  let configPath: string
+  const originalEnv = process.env.OPENACP_CONFIG_PATH
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openacp-reconfig-'))
+    configPath = path.join(tmpDir, 'config.json')
+    process.env.OPENACP_CONFIG_PATH = configPath
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    if (originalEnv === undefined) {
+      delete process.env.OPENACP_CONFIG_PATH
+    } else {
+      process.env.OPENACP_CONFIG_PATH = originalEnv
+    }
+    vi.restoreAllMocks()
+  })
+
+  it('shows section menu and allows channel reconfiguration', { timeout: 15000 }, async () => {
+    // Pre-create config file with existing Telegram config
+    const existingConfig = {
+      channels: {
+        telegram: {
+          enabled: true,
+          botToken: '123:OLD_TOKEN',
+          chatId: -1001234567890,
+        },
+      },
+      agents: {},
+      defaultAgent: 'claude',
+      workspace: { baseDir: '~/workspace' },
+      security: {
+        allowedUserIds: [],
+        maxConcurrentSessions: 20,
+        sessionTimeoutMinutes: 60,
+      },
+      logging: {
+        level: 'info',
+        logDir: '~/.openacp/logs',
+        maxFileSize: '10m',
+        maxFiles: 7,
+        sessionLogRetentionDays: 30,
+      },
+      runMode: 'foreground',
+      autoStart: false,
+      api: { port: 21420, host: '127.0.0.1' },
+      sessionStore: { ttlDays: 30 },
+      tunnel: {
+        enabled: true,
+        port: 3100,
+        provider: 'cloudflare',
+        options: {},
+        maxUserTunnels: 5,
+        storeTtlMinutes: 60,
+        auth: { enabled: false },
+      },
+      usage: {
+        enabled: true,
+        warningThreshold: 0.8,
+        currency: 'USD',
+        retentionDays: 90,
+      },
+      integrations: {},
+      speech: {
+        stt: { provider: null, providers: {} },
+        tts: { provider: null, providers: {} },
+      },
+    }
+    fs.writeFileSync(configPath, JSON.stringify(existingConfig, null, 2))
+
+    // Mock select calls in order:
+    // 1. section menu → 'channels'
+    // 2. channel loop → 'telegram'
+    // 3. configured action → 'skip'
+    // 4. channel loop → '__done__'
+    // 5. section menu → '__continue'
+    mockedSelect
+      .mockResolvedValueOnce('channels' as any)
+      .mockResolvedValueOnce('telegram' as any)
+      .mockResolvedValueOnce('skip' as any)
+      .mockResolvedValueOnce('__done__' as any)
+      .mockResolvedValueOnce('__continue' as any)
+
+    const cm = new ConfigManager()
+    await runReconfigure(cm)
+
+    // Config file should be unchanged: skip means no modifications
+    const written = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    expect(written.channels.telegram.botToken).toBe('123:OLD_TOKEN')
+    expect(written.channels.telegram.enabled).toBe(true)
   })
 })

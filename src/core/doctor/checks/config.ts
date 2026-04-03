@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
-import { ConfigSchema } from "../../config.js";
-import { applyMigrations } from "../../config-migrations.js";
+import { ConfigSchema } from "../../config/config.js";
+import { applyMigrations } from "../../config/config-migrations.js";
 import type { DoctorCheck, CheckResult } from "../types.js";
 
 export const configCheck: DoctorCheck = {

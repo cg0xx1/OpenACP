@@ -1,0 +1,546 @@
+import { nanoid } from "nanoid";
+import type { AgentInstance } from "../agents/agent-instance.js";
+import type { AgentCapabilities, AgentCommand, AgentEvent, AgentSwitchEntry, Attachment, PermissionRequest, SessionStatus, ConfigOption } from "../types.js";
+import { TypedEmitter } from "../utils/typed-emitter.js";
+import { PromptQueue } from "./prompt-queue.js";
+import { PermissionGate } from "./permission-gate.js";
+import { createChildLogger, createSessionLogger, closeSessionLogger, type Logger } from "../utils/log.js";
+import type { SpeechService } from "../../plugins/speech/exports.js";
+import type { MiddlewareChain } from "../plugin/middleware-chain.js";
+import * as fs from "node:fs";
+const moduleLog = createChildLogger({ module: "session" });
+
+// TTS constants
+export const TTS_PROMPT_INSTRUCTION = `\n\nAdditionally, include a [TTS]...[/TTS] block with a spoken-friendly summary of your response. Focus on key information, decisions the user needs to make, or actions required. The agent decides what to say and how long. Respond in the same language the user is using. This instruction applies to this message only.`;
+export const TTS_BLOCK_REGEX = /\[TTS\]([\s\S]*?)\[\/TTS\]/;
+export const TTS_MAX_LENGTH = 5000;
+export const TTS_TIMEOUT_MS = 30_000;
+
+// Valid state transitions: from → Set<to>
+const VALID_TRANSITIONS: Record<SessionStatus, Set<SessionStatus>> = {
+  initializing: new Set(["active", "error"]),
+  active: new Set(["error", "finished", "cancelled"]),
+  error: new Set(["active", "cancelled"]),
+  cancelled: new Set(["active"]),
+  finished: new Set(),
+};
+
+export interface SessionEvents {
+  agent_event: (event: AgentEvent) => void;
+  permission_request: (request: PermissionRequest) => void;
+  session_end: (reason: string) => void;
+  status_change: (from: SessionStatus, to: SessionStatus) => void;
+  named: (name: string) => void;
+  error: (error: Error) => void;
+  prompt_count_changed: (count: number) => void;
+}
+
+export class Session extends TypedEmitter<SessionEvents> {
+  id: string;
+  channelId: string;
+  threadId: string = "";
+  agentName: string;
+  workingDirectory: string;
+  agentInstance: AgentInstance;
+  agentSessionId: string = "";
+  private _status: SessionStatus = "initializing";
+  name?: string;
+  createdAt: Date = new Date();
+  voiceMode: "off" | "next" | "on" = "off";
+  configOptions: ConfigOption[] = [];
+  clientOverrides: { bypassPermissions?: boolean } = {};
+  agentCapabilities?: AgentCapabilities;
+  archiving: boolean = false;
+  promptCount: number = 0;
+  firstAgent: string;
+  agentSwitchHistory: AgentSwitchEntry[] = [];
+  isAssistant: boolean = false;
+  log: Logger;
+  middlewareChain?: MiddlewareChain;
+  /** Latest commands emitted by the agent — buffered before bridge connects so they're not lost */
+  latestCommands: AgentCommand[] | null = null;
+
+  readonly permissionGate = new PermissionGate();
+  private readonly queue: PromptQueue;
+  private speechService?: SpeechService;
+  private pendingContext: string | null = null;
+
+  constructor(opts: {
+    id?: string;
+    channelId: string;
+    agentName: string;
+    workingDirectory: string;
+    agentInstance: AgentInstance;
+    speechService?: SpeechService;
+    isAssistant?: boolean;
+  }) {
+    super();
+    this.id = opts.id || nanoid(12);
+    this.channelId = opts.channelId;
+    this.agentName = opts.agentName;
+    this.firstAgent = opts.agentName;
+    this.workingDirectory = opts.workingDirectory;
+    this.agentInstance = opts.agentInstance;
+    this.speechService = opts.speechService;
+    this.isAssistant = opts.isAssistant ?? false;
+    this.log = createSessionLogger(this.id, moduleLog);
+    this.log.info({ agentName: this.agentName }, "Session created");
+
+    this.queue = new PromptQueue(
+      (text, attachments) => this.processPrompt(text, attachments),
+      (err) => {
+        this.fail("Prompt execution failed");
+        this.log.error({ err }, "Prompt execution failed");
+      },
+    );
+
+    // Buffer the latest commands_update so it survives until the bridge connects
+    this.agentInstance.on("agent_event", (event: AgentEvent) => {
+      if (event.type === "commands_update") {
+        this.latestCommands = event.commands;
+      }
+    });
+  }
+
+  // --- State Machine ---
+
+  get status(): SessionStatus {
+    return this._status;
+  }
+
+
+  /** Transition to active — from initializing, error, or cancelled */
+  activate(): void {
+    this.transition("active");
+  }
+
+  /** Transition to error — from initializing or active. Idempotent if already in error. */
+  fail(reason: string): void {
+    if (this._status === "error") return;
+    this.transition("error");
+    this.emit("error", new Error(reason));
+  }
+
+  /** Transition to finished — from active only. Emits session_end for backward compat. */
+  finish(reason?: string): void {
+    this.transition("finished");
+    this.emit("session_end", reason ?? "completed");
+  }
+
+  /** Transition to cancelled — from active only (terminal session cancel) */
+  markCancelled(): void {
+    this.transition("cancelled");
+  }
+
+  private transition(to: SessionStatus): void {
+    const from = this._status;
+    const allowed = VALID_TRANSITIONS[from];
+    if (!allowed?.has(to)) {
+      throw new Error(
+        `Invalid session transition: ${from} → ${to}`,
+      );
+    }
+    this._status = to;
+    this.log.debug({ from, to }, "Session status transition");
+    this.emit("status_change", from, to);
+  }
+
+  /** Number of prompts waiting in queue */
+  get queueDepth(): number {
+    return this.queue.pending;
+  }
+
+  get promptRunning(): boolean {
+    return this.queue.isProcessing;
+  }
+
+  // --- Context Injection ---
+
+  setContext(markdown: string): void {
+    this.pendingContext = markdown;
+  }
+
+  // --- Voice Mode ---
+
+  setVoiceMode(mode: "off" | "next" | "on"): void {
+    this.voiceMode = mode;
+    this.log.info({ voiceMode: mode }, "TTS mode changed");
+  }
+
+  // --- Public API ---
+
+  async enqueuePrompt(text: string, attachments?: Attachment[]): Promise<void> {
+    // Hook: agent:beforePrompt — modifiable, can block
+    if (this.middlewareChain) {
+      const payload = { text, attachments, sessionId: this.id };
+      const result = await this.middlewareChain.execute('agent:beforePrompt', payload, async (p) => p);
+      if (!result) return; // blocked by middleware
+      text = result.text;
+      attachments = result.attachments;
+    }
+    await this.queue.enqueue(text, attachments);
+  }
+
+  private async processPrompt(text: string, attachments?: Attachment[]): Promise<void> {
+    // Don't process prompts for finished sessions (queue may still drain)
+    if (this._status === "finished") return;
+
+    this.promptCount++;
+    this.emit('prompt_count_changed', this.promptCount);
+
+    if (this._status === "initializing" || this._status === "cancelled" || this._status === "error") {
+      this.activate();
+    }
+    const promptStart = Date.now();
+    this.log.debug("Prompt execution started");
+
+    // Context injection: prepend on first real prompt only
+    const contextUsed = this.pendingContext;
+    if (contextUsed) {
+      text = `[CONVERSATION HISTORY - This is context from previous sessions, not current conversation]\n\n${contextUsed}\n\n[END CONVERSATION HISTORY]\n\n${text}`;
+      this.log.debug("Context injected into prompt");
+    }
+
+    // STT: transcribe audio attachments if agent doesn't support audio
+    const processed = await this.maybeTranscribeAudio(text, attachments);
+
+    // TTS: determine if TTS is active for this prompt
+    const ttsActive =
+      this.voiceMode !== "off" &&
+      !!this.speechService?.isTTSAvailable();
+
+    // TTS: inject prompt instruction
+    if (ttsActive) {
+      processed.text += TTS_PROMPT_INSTRUCTION;
+    }
+
+    // TTS: set up text accumulator before prompting
+    let accumulatedText = "";
+    const accumulatorListener = ttsActive
+      ? (event: AgentEvent) => {
+          if (event.type === "text") {
+            accumulatedText += event.content;
+          }
+        }
+      : null;
+
+    if (accumulatorListener) {
+      this.on("agent_event", accumulatorListener);
+    }
+
+    // Hook: turn:start — read-only, fire-and-forget
+    if (this.middlewareChain) {
+      this.middlewareChain.execute('turn:start', { sessionId: this.id, promptText: processed.text, promptNumber: this.promptCount }, async (p) => p).catch(() => {});
+    }
+
+    let stopReason: string = 'end_turn';
+    try {
+      const response = await this.agentInstance.prompt(processed.text, processed.attachments);
+      if (response && typeof response === 'object' && 'stopReason' in response) {
+        stopReason = (response as { stopReason?: string }).stopReason ?? 'end_turn';
+      }
+      // Clear context only after successful prompt — if prompt fails, context is preserved for retry
+      if (contextUsed) {
+        this.pendingContext = null;
+      }
+      // Reset "next" voice mode only after successful prompt
+      if (ttsActive && this.voiceMode === "next") {
+        this.voiceMode = "off";
+      }
+    } finally {
+      if (accumulatorListener) {
+        this.off("agent_event", accumulatorListener);
+      }
+    }
+
+    // Hook: turn:end — read-only, fire-and-forget
+    if (this.middlewareChain) {
+      this.middlewareChain.execute('turn:end', { sessionId: this.id, stopReason: stopReason as import('../types.js').StopReason, durationMs: Date.now() - promptStart }, async (p) => p).catch(() => {});
+    }
+
+    this.log.info(
+      { durationMs: Date.now() - promptStart },
+      "Prompt execution completed",
+    );
+
+    // TTS: fire-and-forget post-response synthesis
+    if (ttsActive && accumulatedText) {
+      this.processTTSResponse(accumulatedText).catch((err) => {
+        this.log.warn({ err }, "TTS post-processing failed");
+      });
+    }
+
+    if (!this.name) {
+      await this.autoName();
+    }
+  }
+
+  private async maybeTranscribeAudio(
+    text: string,
+    attachments?: Attachment[],
+  ): Promise<{ text: string; attachments?: Attachment[] }> {
+    if (!attachments?.length || !this.speechService) {
+      return { text, attachments };
+    }
+
+    const hasAudioCapability = this.agentInstance.promptCapabilities?.audio === true;
+    if (hasAudioCapability) {
+      return { text, attachments };
+    }
+
+    if (!this.speechService.isSTTAvailable()) {
+      return { text, attachments };
+    }
+
+    let transcribedText = text;
+    const remainingAttachments: Attachment[] = [];
+
+    for (const att of attachments) {
+      if (att.type !== "audio") {
+        remainingAttachments.push(att);
+        continue;
+      }
+
+      try {
+        const audioPath = att.originalFilePath || att.filePath;
+        const audioMime = att.originalFilePath ? "audio/ogg" : att.mimeType;
+        const audioBuffer = await fs.promises.readFile(audioPath);
+        const result = await this.speechService.transcribe(audioBuffer, audioMime);
+        this.log.info({ provider: "stt", duration: result.duration }, "Voice transcribed");
+        // Notify user of transcription result
+        this.emit("agent_event", {
+          type: "system_message",
+          message: `🎤 You said: ${result.text}`,
+        });
+        // Strip [Audio: ...] placeholder since we have the transcription
+        transcribedText = transcribedText.replace(/\[Audio:\s*[^\]]*\]\s*/g, "").trim();
+        transcribedText = transcribedText
+          ? `${transcribedText}\n${result.text}`
+          : result.text;
+      } catch (err) {
+        this.log.warn({ err }, "STT transcription failed, keeping audio attachment");
+        this.emit("agent_event", {
+          type: "error",
+          message: `Voice transcription failed: ${(err as Error).message}`,
+        });
+        remainingAttachments.push(att);
+      }
+    }
+
+    return {
+      text: transcribedText,
+      attachments: remainingAttachments.length > 0 ? remainingAttachments : undefined,
+    };
+  }
+
+  private async processTTSResponse(responseText: string): Promise<void> {
+    const match = TTS_BLOCK_REGEX.exec(responseText);
+    if (!match?.[1]) {
+      this.log.debug("No [TTS] block found in response, skipping synthesis");
+      return;
+    }
+
+    let ttsText = match[1].trim();
+    if (!ttsText) return;
+
+    if (ttsText.length > TTS_MAX_LENGTH) {
+      ttsText = ttsText.slice(0, TTS_MAX_LENGTH);
+    }
+
+    try {
+      let ttsTimer: ReturnType<typeof setTimeout>;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        ttsTimer = setTimeout(() => reject(new Error("TTS synthesis timed out")), TTS_TIMEOUT_MS);
+      });
+      try {
+        const result = await Promise.race([
+          this.speechService!.synthesize(ttsText),
+          timeoutPromise,
+        ]);
+        const base64 = result.audioBuffer.toString("base64");
+        this.emit("agent_event", {
+          type: "audio_content",
+          data: base64,
+          mimeType: result.mimeType,
+        });
+        this.emit("agent_event", { type: "tts_strip" });
+        this.log.info("TTS synthesis completed");
+      } finally {
+        clearTimeout(ttsTimer!);
+      }
+    } catch (err) {
+      this.log.warn({ err }, "TTS synthesis failed, skipping");
+    }
+  }
+
+  // NOTE: This injects a summary prompt into the agent's conversation history.
+  private async autoName(): Promise<void> {
+    let title = "";
+
+    // Temporarily remove all agent_event listeners so auto-name output
+    // is not forwarded to the adapter. Add a capture-only listener instead.
+    const captureHandler = (event: AgentEvent) => {
+      if (event.type === "text") title += event.content;
+      // Swallow all other events from auto-name prompt
+    };
+
+    // Pause the session emitter so agent_event emissions from SessionBridge
+    // don't reach the adapter during auto-name. The AgentInstance emitter
+    // stays active — we just intercept with our capture handler.
+    this.pause((event) => event !== "agent_event");
+    this.agentInstance.on("agent_event", captureHandler);
+
+    try {
+      await this.agentInstance.prompt(
+        "Summarize this conversation in max 5 words for a topic title. Reply ONLY with the title, nothing else.",
+      );
+      this.name = title.trim().slice(0, 50) || `Session ${this.id.slice(0, 6)}`;
+      this.log.info({ name: this.name }, "Session auto-named");
+
+      // Emit named event — SessionBridge listens to rename the thread
+      this.emit("named", this.name);
+    } catch {
+      this.name = `Session ${this.id.slice(0, 6)}`;
+    } finally {
+      this.agentInstance.off("agent_event", captureHandler);
+      // Discard buffered auto-name agent_events, then resume normal delivery
+      this.clearBuffer();
+      this.resume();
+    }
+  }
+
+
+  // --- ACP Mode / Config / Model State ---
+
+  setInitialConfigOptions(options: ConfigOption[]): void {
+    this.configOptions = options ?? [];
+  }
+
+  setAgentCapabilities(caps: AgentCapabilities | undefined): void {
+    this.agentCapabilities = caps;
+  }
+
+  getConfigOption(id: string): ConfigOption | undefined {
+    return this.configOptions.find(o => o.id === id);
+  }
+
+  getConfigByCategory(category: string): ConfigOption | undefined {
+    return this.configOptions.find(o => o.category === category);
+  }
+
+  getConfigValue(id: string): string | undefined {
+    const option = this.getConfigOption(id);
+    if (!option) return undefined;
+    return String(option.currentValue);
+  }
+
+  /** Set session name explicitly and emit 'named' event */
+  setName(name: string): void {
+    this.name = name;
+    this.emit("named", name);
+  }
+
+  /** Send a config option change to the agent and update local state from the response. */
+  async setConfigOption(configId: string, value: import("../types.js").SetConfigOptionValue): Promise<void> {
+    const response = await this.agentInstance.setConfigOption(configId, value);
+    if (response.configOptions) {
+      await this.updateConfigOptions(response.configOptions as ConfigOption[]);
+    }
+  }
+
+  async updateConfigOptions(options: ConfigOption[]): Promise<void> {
+    // Hook: config:beforeChange — await-able, can block
+    if (this.middlewareChain) {
+      const result = await this.middlewareChain.execute('config:beforeChange', { sessionId: this.id, configId: 'options', oldValue: this.configOptions, newValue: options }, async (p) => p);
+      if (!result) return; // blocked by middleware
+    }
+    this.configOptions = options;
+  }
+
+  /** Snapshot of current ACP state for persistence */
+  toAcpStateSnapshot(): NonNullable<import("../types.js").SessionRecord["acpState"]> {
+    return {
+      configOptions: this.configOptions.length > 0 ? this.configOptions : undefined,
+      agentCapabilities: this.agentCapabilities,
+    };
+  }
+
+  /** Check if the agent supports a specific session capability */
+  supportsCapability(cap: 'list' | 'fork' | 'close' | 'loadSession'): boolean {
+    if (cap === 'loadSession') return this.agentCapabilities?.loadSession === true;
+    return this.agentCapabilities?.sessionCapabilities?.[cap] === true;
+  }
+
+  /** Cancel the current prompt and clear the queue. Stays in active state. */
+  async abortPrompt(): Promise<void> {
+    // Hook: agent:beforeCancel — modifiable, can block
+    if (this.middlewareChain) {
+      const result = await this.middlewareChain.execute('agent:beforeCancel', { sessionId: this.id }, async (p) => p);
+      if (!result) return; // blocked by middleware
+    }
+    this.queue.clear();
+    this.log.info("Prompt aborted");
+    await this.agentInstance.cancel();
+  }
+
+  /** Search backward through agentSwitchHistory for the last entry matching agentName */
+  findLastSwitchEntry(agentName: string): AgentSwitchEntry | undefined {
+    for (let i = this.agentSwitchHistory.length - 1; i >= 0; i--) {
+      if (this.agentSwitchHistory[i].agentName === agentName) {
+        return this.agentSwitchHistory[i];
+      }
+    }
+    return undefined;
+  }
+
+  /** Switch the agent instance in-place, preserving session identity */
+  async switchAgent(agentName: string, createAgent: () => Promise<AgentInstance>): Promise<void> {
+    if (agentName === this.agentName) {
+      throw new Error(`Already using ${agentName}`);
+    }
+
+    // Record current agent in history
+    this.agentSwitchHistory.push({
+      agentName: this.agentName,
+      agentSessionId: this.agentSessionId,
+      switchedAt: new Date().toISOString(),
+      promptCount: this.promptCount,
+    });
+
+    // Clear queued prompts and abort in-flight prompt before destroying old agent
+    this.queue.clear();
+
+    // Reject any pending permission request before destroying old agent
+    if (this.permissionGate.isPending) {
+      this.permissionGate.reject("Agent switched");
+    }
+
+    // Destroy old agent
+    await this.agentInstance.destroy();
+
+    // Create and wire new agent
+    const newAgent = await createAgent();
+    this.agentInstance = newAgent;
+    this.agentName = agentName;
+    this.agentSessionId = newAgent.sessionId;
+    this.promptCount = 0;
+
+    // Reset agent-specific ACP state (will be re-populated by new agent)
+    this.agentCapabilities = undefined;
+    this.configOptions = [];
+
+    this.log.info({ from: this.agentSwitchHistory.at(-1)!.agentName, to: agentName }, "Agent switched");
+  }
+
+  async destroy(): Promise<void> {
+    this.log.info("Session destroyed");
+    // Reject any pending permission promise so callers don't hang
+    if (this.permissionGate.isPending) {
+      this.permissionGate.reject("Session destroyed");
+    }
+    // Clear queued prompts
+    this.queue.clear();
+    await this.agentInstance.destroy();
+    closeSessionLogger(this.log);
+  }
+}

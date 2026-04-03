@@ -46,6 +46,15 @@ fs.chmodSync(cliPath, 0o755)
 // 5. Generate package.json
 const rootPkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8'))
 
+// Packages excluded from published dependencies (none currently bundled via noExternal).
+const bundledDeps = new Set<string>()
+const publishDeps: Record<string, string> = {}
+for (const [dep, version] of Object.entries(rootPkg.dependencies as Record<string, string>)) {
+  if (!bundledDeps.has(dep)) {
+    publishDeps[dep] = version
+  }
+}
+
 const publishPkg = {
   name: '@openacp/cli',
   version: rootPkg.version,
@@ -62,7 +71,7 @@ const publishPkg = {
   },
   files: ['dist/', 'README.md'],
   engines: { node: '>=20' },
-  dependencies: rootPkg.dependencies,
+  dependencies: publishDeps,
   repository: {
     type: 'git',
     url: 'https://github.com/Open-ACP/OpenACP',
@@ -70,7 +79,7 @@ const publishPkg = {
   homepage: 'https://github.com/Open-ACP/OpenACP',
   author: {
     name: 'OpenACP',
-    url: 'https://x.com/Open_ACP',
+    url: 'https://x.com/openacp_ai',
   },
   license: 'AGPL-3.0',
   keywords: ['acp', 'ai', 'coding-agent', 'telegram', 'claude', 'codex', 'gemini', 'cursor', 'agent-client-protocol'],
@@ -87,5 +96,95 @@ fs.copyFileSync(
   path.join(root, 'dist-publish/README.md')
 )
 
+// 6. Verify: every external import in the bundle must be a Node builtin or a published dependency
+import { builtinModules } from 'node:module'
+
+const builtins = new Set([
+  ...builtinModules,
+  ...builtinModules.map(m => `node:${m}`),
+])
+
+// Packages that appear in template strings (scaffold generator) but are not real runtime imports
+const templateOnlyDeps = new Set(['@openacp/plugin-sdk', 'vitest', '@openacp/plugin-sdk/testing'])
+
+const importPattern = /(?:from\s+["']|import\s*\(\s*["'])([^./"'][^"']*)["']/g
+const missingDeps: Map<string, string[]> = new Map()
+
+const jsFiles = fs.readdirSync(distDir).filter(f => f.endsWith('.js'))
+for (const file of jsFiles) {
+  const content = fs.readFileSync(path.join(distDir, file), 'utf-8')
+  for (const match of content.matchAll(importPattern)) {
+    const specifier = match[1]
+    // Resolve package name (handle scoped packages like @foo/bar)
+    const pkgName = specifier.startsWith('@')
+      ? specifier.split('/').slice(0, 2).join('/')
+      : specifier.split('/')[0]
+
+    if (builtins.has(pkgName)) continue
+    if (pkgName in publishDeps) continue
+    if (templateOnlyDeps.has(specifier) || templateOnlyDeps.has(pkgName)) continue
+
+    if (!missingDeps.has(pkgName)) missingDeps.set(pkgName, [])
+    missingDeps.get(pkgName)!.push(file)
+  }
+}
+
+if (missingDeps.size > 0) {
+  console.error('\n❌ Build verification failed!')
+  console.error('These packages are imported in the bundle but not in published dependencies:\n')
+  for (const [dep, files] of missingDeps) {
+    console.error(`  ${dep}  (in ${[...new Set(files)].join(', ')})`)
+  }
+  console.error('\nFix: add them to `dependencies` in package.json, or to `noExternal` in tsup.config.ts')
+  process.exit(1)
+}
+
+console.log('✅ All external imports are covered by published dependencies')
+
+// 7. Build and prepare @openacp/plugin-sdk
+const sdkDir = path.join(root, 'packages/plugin-sdk')
+if (fs.existsSync(sdkDir)) {
+  // SDK needs CLI type declarations — ensure tsc has been run on root first
+  const rootDtsPath = path.join(root, 'dist/index.d.ts')
+  if (!fs.existsSync(rootDtsPath)) {
+    console.log('\nBuilding CLI types (required by SDK)...')
+    execSync('pnpm tsc', { cwd: root, stdio: 'inherit' })
+  }
+
+  console.log('\nBuilding @openacp/plugin-sdk...')
+  execSync('npx tsc', { cwd: sdkDir, stdio: 'inherit' })
+
+  // Generate SDK publish package.json (replace workspace:* with actual version)
+  const sdkPkg = JSON.parse(fs.readFileSync(path.join(sdkDir, 'package.json'), 'utf-8'))
+  sdkPkg.version = rootPkg.version
+  // devDependencies with workspace:* are stripped for publish (not needed at runtime)
+  delete sdkPkg.devDependencies
+  // peerDependencies already uses @openacp/cli (not workspace protocol)
+
+  const sdkPublishDir = path.join(root, 'dist-publish-sdk')
+  fs.mkdirSync(sdkPublishDir, { recursive: true })
+
+  // Copy dist
+  execSync(`cp -r ${path.join(sdkDir, 'dist')} ${sdkPublishDir}/dist`, { stdio: 'inherit' })
+
+  // Write package.json
+  fs.writeFileSync(
+    path.join(sdkPublishDir, 'package.json'),
+    JSON.stringify(sdkPkg, null, 2) + '\n'
+  )
+
+  // Copy README if exists
+  const sdkReadme = path.join(sdkDir, 'README.md')
+  if (fs.existsSync(sdkReadme)) {
+    fs.copyFileSync(sdkReadme, path.join(sdkPublishDir, 'README.md'))
+  }
+
+  console.log(`✅ SDK built: @openacp/plugin-sdk@${rootPkg.version}`)
+}
+
 console.log(`\nBuild complete! Package: @openacp/cli@${rootPkg.version}`)
-console.log('To publish: cd dist-publish && npm publish --access=public')
+console.log('To publish:')
+console.log('  cd dist-publish && npm publish --access=public')
+if (fs.existsSync(path.join(root, 'dist-publish-sdk'))) {
+  console.log('  cd dist-publish-sdk && npm publish --access=public')
+}
