@@ -2,7 +2,7 @@ import type { Bot, Context } from "grammy";
 import type { OpenACPCore } from "../../../core/index.js";
 
 // Domain modules
-import { handleNew, handleNewChat, createSessionDirect } from './new-session.js'
+import { handleNew, handleNewChat, createSessionDirect, showAgentPicker, setupNewSessionCallbacks } from './new-session.js'
 import { handleCancel, handleStatus, handleTopics, handleArchive, handleArchiveConfirm, setupSessionCallbacks } from './session.js'
 import { handleUpdate, handleRestart, handleTTS, handleVerbosity, handleOutputMode } from './admin.js'
 import { handleMenu, handleHelp, handleClear, buildMenuKeyboard } from './menu.js'
@@ -18,6 +18,7 @@ import { handleTunnel, handleTunnels, setupTunnelCallbacks } from "./tunnel.js";
 import { handleSwitch, setupSwitchCallbacks } from "./switch.js";
 import type { CommandRegistry } from "../../../core/command-registry.js";
 import type { MenuRegistry } from "../../../core/menu-registry.js";
+import { TELEGRAM_OVERRIDES } from './telegram-overrides.js'
 
 export function setupAllCallbacks(
   bot: Bot,
@@ -61,6 +62,9 @@ export function setupAllCallbacks(
     );
   });
 
+  // New Session button flow — must be before broad m: handler
+  setupNewSessionCallbacks(bot, core, chatId, getAssistantSession);
+
   // Archive confirmation callbacks
   bot.callbackQuery(/^ar:/, (ctx) => handleArchiveConfirm(ctx, core, chatId));
 
@@ -80,6 +84,19 @@ export function setupAllCallbacks(
 
     switch (item.action.type) {
       case 'command': {
+        // Check Telegram-specific override first
+        const cmdName = item.action.command.replace(/^\//, '').split(' ')[0]
+        const telegramOverride = TELEGRAM_OVERRIDES[cmdName]
+        if (telegramOverride) {
+          try {
+            await telegramOverride(ctx, core)
+          } catch (err) {
+            await ctx.reply(`⚠️ Command failed: ${String(err)}`).catch(() => {})
+          }
+          break
+        }
+
+        // Fallback: dispatch through CommandRegistry for commands without overrides
         if (!registry) return
         const response = await registry.execute(item.action.command, {
           raw: '',
@@ -96,11 +113,30 @@ export function setupAllCallbacks(
           } else if (response.type === 'list') {
             const lines = response.items.map((i: { label: string; detail?: string }) => `• ${i.label}${i.detail ? ` — ${i.detail}` : ''}`).join('\n')
             await ctx.reply(`${response.title}\n${lines}`, { parse_mode: 'HTML' }).catch(() => {})
+          } else if (response.type === 'menu') {
+            const { InlineKeyboard } = await import('grammy')
+            const kb = new InlineKeyboard()
+            for (const opt of response.options) {
+              kb.text(opt.label, `c/${opt.command}`).row()
+            }
+            await ctx.reply(response.title, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {})
+          } else if (response.type === 'confirm') {
+            const { InlineKeyboard } = await import('grammy')
+            const kb = new InlineKeyboard()
+              .text('✅ Yes', `c/${response.onYes}`)
+              .text('❌ No', `c/${response.onNo}`)
+            await ctx.reply(response.question, { reply_markup: kb }).catch(() => {})
           }
         }
         break
       }
       case 'delegate': {
+        // Telegram-specific override: New Session uses button flow instead of AI
+        if (itemId === 'core:new') {
+          await showAgentPicker(ctx, core, chatId)
+          break
+        }
+
         const assistant = core.assistantManager?.get('telegram')
         if (assistant) {
           if (topicId && systemTopicIds && topicId !== systemTopicIds.assistantTopicId) {
@@ -114,9 +150,13 @@ export function setupAllCallbacks(
         }
         break
       }
-      case 'callback':
-        // Pass through to specific callback handlers
+      case 'callback': {
+        const cbData = item.action.callbackData
+        if (cbData === 's:settings') {
+          await handleSettings(ctx, core)
+        }
         break
+      }
     }
   })
 }
@@ -127,6 +167,7 @@ export { setupAllCallbacks as setupMenuCallbacks };
 // Re-exports for external consumers (adapter.ts)
 export { buildMenuKeyboard } from "./menu.js";
 export { buildSkillMessages } from "./menu.js";
+export { TELEGRAM_OVERRIDES } from './telegram-overrides.js'
 export {
   executeNewSession,
 } from "./new-session.js";

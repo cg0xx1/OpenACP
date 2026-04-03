@@ -13,6 +13,6 @@ export function registerSystemCommands(registry: CommandRegistry, core: unknown)
   registerAdminCommands(registry, core)
   registerHelpCommand(registry, core)
   registerMenuCommand(registry, core)
-  registerSwitchCommands(registry)
+  registerSwitchCommands(registry, core)
   registerConfigCommands(registry, core)
 }

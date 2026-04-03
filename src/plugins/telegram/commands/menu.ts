@@ -38,10 +38,10 @@ export function buildMenuKeyboard(menuRegistry?: MenuRegistry): InlineKeyboard {
   return kb
 }
 
-export async function handleMenu(ctx: Context): Promise<void> {
+export async function handleMenu(ctx: Context, menuRegistry?: MenuRegistry): Promise<void> {
   await ctx.reply(`<b>OpenACP Menu</b>\nChoose an action:`, {
     parse_mode: "HTML",
-    reply_markup: buildMenuKeyboard(),
+    reply_markup: buildMenuKeyboard(menuRegistry),
   });
 }
 
@@ -57,7 +57,7 @@ export async function handleHelp(ctx: Context): Promise<void> {
       `/status — Show session or system status\n` +
       `/sessions — List all sessions\n` +
       `/agents — Browse & install agents\n` +
-      `/install <name> — Install an agent\n\n` +
+      `/install &lt;name&gt; — Install an agent\n\n` +
       `⚙️ <b>System</b>\n` +
       `/restart — Restart OpenACP\n` +
       `/update — Update to latest version\n` +

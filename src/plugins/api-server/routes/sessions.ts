@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { RouteDeps } from './types.js';
-import { NotFoundError } from '../middleware/error-handler.js';
+import { NotFoundError, ServiceUnavailableError } from '../middleware/error-handler.js';
 import { requireScopes } from '../middleware/auth.js';
 import {
   SessionIdParamSchema,
@@ -416,6 +416,30 @@ export async function sessionRoutes(
       } else {
         return reply.status(400).send(result);
       }
+    },
+  );
+
+  // GET /sessions/:sessionId/history — get full conversation history
+  app.get<{ Params: { sessionId: string } }>(
+    '/:sessionId/history',
+    { preHandler: requireScopes('sessions:read') },
+    async (request, reply) => {
+      const { sessionId } = SessionIdParamSchema.parse(request.params);
+      const session = deps.core.sessionManager.getSession(sessionId);
+      if (!session) {
+        throw new NotFoundError(
+          'SESSION_NOT_FOUND',
+          `Session "${sessionId}" not found`,
+        );
+      }
+      if (!deps.contextManager) {
+        throw new ServiceUnavailableError(
+          'HISTORY_UNAVAILABLE',
+          'History store not available',
+        );
+      }
+      const history = await deps.contextManager.getHistory(sessionId) ?? null;
+      return { history };
     },
   );
 

@@ -1,6 +1,7 @@
 import * as pathMod from 'node:path'
 import { readApiPort, apiCall } from '../api-client.js'
 import { wantsHelp, buildNestedUpdateFromPath } from './helpers.js'
+import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
 export async function cmdConfig(args: string[] = [], instanceRoot?: string): Promise<void> {
   const subCmd = args[0] // 'set' or undefined
@@ -17,6 +18,7 @@ export async function cmdConfig(args: string[] = [], instanceRoot?: string): Pro
   <value>         New value (JSON-parsed if possible, otherwise string)
 
 \x1b[1mOptions:\x1b[0m
+  --json          Output result as JSON
   -h, --help      Show this help message
 
 Works with both running and stopped daemon. When running, uses
@@ -39,6 +41,7 @@ the API for live updates. When stopped, edits config file directly.
   openacp config set <key> <value>     Set a config value directly
 
 \x1b[1mOptions:\x1b[0m
+  --json                                 Output result as JSON
   -h, --help                           Show this help message
 
 Works with both running and stopped daemon. When running, uses
@@ -55,9 +58,13 @@ the API for live updates. When stopped, edits config file directly.
 
   if (subCmd === 'set') {
     // Non-interactive: openacp config set <key> <value>
+    const json = isJsonMode(args)
+    if (json) await muteForJson()
+
     const configPath = args[1]
     const configValue = args[2]
     if (!configPath || configValue === undefined) {
+      if (json) jsonError(ErrorCodes.MISSING_ARGUMENT, 'Missing required arguments: <path> and <value>')
       console.error('Usage: openacp config set <path> <value>')
       process.exit(1)
     }
@@ -67,6 +74,7 @@ the API for live updates. When stopped, edits config file directly.
     const topLevelKey = configPath.split('.')[0]
     const validConfigKeys = Object.keys(ConfigSchema.shape)
     if (!validConfigKeys.includes(topLevelKey)) {
+      if (json) jsonError(ErrorCodes.CONFIG_INVALID, `Unknown config key: ${topLevelKey}`)
       const { suggestMatch } = await import('../suggest.js')
       const suggestion = suggestMatch(topLevelKey, validConfigKeys)
       console.error(`Unknown config key: ${topLevelKey}`)
@@ -87,9 +95,11 @@ the API for live updates. When stopped, edits config file directly.
       }, instanceRoot)
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
+        if (json) jsonError(ErrorCodes.API_ERROR, `${data.error}`)
         console.error(`Error: ${data.error}`)
         process.exit(1)
       }
+      if (json) jsonSuccess({ path: configPath, value, needsRestart: data.needsRestart ?? false })
       console.log(`Config updated: ${configPath} = ${JSON.stringify(value)}`)
       if (data.needsRestart) {
         console.log('Note: restart required for this change to take effect.')
@@ -99,12 +109,14 @@ the API for live updates. When stopped, edits config file directly.
       const { ConfigManager } = await import('../../core/config/config.js')
       const cm = new ConfigManager(instanceRoot ? pathMod.join(instanceRoot, 'config.json') : undefined)
       if (!(await cm.exists())) {
+        if (json) jsonError(ErrorCodes.CONFIG_NOT_FOUND, 'No config found. Run "openacp" first to set up.')
         console.error('No config found. Run "openacp" first to set up.')
         process.exit(1)
       }
       await cm.load()
       const updates = buildNestedUpdateFromPath(configPath, value)
       await cm.save(updates)
+      if (json) jsonSuccess({ path: configPath, value, needsRestart: false })
       console.log(`Config updated: ${configPath} = ${JSON.stringify(value)}`)
     }
     return
@@ -113,16 +125,21 @@ the API for live updates. When stopped, edits config file directly.
   // Interactive editor
   const { runConfigEditor } = await import('../../core/config/config-editor.js')
   const { ConfigManager } = await import('../../core/config/config.js')
+  const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
+  const { getGlobalRoot } = await import('../../core/instance/instance-context.js')
   const cm = new ConfigManager(instanceRoot ? pathMod.join(instanceRoot, 'config.json') : undefined)
   if (!(await cm.exists())) {
     console.error('No config found. Run "openacp" first to set up.')
     process.exit(1)
   }
 
+  const root = instanceRoot ?? getGlobalRoot()
+  const settingsManager = new SettingsManager(pathMod.join(root, 'plugins'))
+
   const port = readApiPort(undefined, instanceRoot)
   if (port !== null) {
-    await runConfigEditor(cm, 'api', port)
+    await runConfigEditor(cm, 'api', port, settingsManager)
   } else {
-    await runConfigEditor(cm, 'file')
+    await runConfigEditor(cm, 'file', undefined, settingsManager)
   }
 }

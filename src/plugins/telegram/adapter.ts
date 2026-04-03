@@ -29,6 +29,7 @@ import {
   buildMenuKeyboard,
   STATIC_COMMANDS,
 } from "./commands/index.js";
+import { TELEGRAM_OVERRIDES } from './commands/telegram-overrides.js'
 import { buildSessionStatusText, buildSessionControlKeyboard, isBypassActive } from "./commands/admin.js";
 import type { TelegramPlatformData } from "../../core/types.js";
 import { PermissionHandler } from "./permissions.js";
@@ -345,6 +346,17 @@ export class TelegramAdapter extends MessagingAdapter {
       const def = registry.get(commandName);
       if (!def) return next(); // not in registry, fall through to existing handlers
 
+      // Telegram-specific override — use rich handler instead of core CommandRegistry
+      const telegramOverride = TELEGRAM_OVERRIDES[commandName]
+      if (telegramOverride) {
+        try {
+          await telegramOverride(ctx, this.core as OpenACPCore)
+        } catch (err) {
+          await ctx.reply(`⚠️ Command failed: ${String(err)}`)
+        }
+        return
+      }
+
       const chatId = ctx.chat.id;
       const topicId = ctx.message.message_thread_id;
 
@@ -384,7 +396,7 @@ export class TelegramAdapter extends MessagingAdapter {
           return;
         }
         if (response.type === "silent") {
-          // Silent means fall through to adapter-specific handlers (backward compat)
+          // Silent means fall through to message routing (backward compat for commands not yet migrated)
           return next();
         }
         await this.renderCommandResponse(response, chatId, topicId);
@@ -477,7 +489,11 @@ export class TelegramAdapter extends MessagingAdapter {
         if (!assistant) return undefined;
         return {
           topicId: this.assistantTopicId,
-          enqueuePrompt: (p: string) => assistant.enqueuePrompt(p),
+          enqueuePrompt: (p: string) => {
+            const pending = this.core.assistantManager?.consumePendingSystemPrompt('telegram');
+            const text = pending ? `${pending}\n\n---\n\nUser message:\n${p}` : p;
+            return assistant.enqueuePrompt(text);
+          },
         };
       },
       (sessionId: string, msgId: number) => {
@@ -553,6 +569,7 @@ export class TelegramAdapter extends MessagingAdapter {
         totalCount: allRecords.length,
         agents: agents.map((a) => a.name),
         defaultAgent: config.defaultAgent,
+        workspace: this.core.configManager.resolveWorkspace(),
       });
 
       await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {
@@ -736,8 +753,8 @@ export class TelegramAdapter extends MessagingAdapter {
       if (threadId === this.notificationTopicId) return;
 
       // Strip leading "/" from unrecognized commands — registered commands
-      // (e.g. /new, /cancel) are already handled by bot.command() above.
-      // Unrecognized slash commands can cause agent subprocesses to hang.
+      // are handled by the CommandRegistry dispatch middleware above.
+      // Unrecognized slash commands are stripped to avoid agent subprocess hangs.
       const forwardText = text.startsWith("/") ? text.slice(1) : text;
 
       // All topics (including assistant) → forward to core

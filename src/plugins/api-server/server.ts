@@ -1,5 +1,4 @@
 import Fastify, { type FastifyInstance, type FastifyPluginAsync } from 'fastify';
-import fastifyCors from '@fastify/cors';
 import fastifySwagger from '@fastify/swagger';
 import fastifySwaggerUi from '@fastify/swagger-ui';
 import fastifyRateLimit from '@fastify/rate-limit';
@@ -30,19 +29,21 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiSer
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  // Plugins
-  await app.register(fastifyCors, {
-    origin: (origin, cb) => {
-      // Allow requests with no origin (curl, native apps) or localhost
-      if (!origin || origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
-        cb(null, true);
-      } else {
-        cb(null, false);
-      }
-    },
-    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    credentials: true,
+  // CORS — allow any origin (auth is token-based, not cookie-based)
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin;
+    if (origin) {
+      reply.header('Access-Control-Allow-Origin', origin);
+      reply.header('Access-Control-Allow-Credentials', 'true');
+    }
+    if (request.method === 'OPTIONS') {
+      reply.header('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS');
+      reply.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      reply.status(204).send();
+    }
   });
+
+  // Plugins
   await app.register(fastifyRateLimit, { max: 100, timeWindow: '1 minute' });
   await app.register(fastifySwagger, {
     openapi: {
@@ -90,17 +91,16 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiSer
     async start() {
       await app.ready();
 
-      // Auto-detect available port: retry +1 up to 10 times on EADDRINUSE
-      const maxRetries = 10;
+      // Auto-detect available port: retry +1 until a free port is found
       let port = options.port;
 
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      while (port <= 65535) {
         try {
           const address = await app.listen({ port, host: options.host });
           const url = new URL(address);
           return { port: Number(url.port), host: url.hostname };
         } catch (err: any) {
-          if (err?.code === 'EADDRINUSE' && attempt < maxRetries && port < 65535) {
+          if (err?.code === 'EADDRINUSE' && port < 65535) {
             console.log(`[api-server] Port ${port} in use, trying ${port + 1}...`);
             port++;
             continue;
@@ -108,7 +108,7 @@ export async function createApiServer(options: ApiServerOptions): Promise<ApiSer
           throw err;
         }
       }
-      throw new Error(`All ports ${options.port}-${port} in use`);
+      throw new Error('No available ports found');
     },
 
     async stop() {

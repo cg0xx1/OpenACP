@@ -178,10 +178,10 @@ function registerDangerousCommand(registry: CommandRegistry, core: OpenACPCore):
         nonBypassDefault = choices.find(c => !isPermissionBypass(c.value))?.value
       }
 
-      // Determine current bypass state
-      const isCurrentlyBypassing = bypassValue
-        ? (modeConfig!.type === 'select' && isPermissionBypass(modeConfig!.currentValue as string))
-        : !!session.clientOverrides.bypassPermissions
+      // Determine current bypass state (check BOTH agent mode and client override)
+      const isCurrentlyBypassing =
+        (bypassValue && modeConfig!.type === 'select' && isPermissionBypass(modeConfig!.currentValue as string))
+        || !!session.clientOverrides.bypassPermissions
 
       // No args → show status with toggle
       if (!raw) {

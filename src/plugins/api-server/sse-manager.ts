@@ -58,25 +58,33 @@ export class SSEManager {
         },
         sessions: stats,
       });
-    }, 30_000);
+    }, 15_000);
   }
 
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     const parsedUrl = new URL(req.url || "", "http://localhost");
     const sessionFilter = parsedUrl.searchParams.get("sessionId");
+    console.log(`[sse] +connection total=${this.sseConnections.size + 1}`);
 
     const origin = req.headers.origin;
     const corsHeaders: Record<string, string> = {
       "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
+      "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      // Disable buffering in Nginx/Cloudflare/other reverse proxies
+      "X-Accel-Buffering": "no",
     };
-    if (origin && (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
+    // SSE is authenticated via token query param — safe to allow any origin
+    if (origin) {
       corsHeaders["Access-Control-Allow-Origin"] = origin;
       corsHeaders["Access-Control-Allow-Credentials"] = "true";
     }
+    // Disable Nagle's algorithm so small SSE chunks are sent immediately
+    res.socket?.setNoDelay(true);
     res.writeHead(200, corsHeaders);
     res.flushHeaders();
+    // Send initial comment immediately so proxies (Cloudflare, nginx) flush headers to client
+    res.write(': connected\n\n');
 
     // Store filter metadata on the response for broadcast
     (res as SSEResponse).sessionFilter = sessionFilter ?? undefined;
@@ -86,6 +94,7 @@ export class SSEManager {
     const cleanup = () => {
       this.sseConnections.delete(res);
       this.sseCleanupHandlers.delete(res);
+      console.log(`[sse] -connection remaining=${this.sseConnections.size}`);
     };
     this.sseCleanupHandlers.set(res, cleanup);
     req.on("close", cleanup);

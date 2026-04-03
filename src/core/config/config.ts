@@ -5,6 +5,7 @@ import * as os from "node:os";
 import { EventEmitter } from "node:events";
 import { applyMigrations } from "./config-migrations.js";
 import { createChildLogger } from "../utils/log.js";
+import type { SettingsManager } from "../plugin/settings-manager.js";
 const log = createChildLogger({ module: "config" });
 
 const BaseChannelSchema = z
@@ -51,8 +52,8 @@ const TunnelSchema = z
     enabled: z.boolean().default(false),
     port: z.number().default(3100),
     provider: z
-      .enum(["cloudflare", "ngrok", "bore", "tailscale"])
-      .default("cloudflare"),
+      .enum(["openacp", "cloudflare", "ngrok", "bore", "tailscale"])
+      .default("openacp"),
     options: z.record(z.string(), z.unknown()).default({}),
     maxUserTunnels: z.number().default(5),
     storeTtlMinutes: z.number().default(60),
@@ -104,7 +105,8 @@ export const ConfigSchema = z.object({
   instanceName: z.string().optional(),
   channels: z
     .object({})
-    .catchall(BaseChannelSchema),
+    .catchall(BaseChannelSchema)
+    .default({}),
   agents: z.record(z.string(), AgentSchema).optional().default({}),
   defaultAgent: z.string(),
   workspace: z
@@ -193,7 +195,7 @@ const DEFAULT_CONFIG = {
   tunnel: {
     enabled: true,
     port: 3100,
-    provider: "cloudflare",
+    provider: "openacp",
     options: {},
     storeTtlMinutes: 60,
     auth: { enabled: false },
@@ -341,6 +343,33 @@ export class ConfigManager extends EventEmitter {
     const dir = path.dirname(this.configPath);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(this.configPath, JSON.stringify(config, null, 2));
+  }
+
+  async applyEnvToPluginSettings(settingsManager: SettingsManager): Promise<void> {
+    const pluginOverrides: Array<{
+      envVar: string;
+      pluginName: string;
+      key: string;
+      transform?: (v: string) => unknown;
+    }> = [
+      { envVar: 'OPENACP_TUNNEL_ENABLED', pluginName: '@openacp/tunnel', key: 'enabled', transform: v => v === 'true' },
+      { envVar: 'OPENACP_TUNNEL_PORT', pluginName: '@openacp/tunnel', key: 'port', transform: v => Number(v) },
+      { envVar: 'OPENACP_TUNNEL_PROVIDER', pluginName: '@openacp/tunnel', key: 'provider' },
+      { envVar: 'OPENACP_API_PORT', pluginName: '@openacp/api-server', key: 'port', transform: v => Number(v) },
+      { envVar: 'OPENACP_SPEECH_STT_PROVIDER', pluginName: '@openacp/speech', key: 'sttProvider' },
+      { envVar: 'OPENACP_SPEECH_GROQ_API_KEY', pluginName: '@openacp/speech', key: 'groqApiKey' },
+      { envVar: 'OPENACP_TELEGRAM_BOT_TOKEN', pluginName: '@openacp/telegram', key: 'botToken' },
+      { envVar: 'OPENACP_TELEGRAM_CHAT_ID', pluginName: '@openacp/telegram', key: 'chatId', transform: v => Number(v) },
+    ];
+
+    for (const { envVar, pluginName, key, transform } of pluginOverrides) {
+      const value = process.env[envVar];
+      if (value !== undefined) {
+        const resolved = transform ? transform(value) : value;
+        await settingsManager.updatePluginSettings(pluginName, { [key]: resolved });
+        log.debug({ envVar, pluginName, key }, 'Env var override applied to plugin settings');
+      }
+    }
   }
 
   private applyEnvOverrides(raw: Record<string, unknown>): void {

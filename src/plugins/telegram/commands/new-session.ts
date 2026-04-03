@@ -1,4 +1,5 @@
 import type { Bot, Context } from "grammy";
+import { InlineKeyboard } from "grammy";
 import type { OpenACPCore } from "../../../core/index.js";
 import type { Session } from "../../../core/sessions/session.js";
 import { escapeHtml } from "../formatting.js";
@@ -203,6 +204,201 @@ export async function handleNewChat(
     const message = err instanceof Error ? err.message : String(err);
     await ctx.reply(`❌ ${escapeHtml(message)}`, { parse_mode: "HTML" });
   }
+}
+
+// --- New Session button flow (ns: prefix) ---
+
+/** Workspace cache for callback data — avoids Telegram's 64-byte callback limit */
+const WS_CACHE_MAX = 50
+const workspaceCache = new Map<number, { agentKey: string; workspace: string; ts: number }>()
+let nextWsId = 0
+
+function cacheWorkspace(agentKey: string, workspace: string): number {
+  // Evict stale entries (>5 min) and cap size
+  const now = Date.now()
+  if (workspaceCache.size > WS_CACHE_MAX) {
+    for (const [id, entry] of workspaceCache) {
+      if (now - entry.ts > 5 * 60_000 || workspaceCache.size > WS_CACHE_MAX) {
+        workspaceCache.delete(id)
+      }
+    }
+  }
+  const id = nextWsId++
+  workspaceCache.set(id, { agentKey, workspace, ts: now })
+  return id
+}
+
+function shortenPath(ws: string): string {
+  const home = process.env.HOME || ''
+  return home && ws.startsWith(home) ? '~' + ws.slice(home.length) : ws
+}
+
+export async function showAgentPicker(ctx: Context, core: OpenACPCore, chatId: number): Promise<void> {
+  const catalog = core.agentCatalog
+  const installed = catalog.getAvailable().filter((i) => i.installed)
+
+  if (installed.length === 0) {
+    await ctx.reply('No agents installed. Use /install to add one.', { parse_mode: 'HTML' }).catch(() => {})
+    return
+  }
+
+  // Single agent → skip picker, go straight to workspace
+  if (installed.length === 1) {
+    await showWorkspacePicker(ctx, core, chatId, installed[0].key, true)
+    return
+  }
+
+  const kb = new InlineKeyboard()
+  for (let i = 0; i < installed.length; i += 2) {
+    const row = installed.slice(i, i + 2)
+    for (const agent of row) {
+      kb.text(agent.name, `ns:agent:${agent.key}`)
+    }
+    kb.row()
+  }
+
+  // Always new message — menu stays untouched
+  await ctx.reply('<b>🆕 New Session</b>\nSelect an agent:', {
+    parse_mode: 'HTML',
+    reply_markup: kb,
+  }).catch(() => {})
+}
+
+async function showWorkspacePicker(ctx: Context, core: OpenACPCore, chatId: number, agentKey: string, newMessage = false): Promise<void> {
+  const records = core.sessionManager.listRecords()
+  const recentWorkspaces = [...new Set(records.map((r) => r.workingDir).filter(Boolean))]
+    .slice(0, 5)
+
+  const config = core.configManager.get()
+  const baseDir = config.workspace.baseDir
+
+  // Resolve baseDir for comparison (config may have ~, records have absolute paths)
+  const resolvedBaseDir = core.configManager.resolveWorkspace(baseDir)
+  // Ensure baseDir is always an option
+  const hasBaseDir = recentWorkspaces.some(ws => ws === baseDir || ws === resolvedBaseDir)
+  const workspaces = hasBaseDir
+    ? recentWorkspaces
+    : [resolvedBaseDir, ...recentWorkspaces].slice(0, 5)
+
+  const kb = new InlineKeyboard()
+  for (const ws of workspaces) {
+    const id = cacheWorkspace(agentKey, ws)
+    kb.text(`📁 ${shortenPath(ws)}`, `ns:ws:${id}`).row()
+  }
+  // Custom path → delegate to AI
+  kb.text('📁 Custom path...', `ns:custom:${agentKey}`).row()
+
+  const agentLabel = escapeHtml(agentKey)
+  const text = `<b>🆕 New Session</b>\nAgent: <code>${agentLabel}</code>\n\nSelect workspace:`
+  const opts = { parse_mode: 'HTML' as const, reply_markup: kb }
+
+  if (newMessage) {
+    // First message in flow (single agent skip) — new message, menu untouched
+    await ctx.reply(text, opts).catch(() => {})
+  } else {
+    // Edit the agent picker message in-place
+    try {
+      await ctx.editMessageText(text, opts)
+    } catch {
+      await ctx.reply(text, opts).catch(() => {})
+    }
+  }
+}
+
+export function setupNewSessionCallbacks(
+  bot: Bot,
+  core: OpenACPCore,
+  chatId: number,
+  getAssistantSession?: () => { topicId: number; enqueuePrompt: (p: string) => Promise<void> } | undefined,
+): void {
+  // Agent picker (also triggered from m: handler callback case)
+  bot.callbackQuery('ns:start', async (ctx) => {
+    try { await ctx.answerCallbackQuery() } catch { /* expired */ }
+    await showAgentPicker(ctx, core, chatId)
+  })
+
+  bot.callbackQuery(/^ns:agent:/, async (ctx) => {
+    const agentKey = ctx.callbackQuery.data.replace('ns:agent:', '')
+    try { await ctx.answerCallbackQuery() } catch { /* expired */ }
+    await showWorkspacePicker(ctx, core, chatId, agentKey)
+  })
+
+  bot.callbackQuery(/^ns:ws:/, async (ctx) => {
+    const id = parseInt(ctx.callbackQuery.data.replace('ns:ws:', ''), 10)
+    try { await ctx.answerCallbackQuery() } catch { /* expired */ }
+
+    const entry = workspaceCache.get(id)
+    if (!entry) {
+      try { await ctx.editMessageText('⚠️ Session expired. Please try again via /menu.') } catch { /* ignore */ }
+      return
+    }
+    workspaceCache.delete(id)
+
+    // Show creating state in same message
+    try {
+      await ctx.editMessageText(
+        `<b>🆕 New Session</b>\n` +
+        `Agent: <code>${escapeHtml(entry.agentKey)}</code>\n` +
+        `Workspace: <code>${escapeHtml(shortenPath(entry.workspace))}</code>\n\n` +
+        `⏳ Creating session...`,
+        { parse_mode: 'HTML' },
+      )
+    } catch { /* ignore */ }
+
+    const threadId = await createSessionDirect(ctx, core, chatId, entry.agentKey, entry.workspace)
+
+    // Update message with result
+    if (threadId) {
+      const { buildDeepLink } = await import('../topics.js')
+      const link = buildDeepLink(chatId, threadId)
+      try {
+        await ctx.editMessageText(
+          `<b>✅ Session created</b>\n` +
+          `Agent: <code>${escapeHtml(entry.agentKey)}</code>\n` +
+          `Workspace: <code>${escapeHtml(shortenPath(entry.workspace))}</code>\n\n` +
+          `<a href="${link}">Open session →</a>`,
+          { parse_mode: 'HTML' },
+        )
+      } catch { /* ignore */ }
+    } else {
+      try {
+        await ctx.editMessageText(
+          `<b>❌ Session creation failed</b>\n` +
+          `Agent: <code>${escapeHtml(entry.agentKey)}</code>\n` +
+          `Workspace: <code>${escapeHtml(shortenPath(entry.workspace))}</code>\n\n` +
+          `Try again with /new or /menu`,
+          { parse_mode: 'HTML' },
+        )
+      } catch { /* ignore */ }
+    }
+  })
+
+  bot.callbackQuery(/^ns:custom:/, async (ctx) => {
+    const agentKey = ctx.callbackQuery.data.replace('ns:custom:', '')
+    try { await ctx.answerCallbackQuery() } catch { /* expired */ }
+
+    const assistant = getAssistantSession?.()
+    if (assistant) {
+      try {
+        await ctx.editMessageText(
+          `<b>🆕 New Session</b>\n` +
+          `Agent: <code>${escapeHtml(agentKey)}</code>\n\n` +
+          `💬 Type your workspace path in the chat below.`,
+          { parse_mode: 'HTML' },
+        )
+      } catch { /* ignore */ }
+      await assistant.enqueuePrompt(
+        `User wants to create a new session with agent "${agentKey}". Ask them for the workspace (project directory) path, then create the session.`
+      )
+    } else {
+      try {
+        await ctx.editMessageText(
+          `Usage: <code>/new ${escapeHtml(agentKey)} &lt;workspace-path&gt;</code>`,
+          { parse_mode: 'HTML' },
+        )
+      } catch { /* ignore */ }
+    }
+  })
 }
 
 export async function executeNewSession(

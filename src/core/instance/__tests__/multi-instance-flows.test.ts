@@ -48,6 +48,8 @@ describe('CLI flag resolution flow', () => {
   })
 
   it('no flags + no .openacp in cwd returns null (needs prompt)', () => {
+    const saved = process.env.OPENACP_INSTANCE_ROOT
+    delete process.env.OPENACP_INSTANCE_ROOT
     // Use a temp dir that definitely has no .openacp
     const tmp = makeTmpDir('empty')
     try {
@@ -55,6 +57,7 @@ describe('CLI flag resolution flow', () => {
       expect(root).toBeNull()
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true })
+      if (saved !== undefined) process.env.OPENACP_INSTANCE_ROOT = saved
     }
   })
 
@@ -244,19 +247,17 @@ describe('instance copy flow: create new from existing', () => {
     fs.rmSync(baseDir, { recursive: true, force: true })
   })
 
-  it('copies config but strips instanceName and ports', async () => {
+  it('copies config but strips instanceName and migrated plugin sections', async () => {
     await copyInstance(srcDir, dstDir, {})
     const config = JSON.parse(fs.readFileSync(path.join(dstDir, 'config.json'), 'utf-8'))
 
-    // Stripped fields
+    // Stripped fields (instanceName + migrated plugin sections)
     expect(config.instanceName).toBeUndefined()
-    expect(config.api?.port).toBeUndefined()
-    expect(config.tunnel?.port).toBeUndefined()
+    expect(config.api).toBeUndefined()
+    expect(config.tunnel).toBeUndefined()
 
-    // Preserved fields
-    expect(config.channels.telegram.botToken).toBe('secret-token')
-    expect(config.api?.secret).toBe('abc')
-    expect(config.tunnel?.provider).toBe('cloudflare')
+    // Plugin-owned channel fields stripped
+    expect(config.channels.telegram.botToken).toBeUndefined()
   })
 
   it('copies installed plugins and agents but not runtime files', async () => {

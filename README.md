@@ -70,20 +70,37 @@ Your Codebase
 </table>
 </div>
 
-## Quick Start
+## Installation
+
+**Requirements:** Node.js 20+ (the installer handles this for you)
+
+### macOS
 
 ```bash
-# macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/Open-ACP/OpenACP/main/scripts/install.sh | bash
+```
 
-# Windows
+### Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Open-ACP/OpenACP/main/scripts/install.sh | bash
+```
+
+> Works on Debian/Ubuntu, Fedora/RHEL, Arch, and other distros. Also supports WSL (Windows Subsystem for Linux).
+
+### Windows
+
+Open PowerShell and run:
+
+```powershell
 powershell -c "irm https://raw.githubusercontent.com/Open-ACP/OpenACP/main/scripts/install.ps1 | iex"
 ```
 
-Works on macOS, Linux & Windows. Installs Node.js (if needed) and everything else for you.
+> Requires PowerShell 5.1+ (built into Windows 10/11).
 
-<details>
-<summary>Or install via npm</summary>
+### Manual install via npm
+
+If you already have Node.js 20+ installed:
 
 ```bash
 npm install -g @openacp/cli
@@ -97,9 +114,9 @@ openacp
 # → 🚀 OpenACP is running. Send a message to your bot!
 ```
 
-</details>
+---
 
-The interactive setup wizard walks you through everything:
+After installation, the **interactive setup wizard** walks you through everything:
 
 1. Choose your platform (Telegram, Discord, Slack, or multiple)
 2. Connect your bot (token validation + auto-detection)

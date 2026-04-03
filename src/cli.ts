@@ -22,6 +22,7 @@ import {
   cmdUpdate,
   cmdDefault,
   cmdAdopt,
+  cmdInstances,
   cmdIntegrate,
   cmdDoctor,
   cmdAgents,
@@ -85,10 +86,11 @@ resolvedInstanceRoot = resolveInstanceRoot({
 const noInstanceCommands: Record<string, () => Promise<void>> = {
   '--help': async () => printHelp(),
   '-h': async () => printHelp(),
-  '--version': () => cmdVersion(),
-  '-v': () => cmdVersion(),
+  '--version': () => cmdVersion(args),
+  '-v': () => cmdVersion(args),
   'update': () => cmdUpdate(args),
   'adopt': () => cmdAdopt(args),
+  'instances': async () => cmdInstances(args),
   'integrate': () => cmdIntegrate(args),
   'dev': () => cmdDev(args),
 }
@@ -123,7 +125,8 @@ async function main() {
       const registry = new InstanceRegistry(path.join(getGlobal(), 'instances.json'))
       await registry.load()
       const entry = registry.getByRoot(envRoot)
-      const id = entry?.id ?? 'unknown'
+      const { randomUUID } = await import('node:crypto')
+      const id = entry?.id ?? randomUUID()
       const ctx = createInstanceContext({
         id,
         root: envRoot,

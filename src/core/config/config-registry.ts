@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "./config.js";
 import { getGlobalRoot } from "../instance/instance-context.js";
+import type { SettingsManager } from "../plugin/settings-manager.js";
 
 export interface ConfigFieldDef {
   path: string;
@@ -11,6 +12,11 @@ export interface ConfigFieldDef {
   options?: string[] | ((config: Config) => string[]);
   scope: "safe" | "sensitive";
   hotReload: boolean;
+  /** If set, this field lives in plugin settings rather than config.json */
+  plugin?: {
+    name: string;
+    key: string;
+  };
 }
 
 export const CONFIG_REGISTRY: ConfigFieldDef[] = [
@@ -68,6 +74,7 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     type: "toggle",
     scope: "safe",
     hotReload: false,
+    plugin: { name: "@openacp/tunnel", key: "enabled" },
   },
   {
     path: "security.maxConcurrentSessions",
@@ -76,6 +83,7 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     type: "number",
     scope: "safe",
     hotReload: true,
+    plugin: { name: "@openacp/security", key: "maxConcurrentSessions" },
   },
   {
     path: "security.sessionTimeoutMinutes",
@@ -84,6 +92,7 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     type: "number",
     scope: "safe",
     hotReload: true,
+    plugin: { name: "@openacp/security", key: "sessionTimeoutMinutes" },
   },
   {
     path: "workspace.baseDir",
@@ -109,6 +118,7 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     options: ["groq"],
     scope: "safe",
     hotReload: true,
+    plugin: { name: "@openacp/speech", key: "sttProvider" },
   },
   {
     path: "speech.stt.apiKey",
@@ -117,6 +127,7 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     type: "string",
     scope: "sensitive",
     hotReload: true,
+    plugin: { name: "@openacp/speech", key: "groqApiKey" },
   },
   {
     path: "agentSwitch.labelHistory",
@@ -160,4 +171,70 @@ export function getConfigValue(config: Config, path: string): unknown {
     }
   }
   return current;
+}
+
+export async function getFieldValueAsync(
+  field: ConfigFieldDef,
+  configManager: { get(): Record<string, unknown> },
+  settingsManager?: SettingsManager,
+): Promise<unknown> {
+  if (field.plugin && settingsManager) {
+    const settings = await settingsManager.loadSettings(field.plugin.name);
+    return settings[field.plugin.key];
+  }
+  return getConfigValue(configManager.get() as any, field.path);
+}
+
+export class ConfigValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConfigValidationError";
+  }
+}
+
+function validateFieldValue(field: ConfigFieldDef, value: unknown): void {
+  switch (field.type) {
+    case "number":
+      if (typeof value !== "number" || Number.isNaN(value)) {
+        throw new ConfigValidationError(`"${field.path}" expects a number, got ${typeof value}`);
+      }
+      break;
+    case "toggle":
+      if (typeof value !== "boolean") {
+        throw new ConfigValidationError(`"${field.path}" expects a boolean, got ${typeof value}`);
+      }
+      break;
+    case "string":
+      if (typeof value !== "string") {
+        throw new ConfigValidationError(`"${field.path}" expects a string, got ${typeof value}`);
+      }
+      break;
+    case "select": {
+      if (typeof value !== "string") {
+        throw new ConfigValidationError(`"${field.path}" expects a string, got ${typeof value}`);
+      }
+      break;
+    }
+  }
+}
+
+export async function setFieldValueAsync(
+  field: ConfigFieldDef,
+  value: unknown,
+  configManager: { setPath(path: string, value: unknown): Promise<void>; emit?(event: string, data: unknown): void },
+  settingsManager?: SettingsManager,
+): Promise<{ needsRestart: boolean }> {
+  validateFieldValue(field, value);
+  if (field.plugin && settingsManager) {
+    await settingsManager.updatePluginSettings(field.plugin.name, {
+      [field.plugin.key]: value,
+    });
+    // Emit config:changed so hot-reload handlers can pick up the change
+    if (configManager.emit) {
+      configManager.emit('config:changed', { path: field.path, value, oldValue: undefined });
+    }
+    return { needsRestart: !field.hotReload };
+  }
+  await configManager.setPath(field.path, value);
+  return { needsRestart: !field.hotReload };
 }

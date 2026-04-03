@@ -120,6 +120,11 @@ export class SessionBridge {
     this.listen(this.session, "prompt_count_changed", (count: number) => {
       this.deps.sessionManager.patchRecord(this.session.id, { currentPromptCount: count });
     });
+
+    // Replay any commands_update that arrived before the bridge connected
+    if (this.session.latestCommands !== null) {
+      this.session.emit("agent_event", { type: "commands_update", commands: this.session.latestCommands });
+    }
   }
 
   disconnect(): void {

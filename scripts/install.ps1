@@ -30,7 +30,7 @@ $ERROR_C   = "$ESC[38;2;239;68;68m"      # red #ef4444
 $MUTED     = "$ESC[38;2;90;100;128m"     # text-muted #5a6480
 $NC        = "$ESC[0m"
 
-$NODE_MIN_MAJOR = 22
+$NODE_MIN_MAJOR = 20
 
 function Write-Msg {
     param(
@@ -412,12 +412,12 @@ function Main {
 
     $openacp = Get-Command openacp -ErrorAction SilentlyContinue
     if (-not $openacp) {
-        # Also check npm global bin directly
+        # Also check npm global prefix directly
         try {
-            $npmBin = (& npm bin -g 2>$null).Trim()
-            if ($npmBin -and (Test-Path (Join-Path $npmBin 'openacp.cmd'))) {
-                $env:Path = "$env:Path;$npmBin"
-                Add-ToPath -Dir $npmBin
+            $npmPrefix = (& npm prefix -g 2>$null).Trim()
+            if ($npmPrefix -and (Test-Path (Join-Path $npmPrefix 'openacp.cmd'))) {
+                $env:Path = "$env:Path;$npmPrefix"
+                Add-ToPath -Dir $npmPrefix
                 $openacp = Get-Command openacp -ErrorAction SilentlyContinue
             }
         } catch {}

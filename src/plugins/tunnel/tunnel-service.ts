@@ -2,6 +2,7 @@ import type { TunnelConfig } from '../../core/config/config.js'
 import { createChildLogger } from '../../core/utils/log.js'
 import { TunnelRegistry, type TunnelEntry } from './tunnel-registry.js'
 import { ViewerStore } from './viewer-store.js'
+import type { PluginStorage } from '../../core/plugin/types.js'
 
 const log = createChildLogger({ module: 'tunnel' })
 
@@ -12,7 +13,12 @@ export class TunnelService {
   private apiPort: number = 0
   private startError: string | undefined
 
-  constructor(config: TunnelConfig, registryPath?: string, binDir?: string) {
+  constructor(
+    config: TunnelConfig,
+    registryPath?: string,
+    binDir?: string,
+    storage?: PluginStorage,
+  ) {
     this.config = config
     this.store = new ViewerStore(config.storeTtlMinutes)
     this.registry = new TunnelRegistry({
@@ -20,6 +26,7 @@ export class TunnelService {
       providerOptions: config.options,
       registryPath,
       binDir,
+      storage,
     })
   }
 
@@ -41,6 +48,25 @@ export class TunnelService {
         })
         return entry.publicUrl || `http://localhost:${apiPort}`
       } catch (err) {
+        // If the OpenACP worker is unreachable (service down, rate-limited, etc.),
+        // fall back to Cloudflare quick tunnel so the user is never left without a URL.
+        // This intentionally bypasses TunnelRegistry's retry backoff — we want an
+        // immediate provider switch rather than repeated retries against a down service.
+        if (this.config.provider === 'openacp') {
+          log.warn({ err: (err as Error).message }, 'OpenACP tunnel service unreachable, falling back to Cloudflare quick tunnel')
+          try {
+            const fallbackEntry = await this.registry.add(apiPort, {
+              type: 'system',
+              provider: 'cloudflare',
+              label: 'system',
+            })
+            this.startError = 'OpenACP tunnel unavailable — using Cloudflare quick tunnel'
+            return fallbackEntry.publicUrl || `http://localhost:${apiPort}`
+          } catch (fallbackErr) {
+            this.startError = (fallbackErr as Error).message
+            return `http://localhost:${apiPort}`
+          }
+        }
         this.startError = (err as Error).message
         return `http://localhost:${apiPort}`
       }

@@ -6,6 +6,7 @@ import type { OpenACPPlugin, InstallContext } from '../../core/plugin/types.js'
 import type { OpenACPCore } from '../../core/core.js'
 import type { TopicManager } from '../telegram/topic-manager.js'
 import type { CommandRegistry } from '../../core/command-registry.js'
+import type { ContextManager } from '../context/context-manager.js'
 import type { ApiServerInstance } from './server.js'
 import type { RouteDeps } from './routes/types.js'
 import { createChildLogger } from '../../core/utils/log.js'
@@ -216,6 +217,8 @@ function createApiServerPlugin(): OpenACPPlugin {
       const { notifyRoutes } = await import('./routes/notify.js')
       const { commandRoutes } = await import('./routes/commands.js')
       const { authRoutes } = await import('./routes/auth.js')
+      const { workspaceRoute } = await import('./routes/workspace.js')
+      const { pluginRoutes } = await import('./routes/plugins.js')
 
       // Create Fastify server
       server = await createApiServer({
@@ -229,6 +232,7 @@ function createApiServerPlugin(): OpenACPPlugin {
       // Resolve optional services for route deps
       const topicManager = ctx.getService<TopicManager>('topic-manager')
       const commandRegistry = ctx.getService<CommandRegistry>('command-registry')
+      const contextManager = ctx.getService<ContextManager>('context')
 
       // Build auth pre-handler for route-level auth on unauthenticated route groups
       const routeAuthPreHandler = createAuthPreHandler(() => secret, () => jwtSecret, tokenStore)
@@ -240,6 +244,8 @@ function createApiServerPlugin(): OpenACPPlugin {
         getVersion,
         commandRegistry,
         authPreHandler: routeAuthPreHandler,
+        contextManager,
+        lifecycleManager: core.lifecycleManager,
       }
 
       // Register all route plugins under /api/v1/
@@ -252,6 +258,27 @@ function createApiServerPlugin(): OpenACPPlugin {
       server.registerPlugin('/api/v1/notify', async (app) => notifyRoutes(app, deps))
       server.registerPlugin('/api/v1/commands', async (app) => commandRoutes(app, deps))
       server.registerPlugin('/api/v1/auth', async (app) => authRoutes(app, { tokenStore, getJwtSecret: () => jwtSecret }))
+      server.registerPlugin('/api/v1/plugins', async (app) => pluginRoutes(app, deps))
+
+      // Workspace info route (authenticated)
+      const { InstanceRegistry } = await import('../../core/instance/instance-registry.js')
+      const { getGlobalRoot } = await import('../../core/instance/instance-context.js')
+      const globalRoot = getGlobalRoot()
+      const instanceReg = new InstanceRegistry(path.join(globalRoot, 'instances.json'))
+      instanceReg.load()
+      const instanceEntry = instanceReg.getByRoot(instanceRoot)
+      const workspaceId = instanceEntry?.id ?? 'main'
+      const appConfig = core.configManager.get()
+      const workspaceName = (appConfig as Record<string, unknown>).instanceName as string ?? 'Main'
+      const workspaceDir = path.dirname(instanceRoot)
+      server.registerPlugin('/api/v1', async (app) => {
+        await app.register(workspaceRoute, {
+          id: workspaceId,
+          name: workspaceName,
+          directory: workspaceDir,
+          version: getVersion(),
+        })
+      })
 
       // Exchange endpoint — NO auth (code in body IS the credential)
       // Fastify encapsulation makes dual registerPlugin on the same prefix safe —
