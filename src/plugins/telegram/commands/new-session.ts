@@ -14,6 +14,14 @@ function botFromCtx(ctx: Context): Bot {
   return { api: ctx.api } as unknown as Bot;
 }
 
+/**
+ * Handle `/new [agent] [workspace]` — create a new session.
+ *
+ * - With both args: creates the session directly via `createSessionDirect`.
+ * - From the assistant topic without full args: delegates to the AI assistant
+ *   to guide the user through selecting an agent and workspace.
+ * - Otherwise: shows a usage hint.
+ */
 export async function handleNew(
   ctx: Context,
   core: OpenACPCore,
@@ -54,6 +62,16 @@ export async function handleNew(
   );
 }
 
+/**
+ * Create a session topic and start the agent immediately.
+ *
+ * Creates the forum topic first (before the session events fire) to ensure the
+ * thread ID is available when `session_thread_ready` fires. Sends a control
+ * message with session status and bypass/TTS buttons. Cleans up the orphaned
+ * topic if session creation fails.
+ *
+ * Returns the Telegram thread ID, or null on failure.
+ */
 export async function createSessionDirect(
   ctx: Context,
   core: OpenACPCore,
@@ -74,10 +92,7 @@ export async function createSessionDirect(
       parse_mode: "HTML",
     });
 
-    const session = await core.handleNewSession("telegram", agentName, workspace);
-    session.threadId = String(threadId);
-
-    await core.sessionManager.patchRecord(session.id, { platform: { topicId: threadId } });
+    const session = await core.handleNewSession("telegram", agentName, workspace, { threadId: String(threadId) });
 
     const finalName = `🔄 ${session.agentName} — New Session`;
     try {
@@ -108,6 +123,11 @@ export async function createSessionDirect(
   }
 }
 
+/**
+ * Handle `/newchat` — start a fresh chat in a new topic, reusing the current
+ * session's agent and workspace. Resolves agent/workspace from the in-memory session
+ * first, falling back to the stored record for sessions not currently loaded.
+ */
 export async function handleNewChat(
   ctx: Context,
   core: OpenACPCore,
@@ -172,13 +192,8 @@ export async function handleNewChat(
       "telegram",
       agentName,
       workspace,
+      { threadId: String(newThreadId) },
     );
-    session.threadId = String(newThreadId);
-
-    // Persist platform mapping for new chat
-    await core.sessionManager.patchRecord(session.id, { platform: {
-      topicId: newThreadId,
-    } });
 
     const controlMsg = await ctx.api.sendMessage(
       chatId,
@@ -213,14 +228,86 @@ const WS_CACHE_MAX = 50
 const workspaceCache = new Map<number, { agentKey: string; workspace: string; ts: number }>()
 let nextWsId = 0
 
+// --- Force Reply state for custom path input ---
+
+interface ForceReplyEntry {
+  agentKey: string;
+  chatId: number;
+  createdAt: number; // ms timestamp, for TTL
+}
+
+export const _forceReplyMap = new Map<number, ForceReplyEntry>();
+
+export function _pruneExpiredForceReplies(): void {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [msgId, entry] of _forceReplyMap) {
+    if (entry.createdAt < cutoff) _forceReplyMap.delete(msgId);
+  }
+}
+
+export async function _sendCustomPathPrompt(
+  ctx: Context,
+  chatId: number,
+  agentKey: string,
+): Promise<void> {
+  const threadId =
+    ctx.message?.message_thread_id ??
+    (ctx as Context & { callbackQuery?: { message?: { message_thread_id?: number } } })
+      .callbackQuery?.message?.message_thread_id;
+
+  const sent = await ctx.api.sendMessage(
+    chatId,
+    `Please type the workspace path.\n\n` +
+      `Examples:\n` +
+      `• <code>/absolute/path/to/project</code>\n` +
+      `• <code>~/my-project</code>\n` +
+      `• <code>project-name</code> (created under your base directory)\n\n` +
+      `Reply to this message with your path.`,
+    {
+      parse_mode: 'HTML',
+      reply_markup: { force_reply: true },
+      ...(threadId !== undefined ? { message_thread_id: threadId } : {}),
+    },
+  );
+  _forceReplyMap.set(sent.message_id, { agentKey, chatId, createdAt: Date.now() });
+}
+
+export async function _handleCustomPathReply(
+  ctx: Context,
+  core: OpenACPCore,
+  chatId: number,
+  entry: ForceReplyEntry,
+): Promise<void> {
+  const input = (ctx.message!.text ?? '').trim();
+
+  let resolvedPath: string;
+  try {
+    resolvedPath = core.configManager.resolveWorkspace(input);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await ctx.reply(`❌ ${escapeHtml(message)}\n\nPlease try again:`, {
+      parse_mode: 'HTML',
+    }).catch(() => {});
+    await _sendCustomPathPrompt(ctx, chatId, entry.agentKey);
+    return;
+  }
+
+  await createSessionDirect(ctx, core, chatId, entry.agentKey, resolvedPath);
+}
+
 function cacheWorkspace(agentKey: string, workspace: string): number {
   // Evict stale entries (>5 min) and cap size
   const now = Date.now()
+  for (const [id, entry] of workspaceCache) {
+    if (now - entry.ts > 5 * 60_000) {
+      workspaceCache.delete(id)
+    }
+  }
   if (workspaceCache.size > WS_CACHE_MAX) {
-    for (const [id, entry] of workspaceCache) {
-      if (now - entry.ts > 5 * 60_000 || workspaceCache.size > WS_CACHE_MAX) {
-        workspaceCache.delete(id)
-      }
+    const sorted = [...workspaceCache.entries()].sort((a, b) => a[1].ts - b[1].ts)
+    const toDelete = sorted.slice(0, workspaceCache.size - WS_CACHE_MAX)
+    for (const [id] of toDelete) {
+      workspaceCache.delete(id)
     }
   }
   const id = nextWsId++
@@ -233,6 +320,10 @@ function shortenPath(ws: string): string {
   return home && ws.startsWith(home) ? '~' + ws.slice(home.length) : ws
 }
 
+/**
+ * Show the agent selection step of the multi-step new session wizard.
+ * If only one agent is installed, skip directly to workspace selection.
+ */
 export async function showAgentPicker(ctx: Context, core: OpenACPCore, chatId: number): Promise<void> {
   const catalog = core.agentCatalog
   const installed = catalog.getAvailable().filter((i) => i.installed)
@@ -269,13 +360,10 @@ async function showWorkspacePicker(ctx: Context, core: OpenACPCore, chatId: numb
   const recentWorkspaces = [...new Set(records.map((r) => r.workingDir).filter(Boolean))]
     .slice(0, 5)
 
-  const config = core.configManager.get()
-  const baseDir = config.workspace.baseDir
+  const resolvedBaseDir = core.configManager.resolveWorkspace()
 
-  // Resolve baseDir for comparison (config may have ~, records have absolute paths)
-  const resolvedBaseDir = core.configManager.resolveWorkspace(baseDir)
-  // Ensure baseDir is always an option
-  const hasBaseDir = recentWorkspaces.some(ws => ws === baseDir || ws === resolvedBaseDir)
+  // Ensure workspace base is always an option
+  const hasBaseDir = recentWorkspaces.some(ws => ws === resolvedBaseDir)
   const workspaces = hasBaseDir
     ? recentWorkspaces
     : [resolvedBaseDir, ...recentWorkspaces].slice(0, 5)
@@ -305,12 +393,34 @@ async function showWorkspacePicker(ctx: Context, core: OpenACPCore, chatId: numb
   }
 }
 
+/**
+ * Register all callback handlers for the multi-step new session wizard.
+ *
+ * Wizard flow:
+ * 1. `ns:start` → agent picker
+ * 2. `ns:agent:<key>` → workspace picker
+ * 3. `ns:ws:<id>` → create session
+ * 4. `ns:custom:<key>` → force-reply prompt for custom path input
+ *
+ * Custom path replies are intercepted from the `message:text` middleware by
+ * checking against the `_forceReplyMap` before passing to the next handler.
+ */
 export function setupNewSessionCallbacks(
   bot: Bot,
   core: OpenACPCore,
   chatId: number,
-  getAssistantSession?: () => { topicId: number; enqueuePrompt: (p: string) => Promise<void> } | undefined,
 ): void {
+  // Intercept replies to force-reply messages (custom path input)
+  bot.on("message:text", async (ctx, next) => {
+    _pruneExpiredForceReplies()
+    const replyToId = ctx.message.reply_to_message?.message_id
+    if (replyToId === undefined) return next()
+    const entry = _forceReplyMap.get(replyToId)
+    if (!entry || entry.chatId !== ctx.message.chat.id) return next()
+    _forceReplyMap.delete(replyToId)
+    await _handleCustomPathReply(ctx, core, chatId, entry)
+  })
+
   // Agent picker (also triggered from m: handler callback case)
   bot.callbackQuery('ns:start', async (ctx) => {
     try { await ctx.answerCallbackQuery() } catch { /* expired */ }
@@ -377,30 +487,27 @@ export function setupNewSessionCallbacks(
     const agentKey = ctx.callbackQuery.data.replace('ns:custom:', '')
     try { await ctx.answerCallbackQuery() } catch { /* expired */ }
 
-    const assistant = getAssistantSession?.()
-    if (assistant) {
-      try {
-        await ctx.editMessageText(
-          `<b>🆕 New Session</b>\n` +
-          `Agent: <code>${escapeHtml(agentKey)}</code>\n\n` +
-          `💬 Type your workspace path in the chat below.`,
-          { parse_mode: 'HTML' },
-        )
-      } catch { /* ignore */ }
-      await assistant.enqueuePrompt(
-        `User wants to create a new session with agent "${agentKey}". Ask them for the workspace (project directory) path, then create the session.`
+    // Remove inline keyboard from wizard message so user can't click stale buttons
+    try {
+      await ctx.editMessageText(
+        `<b>🆕 New Session</b>\n` +
+        `Agent: <code>${escapeHtml(agentKey)}</code>\n\n` +
+        `⌨️ Waiting for workspace path...`,
+        { parse_mode: 'HTML' },
       )
-    } else {
-      try {
-        await ctx.editMessageText(
-          `Usage: <code>/new ${escapeHtml(agentKey)} &lt;workspace-path&gt;</code>`,
-          { parse_mode: 'HTML' },
-        )
-      } catch { /* ignore */ }
-    }
+    } catch { /* ignore */ }
+
+    await _sendCustomPathPrompt(ctx, chatId, agentKey)
   })
 }
 
+/**
+ * Create a new session programmatically (used by the API server and assistant).
+ *
+ * Creates the forum topic and sends the initial "Setting up..." message before
+ * calling `core.handleNewSession()`, so the threadId is ready when session events
+ * fire. Cleans up the orphaned topic on failure.
+ */
 export async function executeNewSession(
   bot: Bot,
   core: OpenACPCore,
@@ -423,12 +530,8 @@ export async function executeNewSession(
       "telegram",
       agentName,
       workspace,
+      { threadId: String(threadId) },
     );
-    session.threadId = String(threadId);
-
-    await core.sessionManager.patchRecord(session.id, { platform: {
-      topicId: threadId,
-    } });
 
     // Rename topic with agent name after session is created
     const finalName = `🔄 ${session.agentName} — New Session`;

@@ -10,7 +10,7 @@ vi.mock('@clack/prompts', () => ({
 }))
 
 // Mock autostart
-vi.mock('../core/autostart.js', () => ({
+vi.mock('../cli/autostart.js', () => ({
   installAutoStart: vi.fn(() => ({ success: true })),
   uninstallAutoStart: vi.fn(() => ({ success: true })),
   isAutoStartInstalled: vi.fn(() => false),
@@ -45,7 +45,7 @@ describe('config-editor', () => {
         channels: { telegram: { enabled: true, botToken: 'token', chatId: -100 } },
         agents: { claude: { command: 'claude-agent-acp', args: [], env: {} } },
         defaultAgent: 'claude',
-        workspace: { baseDir: '~/workspace' },
+        workspace: { allowExternalWorkspaces: true, security: { allowedPaths: [], envWhitelist: [] } },
         security: { allowedUserIds: [], maxConcurrentSessions: 5, sessionTimeoutMinutes: 60 },
         logging: { level: 'info', logDir: '~/.openacp/logs', maxFileSize: '10m', maxFiles: 7, sessionLogRetentionDays: 30 },
         runMode: 'foreground',
@@ -57,38 +57,6 @@ describe('config-editor', () => {
 
     await runConfigEditor(mockConfigManager as any)
     expect(mockConfigManager.save).not.toHaveBeenCalled()
-  })
-
-  it('saves changes when user edits workspace and exits', async () => {
-    const clack = await import('@clack/prompts')
-    const { runConfigEditor } = await import('../core/config/config-editor.js')
-
-    vi.mocked(clack.select)
-      .mockResolvedValueOnce('workspace')
-      .mockResolvedValueOnce('exit')
-
-    vi.mocked(clack.text).mockResolvedValueOnce('~/new-workspace')
-
-    const mockConfigManager = {
-      load: vi.fn(),
-      get: vi.fn(() => ({
-        channels: { telegram: { enabled: true, botToken: 'token', chatId: -100 } },
-        agents: { claude: { command: 'claude-agent-acp', args: [], env: {} } },
-        defaultAgent: 'claude',
-        workspace: { baseDir: '~/workspace' },
-        security: { allowedUserIds: [], maxConcurrentSessions: 5, sessionTimeoutMinutes: 60 },
-        logging: { level: 'info', logDir: '~/.openacp/logs', maxFileSize: '10m', maxFiles: 7, sessionLogRetentionDays: 30 },
-        runMode: 'foreground',
-        autoStart: false,
-      })),
-      save: vi.fn(),
-      getConfigPath: vi.fn(() => '/tmp/config.json'),
-    }
-
-    await runConfigEditor(mockConfigManager as any)
-    expect(mockConfigManager.save).toHaveBeenCalledWith(
-      expect.objectContaining({ workspace: { baseDir: '~/new-workspace' } })
-    )
   })
 
   it('discards changes on Ctrl+C (cancel)', async () => {
@@ -106,7 +74,7 @@ describe('config-editor', () => {
       load: vi.fn(),
       get: vi.fn(() => ({
         channels: {}, agents: { claude: { command: 'c', args: [], env: {} } },
-        defaultAgent: 'claude', workspace: { baseDir: '~' },
+        defaultAgent: 'claude', workspace: {},
         security: { allowedUserIds: [], maxConcurrentSessions: 5, sessionTimeoutMinutes: 60 },
         logging: { level: 'info', logDir: '~/.openacp/logs', maxFileSize: '10m', maxFiles: 7, sessionLogRetentionDays: 30 },
         runMode: 'foreground', autoStart: false,

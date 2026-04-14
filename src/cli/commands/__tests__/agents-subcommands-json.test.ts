@@ -41,7 +41,7 @@ describe('agents info --json', () => {
   it('outputs JSON for installed agent', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['info', 'claude-code', '--json'], undefined)
+      await cmdAgents(['info', 'claude-code', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(0)
     const data = expectValidJsonSuccess(result.stdout)
@@ -56,7 +56,7 @@ describe('agents info --json', () => {
   it('outputs JSON error for unknown agent', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['info', 'nonexistent', '--json'], undefined)
+      await cmdAgents(['info', 'nonexistent', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(1)
     expectValidJsonError(result.stdout, 'AGENT_NOT_FOUND')
@@ -65,7 +65,7 @@ describe('agents info --json', () => {
   it('outputs JSON error when no agent name provided', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['info', '--json'], undefined)
+      await cmdAgents(['info', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(1)
     expectValidJsonError(result.stdout, 'MISSING_ARGUMENT')
@@ -78,7 +78,7 @@ describe('agents install --json', () => {
   it('outputs JSON on successful install', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['install', 'gemini', '--json'], undefined)
+      await cmdAgents(['install', 'gemini', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(0)
     const data = expectValidJsonSuccess(result.stdout)
@@ -89,7 +89,7 @@ describe('agents install --json', () => {
   it('outputs JSON error when no agent name provided', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['install', '--json'], undefined)
+      await cmdAgents(['install', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(1)
     expectValidJsonError(result.stdout, 'MISSING_ARGUMENT')
@@ -102,7 +102,7 @@ describe('agents uninstall --json', () => {
   it('outputs JSON on successful uninstall', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['uninstall', 'claude-code', '--json'], undefined)
+      await cmdAgents(['uninstall', 'claude-code', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(0)
     const data = expectValidJsonSuccess(result.stdout)
@@ -113,7 +113,7 @@ describe('agents uninstall --json', () => {
   it('outputs JSON error when no agent name provided', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['uninstall', '--json'], undefined)
+      await cmdAgents(['uninstall', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(1)
     expectValidJsonError(result.stdout, 'MISSING_ARGUMENT')

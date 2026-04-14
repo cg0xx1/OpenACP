@@ -6,7 +6,17 @@ import { EntireProvider } from './entire/entire-provider.js'
 import { HistoryProvider } from './history/history-provider.js'
 import { HistoryRecorder } from './history/history-recorder.js'
 import { HistoryStore } from './history/history-store.js'
+import { Hook } from '../../core/events.js'
 
+/**
+ * Context plugin — records conversation history and injects it into agent prompts.
+ *
+ * Setup wires up five middleware hooks that together keep a rolling history of every
+ * session on disk and prepend it to the next agent prompt via `agent:beforePrompt`.
+ * Two providers are registered in priority order:
+ *   1. HistoryProvider (local) — always available, covers live/recent sessions
+ *   2. EntireProvider — available when the repo has the Entire checkpoint branch
+ */
 const contextPlugin: OpenACPPlugin = {
   name: '@openacp/context',
   version: '1.0.0',
@@ -60,19 +70,20 @@ const contextPlugin: OpenACPPlugin = {
     manager.register(new HistoryProvider(store, getRecords))
     manager.register(new EntireProvider())
     manager.setHistoryStore(store)
+    manager.registerFlusher((sessionId) => recorder.flush(sessionId))
     ctx.registerService('context', manager)
 
     // Middleware: capture user prompts
-    ctx.registerMiddleware('agent:beforePrompt', {
+    ctx.registerMiddleware(Hook.AGENT_BEFORE_PROMPT, {
       priority: 200,
       handler: async (payload, next) => {
-        recorder.onBeforePrompt(payload.sessionId, payload.text, payload.attachments)
+        recorder.onBeforePrompt(payload.sessionId, payload.text, payload.attachments, payload.sourceAdapterId)
         return next()
       },
     })
 
     // Middleware: capture agent events
-    ctx.registerMiddleware('agent:afterEvent', {
+    ctx.registerMiddleware(Hook.AGENT_AFTER_EVENT, {
       priority: 200,
       handler: async (payload, next) => {
         recorder.onAfterEvent(payload.sessionId, payload.event)
@@ -81,7 +92,7 @@ const contextPlugin: OpenACPPlugin = {
     })
 
     // Middleware: finalize turn and write to disk
-    ctx.registerMiddleware('turn:end', {
+    ctx.registerMiddleware(Hook.TURN_END, {
       priority: 200,
       handler: async (payload, next) => {
         await recorder.onTurnEnd(payload.sessionId, payload.stopReason)
@@ -90,7 +101,7 @@ const contextPlugin: OpenACPPlugin = {
     })
 
     // Middleware: capture permission resolutions
-    ctx.registerMiddleware('permission:afterResolve', {
+    ctx.registerMiddleware(Hook.PERMISSION_AFTER_RESOLVE, {
       priority: 200,
       handler: async (payload, next) => {
         recorder.onPermissionResolved(payload.sessionId, payload.requestId, payload.decision)
@@ -98,11 +109,11 @@ const contextPlugin: OpenACPPlugin = {
       },
     })
 
-    // Middleware: clean up recorder memory on session destroy
-    ctx.registerMiddleware('session:afterDestroy', {
+    // Middleware: flush in-progress turn and clean up on session destroy
+    ctx.registerMiddleware(Hook.SESSION_AFTER_DESTROY, {
       priority: 200,
       handler: async (payload, next) => {
-        recorder.finalize(payload.sessionId)
+        await recorder.onSessionDestroy(payload.sessionId)
         return next()
       },
     })

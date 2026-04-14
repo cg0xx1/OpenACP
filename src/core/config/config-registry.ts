@@ -1,24 +1,41 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
+/**
+ * Config registry — declarative metadata for config fields.
+ *
+ * Each registered field describes its UI type, whether it can be hot-reloaded,
+ * and whether it's safe to expose via the API. This drives:
+ * - The API server's PATCH /api/config endpoint (validates + applies changes)
+ * - Hot-reload: fields marked `hotReload: true` take effect immediately via
+ *   ConfigManager's `config:changed` event, without requiring a restart
+ * - Security: only `scope: "safe"` fields are exposed to the REST API
+ */
 import type { Config } from "./config.js";
-import { getGlobalRoot } from "../instance/instance-context.js";
-import type { SettingsManager } from "../plugin/settings-manager.js";
 
+/**
+ * Metadata for a single config field, describing how it should be
+ * displayed, validated, and applied at runtime.
+ */
 export interface ConfigFieldDef {
+  /** Dot-path into the Config object (e.g. "logging.level"). */
   path: string;
+  /** Human-readable label for UI display. */
   displayName: string;
+  /** Grouping key for organizing fields in the editor (e.g. "agent", "logging"). */
   group: string;
+  /** UI control type — determines validation and rendering. */
   type: "toggle" | "select" | "number" | "string";
+  /** For "select" type: allowed values, either static or derived from current config. */
   options?: string[] | ((config: Config) => string[]);
+  /** "safe" fields can be exposed via the API; "sensitive" fields require direct file access. */
   scope: "safe" | "sensitive";
+  /** Whether changes to this field take effect without restarting the server. */
   hotReload: boolean;
-  /** If set, this field lives in plugin settings rather than config.json */
-  plugin?: {
-    name: string;
-    key: string;
-  };
 }
 
+/**
+ * Static registry of all config fields that support programmatic access.
+ * Fields not listed here can still exist in config.json but won't be
+ * editable via the API or shown in the config UI.
+ */
 export const CONFIG_REGISTRY: ConfigFieldDef[] = [
   {
     path: "defaultAgent",
@@ -26,35 +43,10 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     group: "agent",
     type: "select",
     options: (config) => {
-      try {
-        const agentsPath = path.join(getGlobalRoot(), "agents.json");
-        if (fs.existsSync(agentsPath)) {
-          const data = JSON.parse(fs.readFileSync(agentsPath, "utf-8"));
-          return Object.keys(data.installed ?? {});
-        }
-      } catch {
-        /* fallback */
-      }
-      return Object.keys(config.agents ?? {});
+      // Full agent list is managed by AgentCatalog at runtime, not config registry
+      const current = config.defaultAgent;
+      return current ? [current] : [];
     },
-    scope: "safe",
-    hotReload: true,
-  },
-  {
-    path: "channels.telegram.outputMode",
-    displayName: "Telegram Output Mode",
-    group: "display",
-    type: "select",
-    options: ["low", "medium", "high"],
-    scope: "safe",
-    hotReload: true,
-  },
-  {
-    path: "channels.discord.outputMode",
-    displayName: "Discord Output Mode",
-    group: "display",
-    type: "select",
-    options: ["low", "medium", "high"],
     scope: "safe",
     hotReload: true,
   },
@@ -68,66 +60,12 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
     hotReload: true,
   },
   {
-    path: "tunnel.enabled",
-    displayName: "Tunnel",
-    group: "tunnel",
-    type: "toggle",
-    scope: "safe",
-    hotReload: false,
-    plugin: { name: "@openacp/tunnel", key: "enabled" },
-  },
-  {
-    path: "security.maxConcurrentSessions",
-    displayName: "Max Concurrent Sessions",
-    group: "security",
-    type: "number",
-    scope: "safe",
-    hotReload: true,
-    plugin: { name: "@openacp/security", key: "maxConcurrentSessions" },
-  },
-  {
-    path: "security.sessionTimeoutMinutes",
-    displayName: "Session Timeout (min)",
-    group: "security",
-    type: "number",
-    scope: "safe",
-    hotReload: true,
-    plugin: { name: "@openacp/security", key: "sessionTimeoutMinutes" },
-  },
-  {
-    path: "workspace.baseDir",
-    displayName: "Workspace Directory",
-    group: "workspace",
-    type: "string",
-    scope: "safe",
-    hotReload: true,
-  },
-  {
     path: "sessionStore.ttlDays",
     displayName: "Session Store TTL (days)",
     group: "storage",
     type: "number",
     scope: "safe",
     hotReload: true,
-  },
-  {
-    path: "speech.stt.provider",
-    displayName: "Speech to Text",
-    group: "speech",
-    type: "select",
-    options: ["groq"],
-    scope: "safe",
-    hotReload: true,
-    plugin: { name: "@openacp/speech", key: "sttProvider" },
-  },
-  {
-    path: "speech.stt.apiKey",
-    displayName: "STT API Key",
-    group: "speech",
-    type: "string",
-    scope: "sensitive",
-    hotReload: true,
-    plugin: { name: "@openacp/speech", key: "groqApiKey" },
   },
   {
     path: "agentSwitch.labelHistory",
@@ -139,19 +77,23 @@ export const CONFIG_REGISTRY: ConfigFieldDef[] = [
   },
 ];
 
+/** Looks up a field definition by its dot-path. */
 export function getFieldDef(path: string): ConfigFieldDef | undefined {
   return CONFIG_REGISTRY.find((f) => f.path === path);
 }
 
+/** Returns only fields safe to expose via the REST API. */
 export function getSafeFields(): ConfigFieldDef[] {
   return CONFIG_REGISTRY.filter((f) => f.scope === "safe");
 }
 
+/** Checks whether a config field can be changed without restarting the server. */
 export function isHotReloadable(path: string): boolean {
   const def = getFieldDef(path);
   return def?.hotReload ?? false;
 }
 
+/** Resolves select options — evaluates the function form against the current config if needed. */
 export function resolveOptions(
   def: ConfigFieldDef,
   config: Config,
@@ -160,6 +102,7 @@ export function resolveOptions(
   return typeof def.options === "function" ? def.options(config) : def.options;
 }
 
+/** Traverses a config object by dot-path (e.g. "logging.level") and returns the value. */
 export function getConfigValue(config: Config, path: string): unknown {
   const parts = path.split(".");
   let current: unknown = config;
@@ -173,18 +116,7 @@ export function getConfigValue(config: Config, path: string): unknown {
   return current;
 }
 
-export async function getFieldValueAsync(
-  field: ConfigFieldDef,
-  configManager: { get(): Record<string, unknown> },
-  settingsManager?: SettingsManager,
-): Promise<unknown> {
-  if (field.plugin && settingsManager) {
-    const settings = await settingsManager.loadSettings(field.plugin.name);
-    return settings[field.plugin.key];
-  }
-  return getConfigValue(configManager.get() as any, field.path);
-}
-
+/** Thrown when a config field value fails type validation against its registry definition. */
 export class ConfigValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -192,6 +124,7 @@ export class ConfigValidationError extends Error {
   }
 }
 
+/** Validates that a value matches the expected type for a registry field. */
 function validateFieldValue(field: ConfigFieldDef, value: unknown): void {
   switch (field.type) {
     case "number":
@@ -218,23 +151,17 @@ function validateFieldValue(field: ConfigFieldDef, value: unknown): void {
   }
 }
 
+/**
+ * Validates and persists a config field value via the ConfigManager.
+ *
+ * @returns Whether the change requires a server restart to take effect
+ */
 export async function setFieldValueAsync(
   field: ConfigFieldDef,
   value: unknown,
   configManager: { setPath(path: string, value: unknown): Promise<void>; emit?(event: string, data: unknown): void },
-  settingsManager?: SettingsManager,
 ): Promise<{ needsRestart: boolean }> {
   validateFieldValue(field, value);
-  if (field.plugin && settingsManager) {
-    await settingsManager.updatePluginSettings(field.plugin.name, {
-      [field.plugin.key]: value,
-    });
-    // Emit config:changed so hot-reload handlers can pick up the change
-    if (configManager.emit) {
-      configManager.emit('config:changed', { path: field.path, value, oldValue: undefined });
-    }
-    return { needsRestart: !field.hotReload };
-  }
   await configManager.setPath(field.path, value);
   return { needsRestart: !field.hotReload };
 }

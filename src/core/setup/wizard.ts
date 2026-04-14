@@ -9,7 +9,6 @@ import { ONBOARD_SECTION_OPTIONS } from "./types.js";
 import type { CommunityAdapterOption } from "./types.js";
 import { guardCancel, ok, fail, printStartBanner, summarizeConfig } from "./helpers.js";
 import { setupAgents } from "./setup-agents.js";
-import { setupWorkspace } from "./setup-workspace.js";
 import { setupRunMode } from "./setup-run-mode.js";
 import { setupIntegrations } from "./setup-integrations.js";
 import { configureChannels } from "./setup-channels.js";
@@ -24,6 +23,10 @@ import { protectLocalInstance } from "./git-protect.js";
 
 // ─── Registry discovery ───
 
+/**
+ * Fetches verified community adapter plugins from the OpenACP registry.
+ * Returns an empty array on network failure so setup can proceed without registry access.
+ */
 async function fetchCommunityAdapters(): Promise<CommunityAdapterOption[]> {
   try {
     const client = new RegistryClient()
@@ -43,6 +46,10 @@ async function fetchCommunityAdapters(): Promise<CommunityAdapterOption[]> {
 
 // ─── Desktop App detection ───
 
+/**
+ * Checks whether the OpenACP Desktop App is installed by probing
+ * platform-specific install locations. Used to show status during setup.
+ */
 function checkDesktopAppInstalled(): boolean {
   // TODO: replace with exact app bundle / executable path once the Desktop App ships
   const candidates: string[] = [];
@@ -67,6 +74,23 @@ function checkDesktopAppInstalled(): boolean {
 
 // ─── First-run setup ───
 
+/**
+ * Runs the interactive first-run setup wizard.
+ *
+ * The wizard flows through these steps in order:
+ *   1. Instance naming
+ *   2. Copy-from existing workspace (optional — reuses credentials/settings)
+ *   3. Channel selection and configuration (Telegram, Desktop App, plugins)
+ *   4. Agent installation and default agent selection
+ *   5. Integration setup (Claude CLI session transfer)
+ *   6. Run mode selection (foreground vs daemon)
+ *
+ * On completion, writes config.json, registers the instance in the global
+ * registry, and adds .openacp/ to .gitignore. The wizard is NOT resumable —
+ * if cancelled partway, it must be restarted from scratch.
+ *
+ * @returns `true` if setup completed successfully, `false` if cancelled or failed
+ */
 export async function runSetup(
   configManager: ConfigManager,
   opts?: {
@@ -74,8 +98,10 @@ export async function runSetup(
     settingsManager?: SettingsManager
     pluginRegistry?: PluginRegistry
     instanceName?: string
-    from?: string       // path to copy from (parent dir, not .openacp)
-    instanceRoot?: string  // the .openacp dir being set up
+    /** Path to copy from (parent dir, not .openacp) */
+    from?: string
+    /** The .openacp dir being set up */
+    instanceRoot?: string
   },
 ): Promise<boolean> {
   await printStartBanner();
@@ -91,13 +117,12 @@ export async function runSetup(
 
     // ─── Instance name prompt ───
 
-    const instanceRoot = opts?.instanceRoot ?? getGlobalRoot();
-    const isGlobal = instanceRoot === getGlobalRoot();
+    const instanceRoot = opts?.instanceRoot!;
 
     let instanceName = opts?.instanceName;
     if (!instanceName) {
-      const defaultName = isGlobal ? 'Global workspace' : path.basename(path.dirname(instanceRoot));
-      const locationHint = isGlobal ? 'global (~/.openacp)' : `local (${instanceRoot.replace(/\/.openacp$/, '').replace(os.homedir(), '~')})`;
+      const defaultName = path.basename(path.dirname(instanceRoot));
+      const locationHint = instanceRoot.replace(/\/.openacp$/, '').replace(os.homedir(), '~');
       const nameResult = await clack.text({
         message: `Name for this workspace (${locationHint})`,
         initialValue: defaultName,
@@ -112,7 +137,7 @@ export async function runSetup(
     const globalRoot = getGlobalRoot();
     const registryPath = path.join(globalRoot, 'instances.json');
     const instanceRegistry = new InstanceRegistry(registryPath);
-    await instanceRegistry.load();
+    instanceRegistry.load();
 
     let didCopy = false;
 
@@ -145,10 +170,8 @@ export async function runSetup(
             const cfg = JSON.parse(fs.readFileSync(path.join(e.root, 'config.json'), 'utf-8'));
             if (cfg.instanceName) name = cfg.instanceName;
           } catch {}
-          const isGlobalEntry = e.root === getGlobalRoot();
           const displayPath = e.root.replace(os.homedir(), '~');
-          const type = isGlobalEntry ? 'global' : 'local';
-          singleLabel = `${name} workspace (${type} — ${displayPath})`;
+          singleLabel = `${name} workspace (${displayPath})`;
         }
 
         const confirmMsg = singleLabel
@@ -175,10 +198,8 @@ export async function runSetup(
                   const cfg = JSON.parse(fs.readFileSync(path.join(e.root, 'config.json'), 'utf-8'));
                   if (cfg.instanceName) name = cfg.instanceName;
                 } catch {}
-                const isGlobalEntry = e.root === getGlobalRoot();
                 const displayPath = e.root.replace(os.homedir(), '~');
-                const type = isGlobalEntry ? 'global' : 'local';
-                return { value: e.root, label: `${name} workspace (${type} — ${displayPath})` };
+                return { value: e.root, label: `${name} workspace (${displayPath})` };
               }),
             });
             if (clack.isCancel(choice)) return false;
@@ -238,7 +259,7 @@ export async function runSetup(
     // Calculate total steps dynamically: channel(s) + workspace + run mode
     const channelSteps = channelChoices.length;
     const runModeSteps = opts?.skipRunMode ? 0 : 1;
-    const totalSteps = channelSteps + 1 + runModeSteps; // + workspace + optional run mode
+    const totalSteps = channelSteps + runModeSteps;
 
     let currentStep = 0;
 
@@ -301,7 +322,7 @@ export async function runSetup(
         if (!fs.existsSync(installedPath)) {
           try {
             clack.log.step(`Installing ${npmPackage}...`);
-            execFileSync('npm', ['install', npmPackage, '--prefix', pluginsDir, '--save'], {
+            execFileSync('npm', ['install', npmPackage, '--prefix', pluginsDir, '--save', '--ignore-scripts'], {
               stdio: 'inherit',
               timeout: 60000,
             });
@@ -354,7 +375,7 @@ export async function runSetup(
 
         // Install from npm
         try {
-          execFileSync('npm', ['install', npmPackage, '--prefix', pluginsDir, '--save'], {
+          execFileSync('npm', ['install', npmPackage, '--prefix', pluginsDir, '--save', '--ignore-scripts'], {
             stdio: 'inherit',
             timeout: 60000,
           });
@@ -403,13 +424,10 @@ export async function runSetup(
     // Persist any community plugin registrations from the loop above
     await pluginRegistry.save();
 
-    const { defaultAgent } = await setupAgents();
+    const { defaultAgent } = await setupAgents(instanceRoot);
 
     // Offer Claude CLI integration
     await setupIntegrations();
-
-    currentStep++;
-    const workspace = await setupWorkspace({ stepNum: currentStep, totalSteps, isGlobal });
 
     let runMode: 'foreground' | 'daemon' = 'foreground';
     let autoStart = false;
@@ -426,13 +444,15 @@ export async function runSetup(
       sessionTimeoutMinutes: 60,
     };
 
+    // Resolve or create UUID before writing config — id must be in config.json from the start
+    const existingEntry = instanceRegistry.getByRoot(instanceRoot);
+    const instanceId = existingEntry?.id ?? randomUUID();
+
     const config: Config = {
+      id: instanceId,
       instanceName,
-      channels: {},
-      agents: {},
       defaultAgent,
-      workspace,
-      security,
+      workspace: { allowExternalWorkspaces: true, security: { allowedPaths: [], envWhitelist: [] } },
       logging: {
         level: "info",
         logDir: path.join(instanceRoot, "logs"),
@@ -442,31 +462,8 @@ export async function runSetup(
       },
       runMode,
       autoStart,
-      api: {
-        port: 21420,
-        host: '127.0.0.1',
-      },
       sessionStore: { ttlDays: 30 },
-      tunnel: {
-        enabled: true,
-        port: 3100,
-        provider: "cloudflare",
-        options: {},
-        maxUserTunnels: 5,
-        storeTtlMinutes: 60,
-        auth: { enabled: false },
-      },
-      usage: {
-        enabled: true,
-        warningThreshold: 0.8,
-        currency: "USD",
-        retentionDays: 90,
-      },
       integrations: {},
-      speech: {
-        stt: { provider: null, providers: {} },
-        tts: { provider: null, providers: {} },
-      },
       agentSwitch: { labelHistory: true },
     };
 
@@ -485,20 +482,15 @@ export async function runSetup(
       await pluginRegistry.save();
     }
 
-    // Register instance in the global registry (skip if this root is already registered)
-    const existingEntry = instanceRegistry.getByRoot(instanceRoot);
+    // Register instance in the global registry (now after config write; UUID already decided above)
     if (!existingEntry) {
-      const id = randomUUID();
-      instanceRegistry.register(id, instanceRoot);
+      instanceRegistry.register(instanceId, instanceRoot);
       await instanceRegistry.save();
     }
 
-    // For local instances: protect secrets from git and document in CLAUDE.md
-    const isLocal = instanceRoot !== path.join(getGlobalRoot());
-    if (isLocal) {
-      const projectDir = path.dirname(instanceRoot) // .openacp parent = project dir
-      protectLocalInstance(projectDir)
-    }
+    // Protect secrets from git and document in CLAUDE.md
+    const projectDir = path.dirname(instanceRoot);
+    protectLocalInstance(projectDir);
 
     clack.outro(`Config saved to ${configManager.getConfigPath()}`);
 
@@ -550,8 +542,16 @@ async function registerBuiltinPlugins(
 
 // ─── Inheritable keys for copy flow ───
 
+/**
+ * Returns the set of plugin settings keys that are safe to copy between workspaces.
+ *
+ * Only non-secret, structural settings are included. Secrets (tokens, API keys)
+ * are NOT inherited — each workspace must configure its own credentials.
+ *
+ * This map covers built-in plugins only. Community plugins declare their own
+ * inheritable keys in their plugin definition and handle copying themselves.
+ */
 function buildInheritableKeysMap(): Record<string, string[]> {
-  // Hardcoded for built-in plugins — community plugins declare their own
   return {
     '@openacp/tunnel': ['provider', 'maxUserTunnels', 'auth'],
     '@openacp/api-server': ['host'],
@@ -582,7 +582,14 @@ async function selectSection(hasSelection: boolean): Promise<ReconfigureSection>
   ) as ReconfigureSection;
 }
 
-export async function runReconfigure(configManager: ConfigManager): Promise<void> {
+/**
+ * Runs the reconfigure wizard for an existing OpenACP installation.
+ *
+ * Unlike `runSetup`, this presents a section-picker menu and lets users
+ * modify individual sections (channels, agents, run mode, integrations)
+ * in any order. The loop continues until the user selects "Continue".
+ */
+export async function runReconfigure(configManager: ConfigManager, settingsManager?: SettingsManager): Promise<void> {
   await printStartBanner();
   clack.intro("OpenACP — Reconfigure");
 
@@ -591,7 +598,7 @@ export async function runReconfigure(configManager: ConfigManager): Promise<void
     let config = configManager.get();
 
     // Show current config summary
-    clack.note(summarizeConfig(config), "Current configuration");
+    clack.note(await summarizeConfig(config, settingsManager), "Current configuration");
 
     let ranSection = false;
 
@@ -601,27 +608,14 @@ export async function runReconfigure(configManager: ConfigManager): Promise<void
       ranSection = true;
 
       if (choice === "channels") {
-        const result = await configureChannels(config);
-        if (result.changed) {
-          // IMPORTANT: Use writeNew() instead of save() because save() uses deepMerge
-          // which cannot delete keys. Channel deletion (delete next.channels.telegram)
-          // would be silently ignored by deepMerge. writeNew() overwrites the full config.
-          config = { ...config, channels: result.config.channels };
-          await configManager.writeNew(config);
-        }
+        // configureChannels now updates plugin settings directly (channels migrated out of config.json)
+        await configureChannels(config, settingsManager);
       }
 
       if (choice === "agents") {
-        const { defaultAgent } = await setupAgents();
+        const reconfigRoot = path.dirname(configManager.getConfigPath());
+        const { defaultAgent } = await setupAgents(reconfigRoot);
         await configManager.save({ defaultAgent });
-        config = configManager.get();
-      }
-
-      if (choice === "workspace") {
-        const { baseDir } = await setupWorkspace({
-          existing: config.workspace.baseDir,
-        });
-        await configManager.save({ workspace: { baseDir } });
         config = configManager.get();
       }
 

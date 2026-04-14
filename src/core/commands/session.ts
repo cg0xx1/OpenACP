@@ -2,6 +2,14 @@ import type { CommandRegistry } from '../command-registry.js'
 import type { CommandResponse } from '../plugin/types.js'
 import type { OpenACPCore } from '../core.js'
 
+/**
+ * Register session lifecycle commands: /new, /cancel, /status, /sessions,
+ * /newchat, /resume, /handoff, /fork, /archive, /close, /agentsessions.
+ *
+ * These commands manage the full session lifecycle — creating, inspecting,
+ * forking, archiving, and closing sessions. Most require a session context
+ * (i.e. being invoked inside a session topic/thread).
+ */
 export function registerSessionCommands(registry: CommandRegistry, _core: unknown): void {
   const core = _core as OpenACPCore;
   registry.register({
@@ -75,19 +83,6 @@ export function registerSessionCommands(registry: CommandRegistry, _core: unknow
         detail: `${r.agentName} — ${r.status}`,
       }))
       return { type: 'list', title: '📋 Sessions', items }
-    },
-  })
-
-  registry.register({
-    name: 'clear',
-    description: 'Clear session history',
-    category: 'system',
-    handler: async (args) => {
-      if (!core.assistantManager) return { type: 'error', message: 'Assistant not available' }
-      const assistant = core.assistantManager.get(args.channelId)
-      if (!assistant) return { type: 'error', message: 'No assistant session for this channel.' }
-      await core.assistantManager.respawn(args.channelId, assistant.threadId)
-      return { type: 'text', text: '✅ Assistant history cleared.' }
     },
   })
 

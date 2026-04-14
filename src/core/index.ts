@@ -23,7 +23,6 @@ export {
   expandHome,
   type Config,
   type LoggingConfig,
-  type UsageConfig,
 } from "./config/config.js";
 export { AgentInstance } from "./agents/agent-instance.js";
 export { AgentManager } from "./agents/agent-manager.js";
@@ -33,8 +32,10 @@ export { PromptQueue } from "./sessions/prompt-queue.js";
 export { PermissionGate } from "./sessions/permission-gate.js";
 export { MessageTransformer } from "./message-transformer.js";
 export type { FileServiceInterface } from "./plugin/types.js";
-export { SessionManager } from "./sessions/session-manager.js";
+export { SessionManager, type SessionSummary } from "./sessions/session-manager.js";
 export { SessionBridge, type BridgeDeps } from "./sessions/session-bridge.js";
+export type { TurnContext, TurnRouting } from "./sessions/turn-context.js";
+export { createTurnContext, getEffectiveTarget, isSystemEvent } from "./sessions/turn-context.js";
 export {
   SessionFactory,
   type SessionCreateParams,
@@ -129,5 +130,6 @@ export type {
   CommandDef, CommandArgs, CommandResponse, MenuOption, ListItem,
   SecurityService, NotificationService, UsageService,
   SpeechServiceInterface, TunnelServiceInterface, ContextService,
+  FieldDef,
 } from './plugin/types.js'
 export { PRODUCT_GUIDE } from '../data/product-guide.js'

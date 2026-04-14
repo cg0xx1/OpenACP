@@ -1,20 +1,41 @@
+/**
+ * Agent dependency metadata, capabilities, and integration specs.
+ *
+ * This module contains static knowledge about each supported agent:
+ *  - **Dependencies** — external CLIs an agent requires (e.g., claude-acp needs the Claude CLI)
+ *  - **Setup info** — post-install instructions shown to the user
+ *  - **Capabilities** — whether an agent supports resume, and integration specs
+ *    for hooks/plugins that enable cross-agent coordination
+ *  - **Aliases** — maps registry IDs to short names (e.g., "claude-acp" → "claude")
+ */
+
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AvailabilityResult } from "../types.js";
 
+/** An external CLI binary that an agent requires to function. */
 export interface AgentDependency {
   command: string;
   label: string;
   installHint: string;
 }
 
+/** Post-install setup instructions displayed to the user after agent installation. */
 export interface AgentSetupInfo {
   setupSteps: string[];
   loginCommand?: string;
 }
 
-export interface AgentIntegrationSpec {
+/**
+ * Integration spec for agents that support hooks-based coordination.
+ *
+ * Hooks let OpenACP inject behavior into the agent's lifecycle (e.g.,
+ * intercepting prompts for multi-agent handoff). The spec describes
+ * where the agent's settings and hooks directories live.
+ */
+export interface AgentHooksIntegrationSpec {
+  strategy: "hooks";
   hookEvent: string;
   settingsPath: string;
   settingsFormat: "settings_json" | "hooks_json";
@@ -28,6 +49,20 @@ export interface AgentIntegrationSpec {
   workingDirVar?: string;
 }
 
+/** Integration spec for agents that support plugin-based coordination (e.g., opencode). */
+export interface AgentPluginIntegrationSpec {
+  strategy: "plugin";
+  pluginProvider: "opencode";
+  commandsPath: string;
+  pluginsPath: string;
+  handoffCommandName: string;
+  handoffCommandFile: string;
+  pluginFileName: string;
+}
+
+export type AgentIntegrationSpec = AgentHooksIntegrationSpec | AgentPluginIntegrationSpec;
+
+/** Static capability metadata for an agent (resume support, integration spec). */
 export interface AgentCapability {
   supportsResume: boolean;
   resumeCommand?: (sessionId: string) => string;
@@ -179,6 +214,7 @@ const AGENT_SETUP: Record<string, AgentSetupInfo> = {
   },
 };
 
+/** Get post-install setup instructions for an agent, if any. */
 export function getAgentSetup(registryId: string): AgentSetupInfo | undefined {
   return AGENT_SETUP[registryId];
 }
@@ -188,6 +224,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
     supportsResume: true,
     resumeCommand: (sid) => `claude --resume ${sid}`,
     integration: {
+      strategy: "hooks",
       hookEvent: "UserPromptSubmit",
       settingsPath: "~/.claude/settings.json",
       settingsFormat: "settings_json",
@@ -205,6 +242,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
     supportsResume: true,
     resumeCommand: (sid) => `cursor --resume ${sid}`,
     integration: {
+      strategy: "hooks",
       hookEvent: "beforeSubmitPrompt",
       settingsPath: "~/.cursor/hooks.json",
       settingsFormat: "hooks_json",
@@ -220,6 +258,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
     supportsResume: true,
     resumeCommand: (sid) => `gemini --resume ${sid}`,
     integration: {
+      strategy: "hooks",
       hookEvent: "BeforeAgent",
       settingsPath: "~/.gemini/settings.json",
       settingsFormat: "settings_json",
@@ -232,6 +271,7 @@ const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
     supportsResume: true,
     resumeCommand: () => `cline --continue`,
     integration: {
+      strategy: "hooks",
       hookEvent: "TaskStart",
       settingsPath: "~/.cline/settings.json",
       settingsFormat: "settings_json",
@@ -252,8 +292,22 @@ const AGENT_CAPABILITIES: Record<string, AgentCapability> = {
     supportsResume: true,
     resumeCommand: (sid) => `amp threads continue ${sid}`,
   },
+  opencode: {
+    supportsResume: true,
+    resumeCommand: (sid) => `opencode --session ${sid}`,
+    integration: {
+      strategy: "plugin",
+      pluginProvider: "opencode",
+      commandsPath: "~/.config/opencode/commands/",
+      pluginsPath: "~/.config/opencode/plugins/",
+      handoffCommandName: "openacp:handoff",
+      handoffCommandFile: "openacp-handoff.md",
+      pluginFileName: "openacp-handoff.js",
+    },
+  },
 };
 
+/** Maps registry IDs to short user-facing names used as keys in agents.json. */
 export const REGISTRY_AGENT_ALIASES: Record<string, string> = {
   "claude-acp": "claude",
   "codex-acp": "codex",
@@ -266,24 +320,34 @@ export const REGISTRY_AGENT_ALIASES: Record<string, string> = {
   "qwen-code": "qwen",
 };
 
+/** Convert a registry ID to its short alias, or return the ID if no alias exists. */
 export function getAgentAlias(registryId: string): string {
   return REGISTRY_AGENT_ALIASES[registryId] ?? registryId;
 }
 
+/** Get the external CLI dependencies for an agent (empty if none required). */
 export function getAgentDependencies(registryId: string): AgentDependency[] {
   return AGENT_DEPENDENCIES[registryId] ?? [];
 }
 
+/** Look up static capabilities for an agent by its short name. */
 export function getAgentCapabilities(agentName: string): AgentCapability {
   return AGENT_CAPABILITIES[agentName] ?? { supportsResume: false };
 }
 
+/** List agent names that have a hooks or plugin integration spec defined. */
 export function listAgentsWithIntegration(): string[] {
   return Object.entries(AGENT_CAPABILITIES)
     .filter(([, cap]) => cap.integration != null)
     .map(([key]) => key);
 }
 
+/**
+ * Check if a command is available on the system.
+ *
+ * Checks PATH via `which` first, then walks up from cwd looking for
+ * the command in `node_modules/.bin/` directories.
+ */
 export function commandExists(cmd: string): boolean {
   try {
     execFileSync("which", [cmd], { stdio: "pipe" });
@@ -303,6 +367,7 @@ export function commandExists(cmd: string): boolean {
   return false;
 }
 
+/** Check if all external dependencies for an agent are installed on this system. */
 export function checkDependencies(registryId: string): AvailabilityResult {
   const deps = getAgentDependencies(registryId);
   if (deps.length === 0) return { available: true };
@@ -317,6 +382,7 @@ export function checkDependencies(registryId: string): AvailabilityResult {
   };
 }
 
+/** Check if a package runner (npx or uvx) is available on this system. */
 export function checkRuntimeAvailable(runtime: "npx" | "uvx"): boolean {
   return commandExists(runtime);
 }

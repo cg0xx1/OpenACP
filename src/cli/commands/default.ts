@@ -1,20 +1,31 @@
 import { checkAndPromptUpdate } from '../version.js'
 import { printHelp } from './help.js'
 import path from 'node:path'
-import os from 'node:os'
-import fs from 'node:fs'
 import { createInstanceContext, getGlobalRoot } from '../../core/instance/instance-context.js'
 import { InstanceRegistry } from '../../core/instance/instance-registry.js'
 import { randomUUID } from 'node:crypto'
 import { printInstanceHint } from '../instance-hint.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
+import { resolveInstanceId } from '../resolve-instance-id.js'
 
+/**
+ * The default command — runs when no recognized subcommand is given.
+ *
+ * Behavior:
+ * - If no config exists: runs the setup wizard, then starts the server.
+ * - If config exists and runMode is 'daemon': starts the daemon. If daemon is already
+ *   running, shows an interactive menu (restart, stop, logs, etc.).
+ * - If config exists and runMode is 'foreground' (or --foreground flag): starts the
+ *   server in-process and blocks until shutdown.
+ *
+ * Also handles unknown command detection (typos) before reaching this path.
+ */
 export async function cmdDefault(command: string | undefined, instanceRoot?: string): Promise<void> {
   const args = command ? [command] : []
   const json = isJsonMode(args)
   if (json) await muteForJson()
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const pluginsDataDir = path.join(root, 'plugins', 'data')
   const registryPath = path.join(root, 'plugins.json')
   const forceForeground = command === '--foreground'
@@ -72,23 +83,18 @@ export async function cmdDefault(command: string | undefined, instanceRoot?: str
       console.error(result.error)
       process.exit(1)
     }
+    // Install autostart before JSON output (jsonSuccess exits)
+    const instanceId = resolveInstanceId(root)
+    try {
+      const { installAutoStart } = await import('../autostart.js')
+      const autoResult = installAutoStart(config.logging.logDir, root, instanceId)
+      if (!autoResult.success) console.warn(`Warning: auto-start not enabled: ${autoResult.error}`)
+    } catch (e) { console.warn(`Warning: auto-start not enabled: ${(e as Error).message}`) }
+
     if (json) {
-      // Resolve instanceId from registry if available
-      let instanceId: string = path.basename(root)
-      try {
-        const reg = new InstanceRegistry(path.join(getGlobalRoot(), 'instances.json'))
-        reg.load()
-        const entry = reg.getByRoot(root)
-        if (entry) instanceId = entry.id
-      } catch {}
-      // Try to read actual port from api.port file written by the server after startup
-      let port: number | null = null
-      try {
-        const portStr = fs.readFileSync(path.join(root, 'api.port'), 'utf-8').trim()
-        port = parseInt(portStr) || null
-      } catch {
-        port = config.api.port ?? null
-      }
+      // Wait for the daemon to write api.port (up to 5 seconds)
+      const { waitForPortFile } = await import('../api-client.js')
+      const port = await waitForPortFile(path.join(root, 'api.port')) ?? 21420
       jsonSuccess({
         pid: result.pid,
         instanceId,
@@ -98,6 +104,7 @@ export async function cmdDefault(command: string | undefined, instanceRoot?: str
         port,
       })
     }
+
     printInstanceHint(root)
     console.log(`OpenACP daemon started (PID ${result.pid})`)
     return
@@ -114,18 +121,12 @@ export async function cmdDefault(command: string | undefined, instanceRoot?: str
   const ctx = createInstanceContext({
     id: instanceId,
     root,
-    isGlobal: root === getGlobalRoot(),
   })
 
   if (json) {
-    // For foreground mode, output JSON before starting the server
-    let port: number | null = null
-    try {
-      const portStr = fs.readFileSync(path.join(root, 'api.port'), 'utf-8').trim()
-      port = parseInt(portStr) || null
-    } catch {
-      port = config.api.port ?? null
-    }
+    // For foreground mode, JSON is output before startServer() so the actual bound port
+    // is not yet known. Callers should poll api.port for the real value after startup.
+    const port = 21420
     jsonSuccess({
       pid: process.pid,
       instanceId,
@@ -139,6 +140,10 @@ export async function cmdDefault(command: string | undefined, instanceRoot?: str
   await startServer({ instanceContext: ctx })
 }
 
+/**
+ * Show an interactive menu when the user runs `openacp` and the daemon is already running.
+ * Falls back to a plain text suggestion on non-TTY (scripts, CI).
+ */
 async function showAlreadyRunningMenu(root: string): Promise<void> {
   const { formatInstanceStatus } = await import('./status.js')
 

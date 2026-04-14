@@ -68,7 +68,7 @@ describe('ConfigManager new methods', () => {
           claude: { command: 'claude-agent-acp', args: [], env: {} },
         },
         defaultAgent: 'claude',
-        workspace: { baseDir: '~/openacp-workspace' },
+        workspace: {},
         security: {
           allowedUserIds: [],
           maxConcurrentSessions: 5,
@@ -91,7 +91,7 @@ describe('ConfigManager new methods', () => {
         channels: { telegram: { enabled: true, botToken: 't', chatId: 1, notificationTopicId: null, assistantTopicId: null } },
         agents: { a: { command: 'a', args: [], env: {} } },
         defaultAgent: 'a',
-        workspace: { baseDir: '~' },
+        workspace: {},
         security: { allowedUserIds: [], maxConcurrentSessions: 1, sessionTimeoutMinutes: 1 },
       })
 

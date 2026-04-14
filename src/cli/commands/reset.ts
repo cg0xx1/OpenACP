@@ -1,5 +1,11 @@
 import { wantsHelp } from './helpers.js'
 
+/**
+ * `openacp reset` — Destructively delete all instance data and restart fresh.
+ *
+ * Requires the daemon to be stopped first. Prompts for confirmation before deletion.
+ * Also removes the autostart service so the deleted instance doesn't get restarted.
+ */
 export async function cmdReset(args: string[] = [], instanceRoot?: string): Promise<void> {
   if (wantsHelp(args)) {
     console.log(`
@@ -15,9 +21,8 @@ start fresh with the setup wizard. The daemon must be stopped first.
 `)
     return
   }
-  const os = await import('node:os')
   const path = await import('node:path')
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
 
   const { getStatus, getPidPath } = await import('../daemon.js')
   const status = getStatus(getPidPath(root))
@@ -36,8 +41,11 @@ start fresh with the setup wizard. The daemon must be stopped first.
     return
   }
 
-  const { uninstallAutoStart } = await import('../autostart.js')
-  uninstallAutoStart()
+  try {
+    const { uninstallAutoStart } = await import('../autostart.js')
+    const { resolveInstanceId } = await import('../resolve-instance-id.js')
+    uninstallAutoStart(resolveInstanceId(root))
+  } catch { /* non-fatal — proceed with deletion even if autostart removal fails */ }
 
   const fs = await import('node:fs')
   fs.rmSync(root, { recursive: true, force: true })

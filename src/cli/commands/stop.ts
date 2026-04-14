@@ -1,13 +1,18 @@
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
-import path from 'node:path'
-import os from 'node:os'
+import { resolveInstanceId } from '../resolve-instance-id.js'
 
+/**
+ * `openacp stop` — Stop the running daemon.
+ *
+ * Sends SIGTERM and waits for the process to exit. Also uninstalls the autostart
+ * service so the daemon stays stopped after the next login/reboot.
+ */
 export async function cmdStop(args: string[] = [], instanceRoot?: string): Promise<void> {
   const json = isJsonMode(args)
   if (json) await muteForJson()
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   if (!json && wantsHelp(args)) {
     console.log(`
 \x1b[1mopenacp stop\x1b[0m — Stop the background daemon
@@ -26,6 +31,12 @@ Sends a stop signal to the running OpenACP daemon process.
   const { stopDaemon, getPidPath } = await import('../daemon.js')
   const result = await stopDaemon(getPidPath(root), root)
   if (result.stopped) {
+    // Remove autostart so daemon stays stopped after reboot
+    try {
+      const { uninstallAutoStart } = await import('../autostart.js')
+      uninstallAutoStart(resolveInstanceId(root))
+    } catch { /* non-fatal */ }
+
     if (json) jsonSuccess({ stopped: true, pid: result.pid })
     console.log(`OpenACP daemon stopped (was PID ${result.pid})`)
   } else {

@@ -1,9 +1,14 @@
 import { wantsHelp } from './helpers.js'
 import path from 'node:path'
-import os from 'node:os'
 
+/**
+ * `openacp attach` — Attach to a running daemon: show status then stream logs.
+ *
+ * Combines `openacp status` output with `tail -f` on the log file.
+ * Exits if the daemon is not running. Press Ctrl+C to detach.
+ */
 export async function cmdAttach(args: string[] = [], instanceRoot?: string): Promise<void> {
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   if (wantsHelp(args)) {
     console.log(`
 \x1b[1mopenacp attach\x1b[0m — Attach to a running daemon

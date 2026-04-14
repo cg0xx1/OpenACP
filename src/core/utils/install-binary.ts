@@ -2,15 +2,22 @@ import fs from 'node:fs'
 import path from 'node:path'
 import https from 'node:https'
 import os from 'node:os'
-import { execSync } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import { createChildLogger } from './log.js'
 import { commandExists } from '../agents/agent-dependencies.js'
+import { MAX_DOWNLOAD_SIZE, validateTarContents } from '../agents/agent-installer.js'
 
 const log = createChildLogger({ module: 'binary-installer' })
 
 const DEFAULT_BIN_DIR = path.join(os.homedir(), '.openacp', 'bin')
 const IS_WINDOWS = os.platform() === 'win32'
 
+/**
+ * Specification for a binary that can be auto-downloaded from GitHub releases.
+ *
+ * Used by ensureBinary() to resolve the correct download URL for the
+ * current platform/architecture and handle archive extraction if needed.
+ */
 export interface BinarySpec {
   name: string
   /** GitHub base URL for releases, e.g. "https://github.com/jqlang/jq/releases/latest/download" */
@@ -21,7 +28,12 @@ export interface BinarySpec {
   isArchive?: (url: string) => boolean
 }
 
-function downloadFile(url: string, dest: string): Promise<string> {
+/**
+ * Download a file via HTTPS with redirect following and size limit enforcement.
+ *
+ * Cleans up partial downloads on failure to avoid leaving corrupt files.
+ */
+function downloadFile(url: string, dest: string, maxRedirects = 10): Promise<string> {
   return new Promise((resolve, reject) => {
     const file = fs.createWriteStream(dest)
 
@@ -31,9 +43,16 @@ function downloadFile(url: string, dest: string): Promise<string> {
 
     https.get(url, (response) => {
       if (response.statusCode === 301 || response.statusCode === 302) {
+        if (maxRedirects <= 0) {
+          file.close(() => {
+            cleanup()
+            reject(new Error('Too many redirects'))
+          })
+          return
+        }
         file.close(() => {
           cleanup()
-          downloadFile(response.headers.location!, dest).then(resolve).catch(reject)
+          downloadFile(response.headers.location!, dest, maxRedirects - 1).then(resolve).catch(reject)
         })
         return
       }
@@ -45,6 +64,21 @@ function downloadFile(url: string, dest: string): Promise<string> {
         })
         return
       }
+
+      // Enforce size limit to prevent malicious or oversized downloads
+      let totalBytes = 0
+      const request = response
+
+      response.on('data', (chunk: Buffer) => {
+        totalBytes += chunk.length
+        if (totalBytes > MAX_DOWNLOAD_SIZE) {
+          request.destroy()
+          file.close(() => {
+            cleanup()
+            reject(new Error(`Download exceeds size limit of ${MAX_DOWNLOAD_SIZE} bytes`))
+          })
+        }
+      })
 
       response.pipe(file)
       file.on('finish', () => file.close(() => resolve(dest)))
@@ -63,6 +97,7 @@ function downloadFile(url: string, dest: string): Promise<string> {
   })
 }
 
+/** Resolve the download URL for the current platform and architecture. */
 function getDownloadUrl(spec: BinarySpec): string {
   const platform = os.platform()
   const arch = os.arch()
@@ -74,10 +109,15 @@ function getDownloadUrl(spec: BinarySpec): string {
 }
 
 /**
- * Ensure a binary is available.
- * 1. Check PATH first (respects user's system install)
- * 2. Check ~/.openacp/bin/
- * 3. Download from GitHub releases
+ * Ensure a binary is available, downloading it from GitHub if needed.
+ *
+ * Resolution order:
+ *   1. System PATH — respects user's existing install
+ *   2. ~/.openacp/bin/ — previously downloaded by OpenACP
+ *   3. Download from GitHub releases — fetch, verify, extract if needed
+ *
+ * For archives (.tgz), tar contents are validated before extraction
+ * to prevent path traversal attacks.
  */
 export async function ensureBinary(spec: BinarySpec, binDir?: string): Promise<string> {
   const resolvedBinDir = binDir ?? DEFAULT_BIN_DIR
@@ -108,7 +148,11 @@ export async function ensureBinary(spec: BinarySpec, binDir?: string): Promise<s
   await downloadFile(url, downloadDest)
 
   if (isArchive) {
-    execSync(`tar -xzf "${downloadDest}" -C "${resolvedBinDir}"`, { stdio: 'pipe' })
+    // Validate tar contents before extraction to prevent path traversal
+    const listing = execFileSync('tar', ['-tf', downloadDest], { stdio: 'pipe' })
+      .toString().trim().split("\n").filter(Boolean);
+    validateTarContents(listing, resolvedBinDir);
+    execFileSync('tar', ['-xzf', downloadDest, '-C', resolvedBinDir], { stdio: 'pipe' })
     try { fs.unlinkSync(downloadDest) } catch { /* ignore */ }
   }
 

@@ -1,7 +1,21 @@
+import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import type { RouteDeps } from './types.js';
 import { requireScopes } from '../middleware/auth.js';
 
+const AddTunnelBodySchema = z.object({
+  port: z.number().int().min(1).max(65535),
+  label: z.string().max(200).optional(),
+  sessionId: z.string().max(200).optional(),
+});
+
+/**
+ * Tunnel management routes under `/api/v1/tunnel`.
+ *
+ * Read operations (status, list) require `system:health` scope.
+ * Mutations (add, stop) require `system:admin` scope.
+ * All routes return 400 if the tunnel service is not enabled.
+ */
 export async function tunnelRoutes(
   app: FastifyInstance,
   deps: RouteDeps,
@@ -13,7 +27,7 @@ export async function tunnelRoutes(
       return {
         enabled: true,
         url: tunnel.getPublicUrl(),
-        provider: deps.core.configManager.get().tunnel.provider,
+        provider: 'cloudflare',
       };
     }
     return { enabled: false };
@@ -37,16 +51,11 @@ export async function tunnelRoutes(
         .send({ error: 'Tunnel service is not enabled' });
     }
 
-    const body = request.body as {
-      port?: number;
-      label?: string;
-      sessionId?: string;
-    };
-    if (!body || !body.port || typeof body.port !== 'number') {
-      return reply
-        .status(400)
-        .send({ error: 'port is required and must be a number' });
+    const parsed = AddTunnelBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: parsed.error.errors[0]?.message ?? 'Invalid request' });
     }
+    const body = parsed.data;
 
     try {
       const entry = await tunnel.addTunnel(body.port, {
@@ -70,6 +79,9 @@ export async function tunnelRoutes(
         .send({ error: 'Tunnel service is not enabled' });
     }
     const port = parseInt(request.params.port, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return reply.status(400).send({ error: 'port must be an integer between 1 and 65535' });
+    }
     try {
       await tunnel.stopTunnel(port);
       return { ok: true };

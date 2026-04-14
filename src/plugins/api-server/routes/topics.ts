@@ -1,8 +1,24 @@
+import { z } from 'zod';
 import type { FastifyInstance } from 'fastify';
 import type { RouteDeps } from './types.js';
 import { requireScopes } from '../middleware/auth.js';
 import { SessionIdParamSchema } from '../schemas/sessions.js';
 
+const VALID_TOPIC_STATUSES = ['active', 'finished', 'cancelled', 'error', 'archived'] as const;
+
+const TopicCleanupBodySchema = z.object({
+  statuses: z.array(z.enum(VALID_TOPIC_STATUSES)).optional(),
+});
+
+/**
+ * Telegram topic management routes under `/api/v1/topics`.
+ *
+ * Topics are Telegram forum threads created per session. These routes let the App
+ * UI manage topic lifecycle without going through the Telegram adapter directly.
+ * All routes require `sessions:write` scope and return 501 if no topic manager is loaded.
+ *
+ * `DELETE /:sessionId` with `?force=true` bypasses the active-session confirmation gate.
+ */
 export async function topicRoutes(
   app: FastifyInstance,
   deps: RouteDeps,
@@ -15,9 +31,12 @@ export async function topicRoutes(
         .send({ error: 'Topic management not available' });
     }
     const statusParam = (request.query as Record<string, string>).status;
-    const filter = statusParam
-      ? { statuses: statusParam.split(',') }
-      : undefined;
+    let filter: { statuses: string[] } | undefined
+    if (statusParam) {
+      const parsed = statusParam.split(',').map(s => s.trim())
+      const valid = parsed.filter(s => (VALID_TOPIC_STATUSES as readonly string[]).includes(s))
+      filter = valid.length > 0 ? { statuses: valid } : undefined
+    }
     const topics = deps.topicManager.listTopics(filter);
     return { topics };
   });
@@ -29,7 +48,7 @@ export async function topicRoutes(
         .status(501)
         .send({ error: 'Topic management not available' });
     }
-    const body = (request.body ?? {}) as { statuses?: string[] };
+    const body = TopicCleanupBodySchema.parse(request.body ?? {});
     const result = await deps.topicManager.cleanup(body.statuses);
     return result;
   });

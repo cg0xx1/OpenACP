@@ -6,7 +6,10 @@ import { ConnectionManager } from './connection-manager.js';
 import { EventBuffer } from './event-buffer.js';
 import { SSEAdapter } from './adapter.js';
 import { sseRoutes } from './routes.js';
+import { BusEvent } from '../../core/events.js';
 
+// Module-level references held for teardown — the plugin lifecycle doesn't
+// pass instances between setup() and teardown(), so we store them here.
 let _adapter: SSEAdapter | null = null;
 let _connectionManager: ConnectionManager | null = null;
 
@@ -44,11 +47,11 @@ const plugin: OpenACPPlugin = {
     const commandRegistry = ctx.getService<CommandRegistry>('command-registry');
 
     // Clean up event buffer when a session ends or is deleted to prevent unbounded memory growth
-    ctx.on('session:deleted', (data: unknown) => {
+    ctx.on(BusEvent.SESSION_DELETED, (data: unknown) => {
       const { sessionId } = data as { sessionId: string };
       eventBuffer.cleanup(sessionId);
     });
-    ctx.on('session:ended', (data: unknown) => {
+    ctx.on(BusEvent.SESSION_ENDED, (data: unknown) => {
       const { sessionId } = data as { sessionId: string };
       eventBuffer.cleanup(sessionId);
     });

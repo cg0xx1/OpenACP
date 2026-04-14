@@ -116,7 +116,7 @@ describe("OpenACPCore.createSession", () => {
     expect(session).toBeInstanceOf(Session);
     expect(session.channelId).toBe("telegram");
     expect(session.agentName).toBe("claude");
-    expect(core.agentManager.spawn).toHaveBeenCalledWith("claude", "/tmp/test");
+    expect(core.agentManager.spawn).toHaveBeenCalledWith("claude", "/tmp/test", []);
   });
 
   it("resumes agent when resumeAgentSessionId is provided", async () => {
@@ -131,6 +131,7 @@ describe("OpenACPCore.createSession", () => {
       "claude",
       "/tmp/test",
       "old-session-id",
+      [],
     );
     expect(session.agentSessionId).toBe("agent-session-1");
   });

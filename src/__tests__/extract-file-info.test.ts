@@ -211,5 +211,92 @@ describe('extractFileInfo', () => {
         oldContent: 'old',
       })
     })
+
+    it('extracts apply_patch file info from rawOutput metadata files', () => {
+      const rawOutput = {
+        metadata: {
+          files: [
+            {
+              filePath: '/src/main.ts',
+              before: 'const a = 1',
+              after: 'const a = 2',
+            },
+          ],
+        },
+      }
+
+      const result = extractFileInfo('apply_patch', 'other', null, null, null, rawOutput)
+      expect(result).toMatchObject({
+        filePath: '/src/main.ts',
+        content: 'const a = 2',
+        oldContent: 'const a = 1',
+      })
+    })
+
+    it('returns null for malformed apply_patch rawOutput', () => {
+      const rawOutput = {
+        metadata: {
+          files: [
+            { additions: 1, deletions: 1 },
+            { filePath: 123, after: 456 },
+          ],
+        },
+      }
+
+      const result = extractFileInfo('apply_patch', 'other', null, null, null, rawOutput)
+      expect(result).toBeNull()
+    })
+
+    it('extracts apply_patch rawOutput when tool_update name is missing but patchText exists', () => {
+      const rawInput = { patchText: '*** Begin Patch\n*** Update File: src/main.ts\n*** End Patch' }
+      const rawOutput = {
+        metadata: {
+          files: [
+            {
+              filePath: '/src/main.ts',
+              before: 'const a = 1',
+              after: 'const a = 2',
+            },
+          ],
+        },
+      }
+
+      const result = extractFileInfo('', 'other', null, rawInput, null, rawOutput)
+      expect(result).toMatchObject({
+        filePath: '/src/main.ts',
+        content: 'const a = 2',
+        oldContent: 'const a = 1',
+      })
+    })
+
+    it('prefers apply_patch file with largest diff score for viewer target', () => {
+      const rawOutput = {
+        metadata: {
+          files: [
+            {
+              filePath: '/src/small.ts',
+              before: 'a',
+              after: 'b',
+              additions: 1,
+              deletions: 1,
+            },
+            {
+              filePath: '/src/large.ts',
+              before: 'x',
+              after: 'y',
+              additions: 8,
+              deletions: 3,
+            },
+          ],
+        },
+      }
+
+      const result = extractFileInfo('apply_patch', 'other', null, null, null, rawOutput)
+      expect(result).toMatchObject({
+        filePath: '/src/large.ts',
+        content: 'y',
+        oldContent: 'x',
+      })
+    })
   })
 })

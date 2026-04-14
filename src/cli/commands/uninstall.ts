@@ -1,15 +1,19 @@
 import { execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
+/**
+ * `openacp uninstall` — Remove an adapter plugin from the instance's plugins directory.
+ *
+ * Delegates to `npm uninstall` to remove the package from the plugins directory.
+ */
 export async function cmdUninstall(args: string[], instanceRoot?: string): Promise<void> {
   const json = isJsonMode(args)
   if (json) await muteForJson()
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const pluginsDir = path.join(root, 'plugins')
 
   if (!json && wantsHelp(args)) {
@@ -27,7 +31,7 @@ export async function cmdUninstall(args: string[], instanceRoot?: string): Promi
   -h, --help      Show this help message
 
 \x1b[1mExamples:\x1b[0m
-  openacp uninstall @openacp/adapter-discord
+  openacp uninstall @openacp/discord-adapter
 `)
     return
   }

@@ -5,6 +5,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
+/**
+ * `openacp status` — Show daemon status for one or all instances.
+ *
+ * Supports:
+ * - Default: status of the resolved instance root
+ * - --all: table listing all registry entries
+ * - --id <id>: status of a specific instance by ID
+ */
 export async function cmdStatus(args: string[] = [], instanceRoot?: string): Promise<void> {
   const json = isJsonMode(args)
   if (json) await muteForJson()
@@ -23,7 +31,7 @@ export async function cmdStatus(args: string[] = [], instanceRoot?: string): Pro
   }
 
   // Default: show status of current/specified instance
-  const root = instanceRoot ?? getGlobalRoot()
+  const root = instanceRoot!
   await showSingleInstance(root, json)
 }
 
@@ -119,15 +127,26 @@ async function showSingleInstance(root: string, json = false): Promise<void> {
   }
 }
 
+/** Runtime information about a single instance, read directly from its data files. */
 export interface InstanceInfo {
   name: string | null
+  /** PID of the running daemon, or null if not running. */
   pid: number | null
   apiPort: number | null
+  /** Port of the system-level tunnel (from tunnels.json), or null if not active. */
   tunnelPort: number | null
   runMode: string | null
+  /** IDs of enabled messaging channel adapters (e.g. ['telegram', 'discord']). */
   channels: string[]
 }
 
+/**
+ * Read instance runtime information directly from the instance root's data files.
+ *
+ * Does not require the daemon to be running — reads config.json, openacp.pid,
+ * api.port, tunnels.json, and plugins.json from disk. Uses `process.kill(pid, 0)`
+ * as a liveness check for the recorded PID.
+ */
 export function readInstanceInfo(root: string): InstanceInfo {
   const result: InstanceInfo = {
     name: null, pid: null, apiPort: null,
@@ -167,10 +186,14 @@ export function readInstanceInfo(root: string): InstanceInfo {
   // Read enabled channels from plugins.json
   try {
     const plugins = JSON.parse(fs.readFileSync(path.join(root, 'plugins.json'), 'utf-8'))
-    const adapters = ['@openacp/telegram', '@openacp/discord', '@openacp/slack']
-    for (const name of adapters) {
-      if (plugins.installed?.[name] && plugins.installed[name].enabled !== false) {
-        result.channels.push(name.replace('@openacp/', ''))
+    const adapterMap: Array<{ pluginName: string; channelId: string }> = [
+      { pluginName: '@openacp/telegram', channelId: 'telegram' },
+      { pluginName: '@openacp/discord-adapter', channelId: 'discord' },
+      { pluginName: '@openacp/slack-adapter', channelId: 'slack' },
+    ]
+    for (const { pluginName, channelId } of adapterMap) {
+      if (plugins.installed?.[pluginName] && plugins.installed[pluginName].enabled !== false) {
+        result.channels.push(channelId)
       }
     }
   } catch {}
@@ -178,17 +201,20 @@ export function readInstanceInfo(root: string): InstanceInfo {
   return result
 }
 
+/**
+ * Format instance status as display lines for use in `openacp attach` and `cmdDefault`.
+ * Returns null if the daemon is not running (nothing to show).
+ */
 export function formatInstanceStatus(root: string): { info: InstanceInfo; lines: string[] } | null {
   const info = readInstanceInfo(root)
   if (!info.pid) return null
 
-  const isGlobal = root === getGlobalRoot()
-  const displayPath = root.replace(os.homedir(), '~')
-  const label = isGlobal ? 'global' : 'local'
+  const workspaceDir = path.dirname(root)
+  const displayPath = workspaceDir.replace(os.homedir(), '~')
 
   const lines: string[] = []
   lines.push(`  PID:       ${info.pid}`)
-  lines.push(`  Workspace: ${info.name ?? 'unknown'} (${label} — ${displayPath})`)
+  lines.push(`  Workspace: ${info.name ?? 'unknown'} (${displayPath})`)
   lines.push(`  Mode:      ${info.runMode ?? 'unknown'}`)
   if (info.channels.length > 0) lines.push(`  Channels:  ${info.channels.join(', ')}`)
   if (info.apiPort) lines.push(`  API:       port ${info.apiPort}`)

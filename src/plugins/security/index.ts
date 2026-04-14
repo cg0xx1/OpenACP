@@ -2,6 +2,7 @@ import type { OpenACPPlugin, InstallContext, MiddlewarePayloadMap } from '../../
 import { SecurityGuard } from './security-guard.js'
 import type { SecurityConfig } from './security-guard.js'
 import type { IncomingMessage } from '../../core/types.js'
+import { Hook } from '../../core/events.js'
 
 // Structural type for the core fields SecurityGuard needs, avoiding
 // a direct dependency on OpenACPCore's full interface.
@@ -18,32 +19,15 @@ function createSecurityPlugin(): OpenACPPlugin {
     description: 'User access control and session limits',
     essential: false,
     permissions: ['services:register', 'middleware:register', 'kernel:access', 'commands:register'],
+    // These keys are propagated to child plugin configs so adapters can read them directly.
     inheritableKeys: ['allowedUserIds', 'maxConcurrentSessions', 'sessionTimeoutMinutes'],
 
     async install(ctx: InstallContext) {
-      const { settings, legacyConfig, terminal } = ctx
-
-      // Migrate from legacy config if present
-      if (legacyConfig) {
-        const securityCfg = legacyConfig.security as Record<string, unknown> | undefined
-        if (securityCfg) {
-          await settings.setAll({
-            allowedUserIds: securityCfg.allowedUserIds ?? [],
-            maxConcurrentSessions: securityCfg.maxConcurrentSessions ?? 20,
-            sessionTimeoutMinutes: securityCfg.sessionTimeoutMinutes ?? 60,
-          })
-          terminal.log.success('Security settings migrated from legacy config')
-          return
-        }
-      }
-
-      // Save defaults (no interactive prompts needed)
-      await settings.setAll({
+      await ctx.settings.setAll({
         allowedUserIds: [],
         maxConcurrentSessions: 20,
         sessionTimeoutMinutes: 60,
       })
-      terminal.log.success('Security defaults saved')
     },
 
     async configure(ctx: InstallContext) {
@@ -104,10 +88,17 @@ function createSecurityPlugin(): OpenACPPlugin {
     },
 
     async setup(ctx) {
+      ctx.registerEditableFields([
+        { key: 'maxConcurrentSessions', displayName: 'Max Concurrent Sessions', type: 'number', scope: 'safe', hotReload: true },
+        { key: 'sessionTimeoutMinutes', displayName: 'Session Timeout (min)', type: 'number', scope: 'safe', hotReload: true },
+      ])
+
       const core = ctx.core as SecurityCoreAccess
       const settingsManager = core.lifecycleManager?.settingsManager
       const pluginName = ctx.pluginName
 
+      // Config is re-fetched on every call so that hot-reload changes take effect
+      // without requiring a plugin restart.
       const getSecurityConfig = async (): Promise<SecurityConfig> => {
         if (settingsManager) {
           const settings = await settingsManager.loadSettings(pluginName)
@@ -128,7 +119,7 @@ function createSecurityPlugin(): OpenACPPlugin {
       const guard = new SecurityGuard(getSecurityConfig, core.sessionManager)
 
       // Register middleware for message:incoming — block unauthorized users
-      ctx.registerMiddleware('message:incoming', {
+      ctx.registerMiddleware(Hook.MESSAGE_INCOMING, {
         handler: async (payload: MiddlewarePayloadMap['message:incoming'], next) => {
           const access = await guard.checkAccess(payload as unknown as IncomingMessage)
           if (!access.allowed) {

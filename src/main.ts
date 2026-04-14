@@ -1,5 +1,12 @@
 #!/usr/bin/env node
 
+// Server entry point — orchestrates the full startup sequence:
+//   1. Instance context resolution (finds the .openacp/ workspace root)
+//   2. Config load + Zod validation
+//   3. Plugin boot in dependency order (services → infrastructure → adapters)
+//   4. Adapter wiring from ServiceRegistry into OpenACPCore
+//   5. Signal handlers for graceful shutdown (SIGINT / SIGTERM)
+
 import path from 'node:path'
 import { ConfigManager } from './core/config/config.js'
 import type { InstanceContext } from './core/instance/instance-context.js'
@@ -14,26 +21,75 @@ import { registerSystemCommands } from './core/commands/index.js'
 import type { IChannelAdapter } from './core/channel.js'
 import type { TunnelService } from './plugins/tunnel/tunnel-service.js'
 import { InstanceRegistry } from './core/instance/instance-registry.js'
+import { PluginFieldRegistry } from './core/plugin/plugin-field-registry.js'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
+import { BusEvent } from './core/events.js'
 
+/** Exit code that signals the process manager (or self-respawn logic) to restart the server. */
 export const RESTART_EXIT_CODE = 75
+
+// Module-level guard — prevents re-entrant shutdown if a second signal arrives mid-teardown.
 let shuttingDown = false
 
-
+/**
+ * Options for programmatic server startup.
+ *
+ * All fields are optional: when omitted, startServer() resolves them
+ * from the environment (OPENACP_INSTANCE_ROOT or CWD traversal).
+ */
 export interface StartServerOptions {
+  /** Absolute path to a dev plugin directory — enables hot-reload during plugin development. */
   devPluginPath?: string
+  /** Disable file-watcher hot-reload for the dev plugin (useful in CI or when watching externally). */
   noWatch?: boolean
+  /** Pre-resolved instance context — skip the CWD/env resolution step (used by CLI and daemon child). */
   instanceContext?: InstanceContext
 }
 
+/**
+ * Starts the OpenACP server for a given instance.
+ *
+ * The startup sequence is intentionally ordered:
+ *   1. Instance context — must exist before any path resolution
+ *   2. SettingsManager + PluginRegistry — needed by setup wizard if config is missing
+ *   3. Config load — required before logger init (log level comes from config)
+ *   4. Plugin boot — services first, then infrastructure (tunnel, API), then adapters
+ *   5. Adapter wiring — adapters register as services during boot; wired after all plugins are up
+ *   6. core.start() — begins listening only after all plugins and adapters are ready
+ *
+ * Can be called programmatically (e.g., from tests or embedded use) by passing
+ * a pre-built `instanceContext`. When omitted, resolves from env or CWD.
+ */
 export async function startServer(opts?: StartServerOptions) {
-  const globalRoot = getGlobalRoot()
   if (!opts?.instanceContext) {
+    const { resolveInstanceRoot } = await import('./core/instance/instance-context.js')
+    const root = process.env.OPENACP_INSTANCE_ROOT
+      ?? resolveInstanceRoot({ cwd: process.cwd() })
+
+    if (!root) {
+      console.error(`
+  \x1b[31m✗\x1b[0m No OpenACP instance found.
+
+  startServer() requires an instance context. Options:
+
+    1. cd into a workspace directory:
+       cd ~/openacp-workspace && node dist/main.js
+
+    2. Set OPENACP_INSTANCE_ROOT:
+       OPENACP_INSTANCE_ROOT=~/openacp-workspace/.openacp node dist/main.js
+
+    3. Use the CLI (recommended):
+       openacp start --dir ~/openacp-workspace
+`)
+      process.exit(1)
+    }
+
+    const globalRoot = getGlobalRoot()
     const reg = new InstanceRegistry(path.join(globalRoot, 'instances.json'))
     reg.load()
-    const entry = reg.getByRoot(globalRoot)
-    opts = { ...opts, instanceContext: createInstanceContext({ id: entry?.id ?? randomUUID(), root: globalRoot, isGlobal: true }) }
+    const entry = reg.getByRoot(root)
+    opts = { ...opts, instanceContext: createInstanceContext({ id: entry?.id ?? randomUUID(), root }) }
   }
   const ctx = opts.instanceContext!
 
@@ -54,8 +110,10 @@ export async function startServer(opts?: StartServerOptions) {
     if (existingPid !== null && existingPid !== process.pid) {
       try {
         process.kill(existingPid, 0)
+        // Exit 0 (success) so KeepAlive: SuccessfulExit=false does NOT restart us.
+        // "Another instance is running" is not an error — we're simply not needed.
         console.error(`[startup] Another instance running (PID ${existingPid}), exiting`)
-        process.exit(1)
+        process.exit(0)
       } catch {
         console.error(`[startup] Stale PID file (PID ${existingPid} not running), overwriting`)
       }
@@ -90,7 +148,7 @@ export async function startServer(opts?: StartServerOptions) {
 
   // First boot: auto-register built-in plugins if registry is empty
   if (pluginRegistry.list().size === 0) {
-    await autoRegisterBuiltinPlugins(settingsManager, pluginRegistry, configManager)
+    await autoRegisterBuiltinPlugins(settingsManager, pluginRegistry)
   }
 
   // Show banner in foreground TTY mode (not daemon, not piped)
@@ -111,7 +169,7 @@ export async function startServer(opts?: StartServerOptions) {
   // Post-upgrade dependency check (blocking — must complete before server start)
   try {
     const { runPostUpgradeChecks } = await import('./cli/post-upgrade.js')
-    await runPostUpgradeChecks(config)
+    await runPostUpgradeChecks(config, ctx)
   } catch (err) {
     log.warn({ err }, 'Post-upgrade check failed')
   }
@@ -129,13 +187,16 @@ export async function startServer(opts?: StartServerOptions) {
   const serviceRegistry = core.lifecycleManager.serviceRegistry
   serviceRegistry.register('command-registry', commandRegistry, 'core')
 
+  const fieldRegistry = new PluginFieldRegistry()
+  serviceRegistry.register('field-registry', fieldRegistry, 'core')
+
   // 3c. Register system commands
   registerSystemCommands(commandRegistry, core)
 
   // 4. Boot all plugins (services, infrastructure, adapters)
   try {
     // Emit kernel:booted before plugin boot
-    core.eventBus.emit('kernel:booted')
+    core.eventBus.emit(BusEvent.KERNEL_BOOTED)
 
     // Pass settingsManager and pluginRegistry to LifecycleManager
     ;(core.lifecycleManager as any).settingsManager = settingsManager
@@ -265,7 +326,9 @@ export async function startServer(opts?: StartServerOptions) {
       }
     }
 
-    // Wire adapters from service registry into core (discovered dynamically)
+    // Adapters register themselves into the ServiceRegistry under the key "adapter:<name>"
+    // during their plugin setup() hook. We discover them here after all plugins have booted,
+    // then wire each one into core so it can route incoming messages and send agent responses.
     for (const { name } of serviceRegistry.list()) {
       if (!name.startsWith('adapter:')) continue
       const adapterName = name.slice('adapter:'.length)
@@ -283,9 +346,9 @@ export async function startServer(opts?: StartServerOptions) {
     }
 
     // Emit system:commands-ready with all registered commands
-    core.eventBus.emit('system:commands-ready', { commands: commandRegistry.getAll() })
+    core.eventBus.emit(BusEvent.SYSTEM_COMMANDS_READY, { commands: commandRegistry.getAll() })
 
-    core.eventBus.emit('system:ready')
+    core.eventBus.emit(BusEvent.SYSTEM_READY)
   } catch (err) {
     if (spinner) {
       spinner.fail('Plugin boot failed')
@@ -301,6 +364,13 @@ export async function startServer(opts?: StartServerOptions) {
   }
 
   // 5. Setup shutdown handler
+  // Teardown order mirrors the reverse of boot order:
+  //   notifications → sessions → lifecycle (adapters, api-server, tunnel, etc.)
+  // Notifications must fire first while the adapter is still connected.
+  // Sessions are persisted before the plugin layer tears down (some plugins
+  // handle session events during shutdown). core.stop() is intentionally
+  // NOT called — lifecycleManager.shutdown() already stops adapters, and
+  // calling core.stop() afterwards would double-stop and use already-torn-down plugins.
   const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
@@ -442,7 +512,11 @@ export async function startServer(opts?: StartServerOptions) {
       const tunnelErr = tunnelSvc.getStartError()
       const url = tunnelSvc.getPublicUrl()
       const isPublic = url && !url.startsWith('http://localhost') && !url.startsWith('http://127.0.0.1')
-      if (tunnelErr) {
+      if (tunnelErr && isPublic) {
+        // Fallback tunnel is active (e.g. OpenACP unavailable → Cloudflare)
+        warn(`Primary tunnel failed — using fallback: ${tunnelErr}`)
+        tunnelUrl = url
+      } else if (tunnelErr) {
         warn(`Tunnel failed (${tunnelErr}) — retrying in background`)
       } else if (isPublic) {
         ok('Tunnel ready')
@@ -456,8 +530,15 @@ export async function startServer(opts?: StartServerOptions) {
       ok(`${name.charAt(0).toUpperCase() + name.slice(1)} connected`)
     }
 
-    const apiSvc = core.lifecycleManager.serviceRegistry.get('api-server')
-    const apiPort = config.api?.port ?? 21420
+    const apiSvc = core.lifecycleManager.serviceRegistry.get<import('./plugins/api-server/service.js').ApiServerService>('api-server')
+    let apiPort = apiSvc ? apiSvc.getPort() : 21420
+    if (apiSvc && apiPort === 0) {
+      // Race condition: the api-server's async SYSTEM_READY handler (which calls server.start())
+      // may not have completed yet if all adapters started synchronously (e.g. SSE-only).
+      // The port file is written after the server binds — poll it for up to 3 seconds.
+      const { waitForPortFile } = await import('./cli/api-client.js')
+      apiPort = await waitForPortFile(ctx.paths.apiPort, 3000) ?? 21420
+    }
     if (apiSvc) ok(`API server on port ${apiPort}`)
 
     // Links as plain text — easily copyable
@@ -470,17 +551,16 @@ export async function startServer(opts?: StartServerOptions) {
     console.log(`\nOpenACP is running. Press Ctrl+C to stop.\n`)
     unmuteLogger()
   }
-  log.debug({ agents: Object.keys(config.agents) }, 'OpenACP started')
+  log.debug('OpenACP started')
 }
 
 /**
- * Auto-register all built-in plugins when the registry is empty (first boot with new plugin system,
- * or upgrade from legacy config). Also runs legacy config migration for each plugin.
+ * Auto-register all built-in plugins when the registry is empty (first boot with new plugin system).
+ * For each plugin that has an install() hook and no existing settings, run install() silently.
  */
 async function autoRegisterBuiltinPlugins(
   settingsManager: SettingsManager,
   pluginRegistry: PluginRegistry,
-  configManager: ConfigManager,
 ): Promise<void> {
   const allPlugins = [
     { name: '@openacp/security', version: '1.0.0', description: 'User access control and session limits' },
@@ -494,54 +574,40 @@ async function autoRegisterBuiltinPlugins(
     { name: '@openacp/telegram', version: '1.0.0', description: 'Telegram adapter with forum topics' },
   ]
 
-  // Try to read legacy config for migration
-  let legacyConfig: Record<string, unknown> | undefined
-  try {
-    const cfg = configManager.get()
-    if (cfg && typeof cfg === 'object') {
-      legacyConfig = cfg as unknown as Record<string, unknown>
-    }
-  } catch {
-    // No config loaded yet — skip migration
-  }
+  // Run install() for each plugin that has no existing settings
+  const pluginModules = await Promise.allSettled([
+    import('./plugins/security/index.js'),
+    import('./plugins/file-service/index.js'),
+    import('./plugins/context/index.js'),
+    import('./plugins/speech/index.js'),
+    import('./plugins/notifications/index.js'),
+    import('./plugins/tunnel/index.js'),
+    import('./plugins/api-server/index.js'),
+    import('./plugins/sse-adapter/index.js'),
+    import('./plugins/telegram/index.js'),
+  ])
 
-  // Run legacy migration for each plugin silently
-  if (legacyConfig) {
-    const pluginModules = await Promise.allSettled([
-      import('./plugins/security/index.js'),
-      import('./plugins/file-service/index.js'),
-      import('./plugins/context/index.js'),
-      import('./plugins/speech/index.js'),
-      import('./plugins/notifications/index.js'),
-      import('./plugins/tunnel/index.js'),
-      import('./plugins/api-server/index.js'),
-      import('./plugins/sse-adapter/index.js'),
-      import('./plugins/telegram/index.js'),
-    ])
+  for (const result of pluginModules) {
+    if (result.status !== 'fulfilled') continue
+    const plugin = result.value.default
+    if (plugin?.install) {
+      try {
+        // Check if settings already exist
+        const existing = await settingsManager.loadSettings(plugin.name)
+        if (Object.keys(existing).length > 0) continue
 
-    for (const result of pluginModules) {
-      if (result.status !== 'fulfilled') continue
-      const plugin = result.value.default
-      if (plugin?.install) {
-        try {
-          // Check if settings already exist
-          const existing = await settingsManager.loadSettings(plugin.name)
-          if (Object.keys(existing).length > 0) continue
-
-          // Create a silent install context for migration only
-          const { createInstallContext } = await import('./core/plugin/install-context.js')
-          const ctx = createInstallContext({
-            pluginName: plugin.name,
-            settingsManager,
-            basePath: settingsManager.getBasePath(),
-            legacyConfig,
-          })
-          // Override terminal to be silent
-          ctx.terminal = createSilentTerminal()
-          await plugin.install(ctx)
-        } catch {
-          // Silently skip — migration is best-effort
-        }
+        // Create a silent install context
+        const { createInstallContext } = await import('./core/plugin/install-context.js')
+        const ctx = createInstallContext({
+          pluginName: plugin.name,
+          settingsManager,
+          basePath: settingsManager.getBasePath(),
+        })
+        // Override terminal to be silent
+        ctx.terminal = createSilentTerminal()
+        await plugin.install(ctx)
+      } catch {
+        // Silently skip — install is best-effort
       }
     }
   }

@@ -16,14 +16,16 @@ export async function promptForInstance(opts: {
   const globalRoot = getGlobalRoot()
   const globalConfigExists = fs.existsSync(path.join(globalRoot, 'config.json'))
   const cwd = process.cwd()
-  const localRoot = path.join(cwd, '.openacp')
+  const isHomeDir = path.resolve(cwd) === path.resolve(os.homedir())
 
-  // Nothing exists anywhere — go to global (setup wizard will handle first-time)
-  if (!globalConfigExists) return globalRoot
+  // If CWD is home dir, redirect to ~/openacp-workspace (home dir conflicts with shared store)
+  const defaultWorkspace = path.join(os.homedir(), 'openacp-workspace')
+  const createRoot = isHomeDir
+    ? path.join(defaultWorkspace, '.openacp')
+    : path.join(cwd, '.openacp')
 
-  // Non-interactive: default to global
-  const isTTY = process.stdin.isTTY && process.stdout.isTTY
-  if (!isTTY) return globalRoot
+  // Walk up from CWD to find nearest parent .openacp/
+  const detectedParent = findParentInstance(cwd, globalRoot)
 
   // Collect existing instances from registry
   const registryPath = path.join(globalRoot, 'instances.json')
@@ -31,29 +33,67 @@ export async function promptForInstance(opts: {
   registry.load()
   const instances = registry.list().filter(e => fs.existsSync(e.root))
 
-  // Format labels: "Name (global — path)" or "Name (local — path)"
-  const instanceOptions = instances.map(e => {
-    let name = e.id
-    try {
-      const raw = fs.readFileSync(path.join(e.root, 'config.json'), 'utf-8')
-      const parsed = JSON.parse(raw)
-      if (parsed.instanceName) name = parsed.instanceName
-    } catch { /* use id */ }
-    const isGlobal = e.root === globalRoot
-    const displayPath = e.root.replace(os.homedir(), '~')
-    const type = isGlobal ? 'global' : 'local'
-    return { value: e.root, label: `${name} workspace (${type} — ${displayPath})` }
-  })
-
-  // Fallback if registry is empty but global config exists
-  if (instanceOptions.length === 0) {
-    const globalDisplay = globalRoot.replace(os.homedir(), '~')
-    instanceOptions.push({ value: globalRoot, label: `Global workspace (${globalDisplay})` })
+  // Nothing exists anywhere — no global config, no detected parent
+  if (!globalConfigExists && !detectedParent) {
+    if (instances.length === 0) {
+      if (opts.allowCreate) {
+        if (isHomeDir) {
+          fs.mkdirSync(defaultWorkspace, { recursive: true })
+          console.log(`\n  Home directory cannot be used as workspace.`)
+          console.log(`  Created \x1b[1m~/openacp-workspace\x1b[0m as default workspace.\n`)
+          console.log(`  \x1b[2mTip: cd ~/openacp-workspace\x1b[0m\n`)
+        }
+        return createRoot
+      }
+      console.error('No OpenACP instances found. Run `openacp` in your workspace directory to set up.')
+      process.exit(1)
+    }
   }
 
-  // Single instance + no create option → just use it, no prompt needed
-  if (instanceOptions.length === 1 && !opts.allowCreate) {
-    return instanceOptions[0]!.value
+  // Non-interactive: prefer detected parent, then single instance
+  const isTTY = process.stdin.isTTY && process.stdout.isTTY
+  if (!isTTY) {
+    if (detectedParent) return detectedParent
+    if (instances.length === 1) return instances[0]!.root
+    console.error('Cannot determine instance in non-interactive mode. Use --dir <path>.')
+    process.exit(1)
+  }
+
+  // Format labels: "Name (path)"
+  const instanceOptions = instances
+    // Exclude detected parent — it will be added at the top separately
+    .filter(e => !detectedParent || e.root !== detectedParent)
+    .map(e => {
+      let name = e.id
+      try {
+        const raw = fs.readFileSync(path.join(e.root, 'config.json'), 'utf-8')
+        const parsed = JSON.parse(raw)
+        if (parsed.instanceName) name = parsed.instanceName
+      } catch { /* use id */ }
+      const workspaceDir = path.dirname(e.root)
+      const displayPath = workspaceDir.replace(os.homedir(), '~')
+      return { value: e.root, label: `${name} (${displayPath})` }
+    })
+
+  // Prepend detected parent instance at the top
+  if (detectedParent) {
+    let name = path.basename(path.dirname(detectedParent))
+    try {
+      const raw = fs.readFileSync(path.join(detectedParent, 'config.json'), 'utf-8')
+      const parsed = JSON.parse(raw)
+      if (parsed.instanceName) name = parsed.instanceName
+    } catch { /* use dir name */ }
+    const workspaceDir = path.dirname(detectedParent)
+    const displayPath = workspaceDir.replace(os.homedir(), '~')
+    instanceOptions.unshift({ value: detectedParent, label: `${name} (${displayPath})` })
+  }
+
+  // Operational commands (not allowCreate): auto-select if only 1 instance
+  if (!opts.allowCreate && instanceOptions.length === 1) {
+    const selected = instanceOptions[0]!
+    const displayPath = selected.value.replace(os.homedir(), '~')
+    console.log(`  \x1b[2m▸ Using: ${selected.label}\x1b[0m`)
+    return selected.value
   }
 
   // Build prompt options
@@ -63,8 +103,11 @@ export async function promptForInstance(opts: {
   }))
 
   if (opts.allowCreate) {
-    const localDisplay = localRoot.replace(os.homedir(), '~')
-    options.push({ value: localRoot, label: `New local workspace (${localDisplay})` })
+    const createDisplay = createRoot.replace(os.homedir(), '~')
+    const createLabel = isHomeDir
+      ? `New workspace (~/openacp-workspace)`
+      : `New local workspace (${createDisplay})`
+    options.push({ value: createRoot, label: createLabel })
   }
 
   const clack = await import('@clack/prompts')
@@ -77,9 +120,31 @@ export async function promptForInstance(opts: {
     process.exit(0)
   }
 
-  if (choice === localRoot) {
-    console.log(`\x1b[2mTip: next time use \`openacp --local\`\x1b[0m`)
+  if (choice === createRoot) {
+    if (isHomeDir) {
+      fs.mkdirSync(defaultWorkspace, { recursive: true })
+      console.log(`\n  \x1b[2mTip: cd ~/openacp-workspace\x1b[0m`)
+    } else {
+      console.log(`\x1b[2mTip: next time use \`openacp --local\`\x1b[0m`)
+    }
   }
 
   return choice as string
+}
+
+/**
+ * Walk up from `cwd` looking for a parent directory containing `.openacp/`.
+ * Skips exact CWD (already handled by resolveInstanceRoot) and global root.
+ * Returns the `.openacp/` path if found, or null.
+ */
+export function findParentInstance(cwd: string, globalRoot: string): string | null {
+  let dir = path.dirname(cwd) // start from parent, not CWD itself
+  while (true) {
+    const candidate = path.join(dir, '.openacp')
+    if (candidate !== globalRoot && fs.existsSync(path.join(candidate, 'config.json'))) return candidate
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return null
 }

@@ -1,3 +1,8 @@
+/**
+ * Prints the full CLI help text to stdout, covering all commands, flags, and usage examples.
+ *
+ * Called when the user runs `openacp --help` or `openacp -h` with no subcommand.
+ */
 export function printHelp(): void {
   console.log(`
 \x1b[1mOpenACP\x1b[0m — Self-hosted bridge for AI coding agents
@@ -57,6 +62,14 @@ Connect messaging platforms (Telegram, Discord) to 28+ AI coding agents via ACP 
   openacp integrate <agent> --uninstall
   openacp adopt <agent> <id>           Adopt an external session  \x1b[2m[--json]\x1b[0m
 
+\x1b[1mRemote Access:\x1b[0m
+  openacp remote                            Generate one-time remote access link  \x1b[2m[--json]\x1b[0m
+  openacp remote --role admin               Specify role: admin (default) or viewer
+  openacp remote --expire 48h              Set expiry duration (default: 24h)
+  openacp remote --no-tunnel               Local link only (skip tunnel URL)
+  openacp remote --no-qr                   Skip QR code output
+  openacp remote --name <label>            Custom token name
+
 \x1b[1mTunnels:\x1b[0m
   openacp tunnel add <port> [--label name]  Create tunnel to local port  \x1b[2m[--json]\x1b[0m
   openacp tunnel list                       List active tunnels           \x1b[2m[--json]\x1b[0m
@@ -77,7 +90,7 @@ Connect messaging platforms (Telegram, Discord) to 28+ AI coding agents via ACP 
 
 \x1b[1mWorkspace Flags:\x1b[0m
   --local              Use workspace in current directory
-  --global             Use global workspace (~/.openacp)
+  --global             (deprecated, ignored)
   --dir <path>         Use workspace at specified directory
   --from <path>        Copy settings from existing workspace (on create)
   --name <name>        Set workspace name (on create)

@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import { createChildLogger } from '../../../core/utils/log.js'
 import { commandExists } from '../../../core/agents/agent-dependencies.js'
 import type { TunnelProvider } from '../provider.js'
@@ -10,6 +9,17 @@ const log = createChildLogger({ module: 'cloudflare-tunnel' })
 
 const SIGKILL_TIMEOUT_MS = 5_000
 
+/**
+ * Tunnel provider using Cloudflare quick tunnels (no account required).
+ *
+ * Runs `cloudflared tunnel --url http://localhost:<port>` and extracts the
+ * randomly assigned `*.trycloudflare.com` URL from stderr. The binary is
+ * located from PATH first, then from `binDir` (installed by post-upgrade step),
+ * and finally auto-downloaded as a last resort.
+ *
+ * Quick tunnels are rate-limited and assign a new random URL on each start.
+ * Prefer OpenACPTunnelProvider for a stable URL.
+ */
 export class CloudflareTunnelProvider implements TunnelProvider {
   private child: ChildProcess | null = null
   private publicUrl = ''
@@ -19,7 +29,7 @@ export class CloudflareTunnelProvider implements TunnelProvider {
 
   constructor(options: Record<string, unknown> = {}, binDir?: string) {
     this.options = options
-    this.binDir = binDir ?? path.join(os.homedir(), '.openacp', 'bin')
+    this.binDir = binDir!
   }
 
   onExit(callback: (code: number | null) => void): void {

@@ -1,17 +1,21 @@
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, ErrorCodes, muteForJson } from '../output.js'
 
-async function createCatalog(instanceRoot?: string) {
+/** Create an AgentCatalog bound to the given instance root for install/list operations. */
+async function createCatalog(instanceRoot: string) {
   const { AgentCatalog } = await import("../../core/agents/agent-catalog.js");
-  if (instanceRoot) {
-    const { AgentStore } = await import("../../core/agents/agent-store.js");
-    const pathMod = await import('node:path');
-    const store = new AgentStore(pathMod.join(instanceRoot, 'agents.json'));
-    return new AgentCatalog(store, pathMod.join(instanceRoot, 'registry-cache.json'), pathMod.join(instanceRoot, 'agents'));
-  }
-  return new AgentCatalog();
+  const { AgentStore } = await import("../../core/agents/agent-store.js");
+  const pathMod = await import('node:path');
+  const store = new AgentStore(pathMod.join(instanceRoot, 'agents.json'));
+  return new AgentCatalog(store, pathMod.join(instanceRoot, 'registry-cache.json'), pathMod.join(instanceRoot, 'agents'));
 }
 
+/**
+ * `openacp agents` — Browse, install, uninstall, and inspect AI coding agents.
+ *
+ * Dispatches to subcommands: install, uninstall, info, run, list, refresh.
+ * Uses fuzzy matching (suggestMatch) to hint at the correct subcommand on typos.
+ */
 export async function cmdAgents(args: string[], instanceRoot?: string): Promise<void> {
   const subcommand = args[0];
 
@@ -84,7 +88,7 @@ bypassing the normal staleness check.
 
 async function agentsList(instanceRoot?: string, json = false): Promise<void> {
   if (json) await muteForJson()
-  const catalog = await createCatalog(instanceRoot);
+  const catalog = await createCatalog(instanceRoot!);
   catalog.load();
   await catalog.refreshRegistryIfStale();
 
@@ -148,6 +152,10 @@ async function agentsList(instanceRoot?: string, json = false): Promise<void> {
   console.log("");
 }
 
+/**
+ * Install an agent from the ACP Registry. After installation, automatically installs
+ * the handoff integration if the agent supports it, and prints any setup steps.
+ */
 async function agentsInstall(nameOrId: string | undefined, force: boolean, help = false, instanceRoot?: string, json = false): Promise<void> {
   if (json) await muteForJson()
 
@@ -180,7 +188,7 @@ Run 'openacp agents' to see available agents.
     return
   }
 
-  const catalog = await createCatalog(instanceRoot);
+  const catalog = await createCatalog(instanceRoot!);
   catalog.load();
   await catalog.refreshRegistryIfStale();
 
@@ -280,7 +288,7 @@ async function agentsUninstall(name: string | undefined, help = false, instanceR
     return
   }
 
-  const catalog = await createCatalog(instanceRoot);
+  const catalog = await createCatalog(instanceRoot!);
   catalog.load();
 
   const result = await catalog.uninstall(name);
@@ -309,7 +317,7 @@ async function agentsUninstall(name: string | undefined, help = false, instanceR
 }
 
 async function agentsRefresh(instanceRoot?: string): Promise<void> {
-  const catalog = await createCatalog(instanceRoot);
+  const catalog = await createCatalog(instanceRoot!);
   catalog.load();
   console.log("\n  Updating agent list...");
   await catalog.fetchRegistry();
@@ -348,7 +356,7 @@ whether the agent is installed or available from the registry.
     return
   }
 
-  const catalog = await createCatalog(instanceRoot);
+  const catalog = await createCatalog(instanceRoot!);
   catalog.load();
 
   const { getAgentSetup } = await import("../../core/agents/agent-dependencies.js");
@@ -451,7 +459,7 @@ ACP-specific flags are automatically stripped.
     return;
   }
 
-  const catalog = await createCatalog(instanceRoot);
+  const catalog = await createCatalog(instanceRoot!);
   catalog.load();
 
   const installed = catalog.getInstalledAgent(nameOrId);
@@ -469,13 +477,14 @@ ACP-specific flags are automatically stripped.
     return;
   }
 
-  // Strip leading "--" separator if present
+  // Strip leading "--" separator if present (convention to pass args through to the agent)
   const userArgs = extraArgs[0] === "--" ? extraArgs.slice(1) : extraArgs;
 
   const { spawnSync } = await import("node:child_process");
   const command = installed.command;
 
   // Include agent's base args (e.g., package name for npx) but strip ACP-specific flags
+  // so running the agent interactively doesn't accidentally enable ACP mode.
   const acpFlags = new Set(["--acp", "acp", "--acp=true", "--experimental-skills"]);
   const baseArgs: string[] = [];
   for (let i = 0; i < installed.args.length; i++) {

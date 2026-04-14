@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { FastifyPluginAsync } from 'fastify'
 import type { ViewerStore } from './viewer-store.js'
 import { renderFileViewer } from './templates/file-viewer.js'
@@ -10,6 +11,16 @@ const NOT_FOUND_HTML = `<!DOCTYPE html>
 .box{text-align:center;padding:40px}.code{font-size:72px;font-weight:bold;color:#484f58}p{margin-top:16px;color:#8b949e}</style>
 </head><body><div class="box"><div class="code">404</div><p>This viewer link has expired or does not exist.</p></div></body></html>`
 
+/**
+ * Register viewer routes on the API server (Fastify plugin).
+ *
+ * These routes serve Monaco-based HTML viewer pages for files, diffs, and command output.
+ * Agents produce a short entry id via ViewerStore, then pass the public URL to the user
+ * so they can view the content in a browser without needing local access.
+ *
+ * Routes are registered without auth (viewer links are public but ephemeral — they
+ * expire after the configured TTL and the id is unguessable).
+ */
 export function createViewerRoutes(store: ViewerStore): FastifyPluginAsync {
   return async (app) => {
     app.get<{ Params: { id: string } }>('/view/:id', async (request, reply) => {
@@ -43,7 +54,7 @@ export function createViewerRoutes(store: ViewerStore): FastifyPluginAsync {
         return reply.status(404).send({ error: 'not found' })
       }
       return reply.send({
-        filePath: entry.filePath,
+        filePath: entry.filePath ? path.basename(entry.filePath) : null,
         content: entry.content,
         language: entry.language,
       })
@@ -55,7 +66,7 @@ export function createViewerRoutes(store: ViewerStore): FastifyPluginAsync {
         return reply.status(404).send({ error: 'not found' })
       }
       return reply.send({
-        filePath: entry.filePath,
+        filePath: entry.filePath ? path.basename(entry.filePath) : null,
         oldContent: entry.oldContent,
         newContent: entry.content,
         language: entry.language,

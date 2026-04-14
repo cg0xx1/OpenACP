@@ -6,6 +6,14 @@ const log = createChildLogger({ module: 'ngrok-tunnel' })
 
 const SIGKILL_TIMEOUT_MS = 5_000
 
+/**
+ * Tunnel provider using ngrok (https://ngrok.com).
+ *
+ * Requires ngrok to be installed and an auth token configured via `options.authtoken`.
+ * Auth token is passed via the `NGROK_AUTHTOKEN` environment variable (not CLI args)
+ * to avoid leaking it in `ps aux` output. Supports v2 (*.ngrok.io) and v3
+ * (*.ngrok-free.app, *.ngrok.app) URL formats.
+ */
 export class NgrokTunnelProvider implements TunnelProvider {
   private child: ChildProcess | null = null
   private publicUrl = ''
@@ -22,8 +30,10 @@ export class NgrokTunnelProvider implements TunnelProvider {
 
   async start(localPort: number): Promise<string> {
     const args = ['http', String(localPort), '--log', 'stdout', '--log-format', 'json']
+    // authtoken passed via env var, not CLI args (ps aux safe)
+    const providerEnv: Record<string, string> = {};
     if (this.options.authtoken) {
-      args.push('--authtoken', String(this.options.authtoken))
+      providerEnv.NGROK_AUTHTOKEN = String(this.options.authtoken);
     }
     if (this.options.domain) {
       args.push('--domain', String(this.options.domain))
@@ -42,7 +52,7 @@ export class NgrokTunnelProvider implements TunnelProvider {
       }, 30_000)
 
       try {
-        this.child = spawn('ngrok', args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true })
+        this.child = spawn('ngrok', args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: { ...process.env, ...providerEnv } })
       } catch {
         clearTimeout(timeout)
         settle(() => reject(new Error(

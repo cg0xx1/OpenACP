@@ -1,10 +1,21 @@
 import path from 'node:path'
 import type { OpenACPPlugin, InstallContext } from '../../core/plugin/types.js'
-import type { TunnelConfig } from '../../core/config/config.js'
+import type { TunnelConfig } from './tunnel-service.js'
 import type { ApiServerService } from '../api-server/service.js'
 import { MAX_RETRIES } from './tunnel-registry.js'
 import { createViewerRoutes } from './viewer-routes.js'
 
+/**
+ * Tunnel plugin — exposes the local API server to the internet via a tunnel provider.
+ *
+ * Setup starts the system tunnel when the API server emits `api-server:started`,
+ * then registers viewer routes so agents can share file/diff/output content via
+ * public URLs. Also registers `/tunnel` and `/tunnels` chat commands for managing
+ * additional user-created tunnels.
+ *
+ * The `cloudflare` provider is auto-migrated to `openacp` on startup for users
+ * who configured it before the managed tunnel was introduced.
+ */
 function createTunnelPlugin(): OpenACPPlugin {
   let service: { stop(): Promise<void> } | null = null
 
@@ -17,25 +28,7 @@ function createTunnelPlugin(): OpenACPPlugin {
     permissions: ['services:register', 'services:use', 'kernel:access', 'commands:register', 'events:read', 'storage:read', 'storage:write'],
 
     async install(ctx: InstallContext) {
-      const { terminal, settings, legacyConfig } = ctx
-
-      // Migrate from legacy config if present
-      if (legacyConfig) {
-        const tunnelCfg = legacyConfig.tunnel as Record<string, unknown> | undefined
-        if (tunnelCfg) {
-          await settings.setAll({
-            enabled: tunnelCfg.enabled ?? true,
-            provider: tunnelCfg.provider ?? 'openacp',
-            port: tunnelCfg.port ?? 3100,
-            options: tunnelCfg.options ?? {},
-            maxUserTunnels: tunnelCfg.maxUserTunnels ?? 5,
-            storeTtlMinutes: tunnelCfg.storeTtlMinutes ?? 60,
-            auth: tunnelCfg.auth ?? { enabled: false },
-          })
-          terminal.log.success('Tunnel settings migrated from legacy config')
-          return
-        }
-      }
+      const { terminal, settings } = ctx
 
       // Interactive setup
       const provider = await terminal.select({
@@ -134,6 +127,12 @@ function createTunnelPlugin(): OpenACPPlugin {
     },
 
     async setup(ctx) {
+      ctx.registerEditableFields([
+        { key: 'enabled', displayName: 'Tunnel', type: 'toggle', scope: 'safe', hotReload: false },
+        { key: 'port', displayName: 'Tunnel Port', type: 'number', scope: 'safe', hotReload: false },
+        { key: 'provider', displayName: 'Provider', type: 'select', scope: 'safe', hotReload: false, options: ['openacp', 'cloudflare', 'ngrok', 'bore', 'tailscale'] },
+      ])
+
       const { default: fs } = await import('node:fs')
       const settingsPath = path.join(ctx.instanceRoot, 'plugins', 'data', ctx.pluginName, 'settings.json')
 

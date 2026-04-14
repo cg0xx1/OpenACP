@@ -6,10 +6,12 @@ import { createPluginContext } from './plugin-context.js'
 import type { OpenACPPlugin, EventBus, Logger, MigrateContext } from './types.js'
 import type { SettingsManager } from './settings-manager.js'
 import type { PluginRegistry } from './plugin-registry.js'
+import { BusEvent } from '../events.js'
 
-const SETUP_TIMEOUT_MS = 30_000
-const TEARDOWN_TIMEOUT_MS = 10_000
+const SETUP_TIMEOUT_MS = 30_000   // plugin.setup() must complete within 30s
+const TEARDOWN_TIMEOUT_MS = 10_000 // plugin.teardown() must complete within 10s
 
+/** Wraps a promise with a timeout; rejects if the promise doesn't settle in `ms` milliseconds. */
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Timeout: ${label} exceeded ${ms}ms`)), ms)
@@ -20,6 +22,11 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   })
 }
 
+/**
+ * Extracts a plugin's config from the global ConfigManager.
+ * Tries the new `plugins.builtin['<name>'].config` format first,
+ * then falls back to legacy config paths for backward compatibility.
+ */
 function resolvePluginConfig(pluginName: string, configManager: unknown): Record<string, unknown> {
   try {
     const allConfig = (configManager as any)?.get?.() ?? {}
@@ -38,10 +45,8 @@ function resolvePluginConfig(pluginName: string, configManager: unknown): Record
       '@openacp/file-service': 'files',
       '@openacp/api-server': 'api',
       '@openacp/telegram': 'channels.telegram',
-      '@openacp/discord': 'channels.discord',
-      '@openacp/adapter-discord': 'channels.discord',
-      '@openacp/plugin-discord': 'channels.discord', // alias for old name
-      '@openacp/slack': 'channels.slack',
+      '@openacp/discord-adapter': 'channels.discord',
+      '@openacp/slack-adapter': 'channels.slack',
     }
     const legacyKey = legacyMap[pluginName]
     if (legacyKey) {
@@ -56,6 +61,7 @@ function resolvePluginConfig(pluginName: string, configManager: unknown): Record
   return {}
 }
 
+/** Options for constructing a LifecycleManager. All fields are optional with sensible defaults. */
 export interface LifecycleManagerOpts {
   serviceRegistry?: ServiceRegistry
   middlewareChain?: MiddlewareChain
@@ -76,6 +82,21 @@ export interface LifecycleManagerOpts {
   instanceRoot?: string
 }
 
+/**
+ * Orchestrates plugin boot, teardown, and hot-reload.
+ *
+ * Boot sequence:
+ * 1. Topological sort by `pluginDependencies` — ensures a plugin's deps are ready first
+ * 2. Version migration if registry version != plugin version
+ * 3. Settings validation against Zod schema
+ * 4. Create scoped PluginContext, call `plugin.setup(ctx)` with timeout
+ *
+ * Error isolation: if a plugin's setup() fails, it is marked as failed and skipped.
+ * Any plugin that depends on a failed plugin is also skipped (cascade failure).
+ * Other independent plugins continue booting normally.
+ *
+ * Shutdown calls teardown() in reverse boot order — dependencies are torn down last.
+ */
 export class LifecycleManager {
   readonly serviceRegistry: ServiceRegistry
   readonly middlewareChain: MiddlewareChain
@@ -96,14 +117,17 @@ export class LifecycleManager {
   private _loaded = new Set<string>()
   private _failed = new Set<string>()
 
+  /** Names of plugins that successfully completed setup(). */
   get loadedPlugins(): string[] {
     return [...this._loaded]
   }
 
+  /** Names of plugins whose setup() threw an error. These plugins are skipped but don't crash the system. */
   get failedPlugins(): string[] {
     return [...this._failed]
   }
 
+  /** The PluginRegistry tracking installed and enabled plugin state. */
   get registry(): PluginRegistry | undefined {
     return this.pluginRegistry
   }
@@ -144,6 +168,12 @@ export class LifecycleManager {
     return this.log ?? { trace() {}, debug() {}, info() {}, warn() {}, error() {}, fatal() {}, child() { return this } } as Logger
   }
 
+  /**
+   * Boot a set of plugins in dependency order.
+   *
+   * Can be called multiple times (e.g., core plugins first, then dev plugins later).
+   * Already-loaded plugins are included in dependency resolution but not re-booted.
+   */
   async boot(plugins: OpenACPPlugin[]): Promise<void> {
     // Resolve load order via topological sort.
     // resolveLoadOrder will skip plugins whose dependencies are missing entirely
@@ -194,7 +224,7 @@ export class LifecycleManager {
       // Check if disabled in registry
       const registryEntry = this.pluginRegistry?.get(plugin.name)
       if (registryEntry && registryEntry.enabled === false) {
-        this.eventBus?.emit('plugin:disabled', { name: plugin.name })
+        this.eventBus?.emit(BusEvent.PLUGIN_DISABLED, { name: plugin.name })
         continue
       }
 
@@ -243,7 +273,7 @@ export class LifecycleManager {
         if (!validation.valid) {
           this._failed.add(plugin.name)
           this.getPluginLogger(plugin.name).error(`Settings validation failed: ${validation.errors?.join('; ')}`)
-          this.eventBus?.emit('plugin:failed', { name: plugin.name, error: `Settings validation failed: ${validation.errors?.join('; ')}` })
+          this.eventBus?.emit(BusEvent.PLUGIN_FAILED, { name: plugin.name, error: `Settings validation failed: ${validation.errors?.join('; ')}` })
           continue
         }
       }
@@ -269,17 +299,22 @@ export class LifecycleManager {
         await withTimeout(plugin.setup(ctx), SETUP_TIMEOUT_MS, `${plugin.name}.setup()`)
         this.contexts.set(plugin.name, ctx)
         this._loaded.add(plugin.name)
-        this.eventBus?.emit('plugin:loaded', { name: plugin.name, version: plugin.version })
+        this.eventBus?.emit(BusEvent.PLUGIN_LOADED, { name: plugin.name, version: plugin.version })
       } catch (err) {
         this._failed.add(plugin.name)
         ctx.cleanup()
         console.error(`[lifecycle] Plugin ${plugin.name} setup() FAILED:`, err)
         this.getPluginLogger(plugin.name).error(`setup() failed: ${err}`)
-        this.eventBus?.emit('plugin:failed', { name: plugin.name, error: String(err) })
+        this.eventBus?.emit(BusEvent.PLUGIN_FAILED, { name: plugin.name, error: String(err) })
       }
     }
   }
 
+  /**
+   * Unload a single plugin: call teardown(), clean up its context
+   * (listeners, middleware, services), and remove from tracked state.
+   * Used for hot-reload: unload → rebuild → re-boot.
+   */
   async unloadPlugin(name: string): Promise<void> {
     if (!this._loaded.has(name)) return
 
@@ -303,9 +338,13 @@ export class LifecycleManager {
     this._failed.delete(name)
     this.loadOrder = this.loadOrder.filter(p => p.name !== name)
 
-    this.eventBus?.emit('plugin:unloaded', { name })
+    this.eventBus?.emit(BusEvent.PLUGIN_UNLOADED, { name })
   }
 
+  /**
+   * Gracefully shut down all loaded plugins.
+   * Teardown runs in reverse boot order so that dependencies outlive their dependents.
+   */
   async shutdown(): Promise<void> {
     // Teardown in reverse load order
     const reversed = [...this.loadOrder].reverse()
@@ -328,7 +367,7 @@ export class LifecycleManager {
         this.contexts.delete(plugin.name)
       }
 
-      this.eventBus?.emit('plugin:unloaded', { name: plugin.name })
+      this.eventBus?.emit(BusEvent.PLUGIN_UNLOADED, { name: plugin.name })
     }
 
     this._loaded.clear()

@@ -2,6 +2,16 @@ import * as clack from "@clack/prompts";
 import { expandHome } from "../config/config.js";
 import { guardCancel, ok, warn, dim, step } from "./helpers.js";
 
+/**
+ * Prompts the user to choose between foreground and daemon run modes.
+ *
+ * Daemon mode installs an OS-level autostart entry (launchd on macOS,
+ * systemd on Linux). When switching from daemon to foreground, the
+ * running daemon is stopped and autostart is uninstalled.
+ *
+ * Daemon mode is not available on Windows — the function silently
+ * defaults to foreground in that case.
+ */
 export async function setupRunMode(opts?: {
   existing?: { runMode: string; autoStart: boolean };
   stepNum?: number;
@@ -44,12 +54,14 @@ export async function setupRunMode(opts?: {
 
   if (mode === 'daemon') {
     const { installAutoStart, isAutoStartSupported } = await import('../../cli/autostart.js');
+    const { resolveInstanceId } = await import('../../cli/resolve-instance-id.js');
     const { muteLogger, unmuteLogger } = await import('../utils/log.js');
     const autoStart = isAutoStartSupported();
     if (autoStart) {
       muteLogger();
       const logDir = opts?.instanceRoot ? `${opts.instanceRoot}/logs` : expandHome('~/.openacp/logs');
-      const result = installAutoStart(logDir);
+      const instanceId = opts?.instanceRoot ? resolveInstanceId(opts.instanceRoot) : 'default';
+      const result = installAutoStart(logDir, opts?.instanceRoot ?? expandHome('~/.openacp'), instanceId);
       unmuteLogger();
       if (result.success) {
         console.log(ok('Auto-start on boot enabled'));
@@ -65,24 +77,20 @@ export async function setupRunMode(opts?: {
     const { muteLogger, unmuteLogger } = await import('../utils/log.js');
     muteLogger();
     try {
-      const { stopDaemon } = await import('../../cli/daemon.js');
-      const result = await stopDaemon();
-      unmuteLogger();
+      const { stopDaemon, getPidPath } = await import('../../cli/daemon.js');
+      const instanceRoot = opts?.instanceRoot!;
+      const result = await stopDaemon(getPidPath(instanceRoot), instanceRoot);
       if (result.stopped) {
         console.log(ok(`Daemon stopped (was PID ${result.pid})`));
       }
-    } catch {
-      unmuteLogger();
-      // Daemon may not be running
-    }
-    muteLogger();
-    try {
       const { uninstallAutoStart } = await import('../../cli/autostart.js');
-      uninstallAutoStart();
-      unmuteLogger();
+      const { resolveInstanceId } = await import('../../cli/resolve-instance-id.js');
+      const instanceId = opts?.instanceRoot ? resolveInstanceId(opts.instanceRoot) : 'default';
+      uninstallAutoStart(instanceId);
     } catch {
+      // Daemon may not be running or autostart may not be installed
+    } finally {
       unmuteLogger();
-      // ignore
     }
   }
 

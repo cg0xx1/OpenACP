@@ -1,17 +1,38 @@
+import { isApplyPatchOtherTool } from './apply-patch-detection.js'
+
+/**
+ * Extracted file content from an agent tool call.
+ *
+ * Used by the file-service plugin to provide live file previews —
+ * when an agent reads, edits, or writes a file, this structure
+ * captures what changed so adapters can show inline diffs or previews.
+ */
 export interface FileInfo {
   filePath: string
   content: string
+  /** Previous content before an edit — enables diff rendering in adapters. */
   oldContent?: string
 }
 
 /**
- * Extract file path and content from ACP tool_call/tool_update content.
+ * Extract file path and content from ACP tool_call/tool_update payloads.
+ *
+ * Different agents (Claude Code, OpenCode, etc.) encode file operations in
+ * varying formats. This function normalizes them all into a single FileInfo
+ * structure by trying multiple extraction strategies in priority order:
+ *
+ *   1. Agent-specific _meta extensions (highest fidelity — raw file content)
+ *   2. rawInput fields (file_path + content)
+ *   3. Known ACP content patterns (diff blocks, text blocks, content wrappers)
+ *
+ * Returns null if the tool call doesn't involve a file operation.
  *
  * ACP content formats observed:
  * - Diff block: [{ type: "diff", path: "...", oldText: "...", newText: "..." }]
  * - Content wrapper: [{ type: "content", content: { type: "text", text: "..." } }]
  * - Text block: { type: "text", text: "..." }
  * - rawInput: { file_path: "...", content: "..." }
+ * - rawOutput (OpenCode apply_patch): { metadata: { files: [{ filePath, before, after }] } }
  */
 export function extractFileInfo(
   name: string,
@@ -19,8 +40,12 @@ export function extractFileInfo(
   content: unknown,
   rawInput?: unknown,
   meta?: unknown,
+  rawOutput?: unknown,
 ): FileInfo | null {
-  // Only process file-related tool kinds
+  // apply_patch is a special "other" tool that modifies files via patch text
+  if (isApplyPatchOtherTool(kind, name, rawInput)) {
+    return parseApplyPatchRawOutput(rawOutput)
+  }
   if (kind && !['read', 'edit', 'write'].includes(kind)) return null
 
   let info: Partial<FileInfo> | null = null
@@ -90,7 +115,7 @@ export function extractFileInfo(
 
   if (!info) return null
 
-  // Infer file path from tool name if not in content
+  // Infer file path from tool name if not in content (e.g., "Read src/index.ts")
   if (!info.filePath) {
     const pathMatch = name.match(/(?:Read|Edit|Write|View)\s+(.+)/i)
     if (pathMatch) info.filePath = pathMatch[1].trim()
@@ -101,9 +126,63 @@ export function extractFileInfo(
 }
 
 /**
+ * Extract file info from apply_patch rawOutput format.
+ *
+ * Picks the file with the most changes (additions + deletions) as
+ * the primary file to preview — patches can touch multiple files.
+ */
+function parseApplyPatchRawOutput(rawOutput: unknown): FileInfo | null {
+  if (!rawOutput || typeof rawOutput !== 'object' || Array.isArray(rawOutput)) return null
+
+  const output = rawOutput as Record<string, unknown>
+  const metadata = output.metadata
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+
+  const files = (metadata as Record<string, unknown>).files
+  if (!Array.isArray(files)) return null
+
+  // Sort by change size (descending) to pick the most-changed file for preview
+  const sortedFiles = [...files].sort((a, b) => getApplyPatchFileScore(b) - getApplyPatchFileScore(a))
+
+  for (const file of sortedFiles) {
+    if (!file || typeof file !== 'object' || Array.isArray(file)) continue
+    const f = file as Record<string, unknown>
+
+    const filePath = typeof f.filePath === 'string'
+      ? f.filePath
+      : typeof f.relativePath === 'string'
+        ? f.relativePath
+        : null
+    if (!filePath) continue
+
+    const after = typeof f.after === 'string' ? f.after : null
+    if (!after) continue
+
+    const before = typeof f.before === 'string' ? f.before : undefined
+    return {
+      filePath,
+      content: after,
+      oldContent: before,
+    }
+  }
+
+  return null
+}
+
+/** Score a file by total change volume (additions + deletions) for ranking. */
+function getApplyPatchFileScore(file: unknown): number {
+  if (!file || typeof file !== 'object' || Array.isArray(file)) return 0
+  const f = file as Record<string, unknown>
+  const additions = typeof f.additions === 'number' && Number.isFinite(f.additions) && f.additions >= 0 ? f.additions : 0
+  const deletions = typeof f.deletions === 'number' && Number.isFinite(f.deletions) && f.deletions >= 0 ? f.deletions : 0
+  return additions + deletions
+}
+
+/**
  * Resolve toolResponse from agent-specific _meta namespaces.
- * Supports: _meta.claudeCode.toolResponse (Claude Code)
- * Add new agents here as they adopt the pattern.
+ *
+ * Currently supports: `_meta.claudeCode.toolResponse` (Claude Code).
+ * Add new agent namespaces here as they adopt the pattern.
  */
 function resolveToolResponse(meta: Record<string, unknown>): Record<string, unknown> | undefined {
   // Claude Code namespace
@@ -118,13 +197,19 @@ function resolveToolResponse(meta: Record<string, unknown>): Record<string, unkn
   return undefined
 }
 
+/**
+ * Recursively parse ACP content structures into a partial FileInfo.
+ *
+ * Handles all known content shapes: plain strings, diff blocks,
+ * content wrappers, text blocks, and nested input/output objects.
+ */
 function parseContent(content: unknown): Partial<FileInfo> | null {
   if (typeof content === 'string') {
     return { content }
   }
 
   if (Array.isArray(content)) {
-    // Array of content blocks — try each
+    // Return the first block that yields a result — order matters for priority
     for (const block of content) {
       const result = parseContent(block)
       if (result?.content || result?.filePath) return result

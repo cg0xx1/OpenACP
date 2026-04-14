@@ -1,7 +1,17 @@
 import { readApiPort } from '../api-client.js'
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
+import { resolveRunningInstance } from '../../core/instance/instance-context.js'
 
+/**
+ * `openacp adopt` — Transfer an existing external agent session into OpenACP.
+ *
+ * Finds the running daemon instance closest to --cwd (via resolveRunningInstance),
+ * then calls the daemon's /api/sessions/adopt endpoint. The daemon creates an OpenACP
+ * session wrapping the external session ID, making it visible in the messaging platform.
+ *
+ * This command is typically called from agent handoff scripts (openacp-handoff.sh).
+ */
 export async function cmdAdopt(args: string[]): Promise<void> {
   if (wantsHelp(args)) {
     console.log(`
@@ -58,10 +68,11 @@ as a messaging thread. Requires a running daemon.
   const channelIdx = args.indexOf("--channel");
   const channel = channelIdx !== -1 && args[channelIdx + 1] ? args[channelIdx + 1] : undefined;
 
-  const port = readApiPort();
+  const instanceRoot = await resolveRunningInstance(cwd);
+  const port = instanceRoot ? readApiPort(undefined, instanceRoot) : null;
   if (!port) {
-    if (json) jsonError(ErrorCodes.DAEMON_NOT_RUNNING, 'OpenACP is not running. Start it with: openacp start')
-    console.log("OpenACP is not running. Start it with: openacp start");
+    if (json) jsonError(ErrorCodes.DAEMON_NOT_RUNNING, 'No running OpenACP instance found. Start one with: openacp start')
+    console.log("No running OpenACP instance found. Start one with: openacp start");
     process.exit(1);
   }
 
@@ -71,7 +82,7 @@ as a messaging thread. Requires a running daemon.
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent, agentSessionId: sessionId, cwd, channel }),
-    })
+    }, instanceRoot ?? undefined)
     const data = await res.json() as Record<string, unknown>;
 
     if (data.ok) {

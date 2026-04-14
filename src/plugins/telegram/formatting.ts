@@ -25,6 +25,10 @@ import {
 } from "../../core/adapter-primitives/message-formatter.js";
 import type { DisplayVerbosity } from "../../core/adapter-primitives/format-types.js";
 
+/**
+ * Escape characters that have special meaning in Telegram HTML parse mode.
+ * Must be applied to all user/agent-provided strings before embedding in HTML messages.
+ */
 export function escapeHtml(text: string | undefined | null): string {
   if (!text) return "";
   return text
@@ -33,6 +37,17 @@ export function escapeHtml(text: string | undefined | null): string {
     .replace(/>/g, "&gt;");
 }
 
+/**
+ * Convert Markdown to Telegram HTML parse mode.
+ *
+ * Telegram supports HTML rather than MarkdownV2 because MarkdownV2 requires
+ * escaping almost every punctuation character, which breaks real-world agent
+ * output (file paths, diffs, JSON, etc.). HTML mode only requires escaping
+ * `&`, `<`, and `>`, making it far more reliable for agent-generated content.
+ *
+ * Strategy: code blocks/inline code are extracted into placeholders first so
+ * that subsequent HTML escaping and markdown transformations don't corrupt them.
+ */
 export function markdownToTelegramHtml(md: string): string {
   // Step 1: Extract code blocks and inline code into placeholders
   const codeBlocks: string[] = [];
@@ -85,6 +100,10 @@ export function markdownToTelegramHtml(md: string): string {
   return text;
 }
 
+/**
+ * Render a tool call event as Telegram HTML.
+ * Higher verbosity levels show more input/output detail.
+ */
 export function formatToolCall(
   tool: ToolCallMeta,
   verbosity: DisplayVerbosity = "medium",
@@ -161,6 +180,10 @@ export function formatPlan(plan: {
   return `<b>Plan:</b>\n${lines.join("\n")}`;
 }
 
+/**
+ * Render token usage as a visual bar + percentage.
+ * Shows a warning emoji when context is ≥85% full to alert users before hitting limits.
+ */
 export function formatUsage(
   usage: { tokensUsed?: number; contextSize?: number; cost?: number },
   _verbosity: DisplayVerbosity = "medium",
@@ -226,15 +249,45 @@ export function renderToolCard(snap: ToolCardSnapshot): string {
 
 const FILE_KINDS = new Set(["read", "edit", "write", "delete"]);
 
-/** Shorten absolute file paths to just filename (+ line range if present) */
-function shortenTitle(title: string, kind: string): string {
-  if (!FILE_KINDS.has(kind) || !title.includes("/")) return title;
-  // Separate optional parenthesized suffix (e.g. " (lines 10–50)" or " (from line 10)")
+function normalizePathLike(pathLike: string): string {
+  return pathLike.replace(/\\/g, "/");
+}
+
+/**
+ * Shorten a file-path title for display in Telegram tool cards.
+ *
+ * Strategy (in priority order):
+ * 1. If `workingDirectory` is provided and the path starts with it,
+ *    return the relative path  →  "src/foo.ts (lines 1–10)"
+ *    Also handles comma-separated multi-file titles (e.g. apply_patch).
+ * 2. For file-kind titles, fall back to basename  →  "foo.ts (lines 1–10)"
+ * 3. Non-file-kind titles are returned unchanged.
+ */
+function shortenTitle(title: string, kind: string, workingDirectory?: string): string {
+  if (!title.includes("/")) return title;
+
   const parenIdx = title.indexOf(" (");
   const pathPart = parenIdx > 0 ? title.slice(0, parenIdx) : title;
   const rangePart = parenIdx > 0 ? title.slice(parenIdx) : "";
-  const fileName = pathPart.split("/").pop() || pathPart;
-  return fileName + rangePart;
+
+  if (workingDirectory) {
+    const normalizedPathPart = normalizePathLike(pathPart);
+    const normalizedCwd = normalizePathLike(workingDirectory).replace(/\/+$/, "");
+    const prefix = `${normalizedCwd}/`;
+    const relativized = normalizedPathPart
+      .split(", ")
+      .map((segment) => (segment.startsWith(prefix) ? segment.slice(prefix.length) : segment))
+      .join(", ");
+    if (relativized !== normalizedPathPart) return relativized + rangePart;
+  }
+
+  if (FILE_KINDS.has(kind)) return basename(pathPart) + rangePart;
+  return title;
+}
+
+/** Extract the last path segment for use in link labels. */
+function basename(pathLike: string): string {
+  return pathLike.replace(/\\/g, "/").split("/").pop() || pathLike;
 }
 
 function renderSpecSection(spec: ToolDisplaySpec): string {
@@ -251,7 +304,7 @@ function renderSpecSection(spec: ToolDisplaySpec): string {
 
   // Build title line: "✅ 📖 Read · filename.ts"
   const kindLabel = KIND_LABELS[spec.kind];
-  const displayTitle = shortenTitle(spec.title, spec.kind);
+  const displayTitle = shortenTitle(spec.title, spec.kind, spec.workingDirectory);
   // Suppress title when it duplicates the kind label (e.g. "Edit · Edit")
   const hasUniqueTitle = displayTitle && displayTitle.toLowerCase() !== kindLabel?.toLowerCase()
     && displayTitle.toLowerCase() !== spec.kind;
@@ -289,9 +342,10 @@ function renderSpecSection(spec: ToolDisplaySpec): string {
 
   if (spec.viewerLinks?.file || spec.viewerLinks?.diff || spec.outputViewerLink) {
     const linkParts: string[] = [];
-    const shortName = displayTitle || kindLabel || spec.kind;
+    // Use basename for link labels so they stay compact even with relative paths
+    const linkName = basename(displayTitle || kindLabel || spec.kind);
     if (spec.viewerLinks?.file)
-      linkParts.push(`<a href="${escapeHtml(spec.viewerLinks.file)}">View ${escapeHtml(shortName)}</a>`);
+      linkParts.push(`<a href="${escapeHtml(spec.viewerLinks.file)}">View ${escapeHtml(linkName)}</a>`);
     if (spec.viewerLinks?.diff)
       linkParts.push(`<a href="${escapeHtml(spec.viewerLinks.diff)}">View diff</a>`);
     if (spec.outputViewerLink)

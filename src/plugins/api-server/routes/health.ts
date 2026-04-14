@@ -14,9 +14,25 @@ export async function systemRoutes(
 ): Promise<void> {
   const authPreHandler = deps.authPreHandler;
 
-  // GET /system/health — detailed health info including sessions, adapters, tunnel
-  // Public: no auth required
+  // GET /system/health — basic liveness check (public, no auth required).
+  // Sensitive details (memory, adapters, session counts) are omitted intentionally:
+  // the tunnel exposes this endpoint to the internet, so leaking internal topology
+  // or session counts would aid reconnaissance.
+  // instanceId is included so callers (e.g. `instances list`) can verify this response
+  // belongs to the expected instance and not an unrelated process on the same port.
   app.get('/health', async () => {
+    return {
+      status: 'ok',
+      instanceId: deps.instanceId,
+      uptime: Date.now() - deps.startedAt,
+      version: deps.getVersion(),
+    };
+  });
+
+  // GET /system/health/details — full health info (requires auth + system:health scope)
+  app.get('/health/details', {
+    preHandler: [...(authPreHandler ? [authPreHandler] : []), requireScopes('system:health')],
+  }, async () => {
     const activeSessions = deps.core.sessionManager.listSessions();
     const allRecords = deps.core.sessionManager.listRecords();
     const mem = process.memoryUsage();

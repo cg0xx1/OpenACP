@@ -26,7 +26,7 @@ describe('LifecycleManager instanceRoot plumbing', () => {
     expect(capturedCtx[0].instanceRoot).toBe(customRoot)
   })
 
-  it('falls back to ~/.openacp when instanceRoot is not provided', async () => {
+  it('instanceRoot is undefined when not provided', async () => {
     const { LifecycleManager } = await import('../plugin/lifecycle-manager.js')
     const lm = new LifecycleManager()
 
@@ -40,7 +40,7 @@ describe('LifecycleManager instanceRoot plumbing', () => {
     await lm.boot([plugin])
 
     expect(capturedCtx).toHaveLength(1)
-    expect(capturedCtx[0].instanceRoot).toBe(path.join(os.homedir(), '.openacp'))
+    expect(capturedCtx[0].instanceRoot).toBeUndefined()
   })
 })
 
@@ -105,38 +105,6 @@ describe('AgentCatalog cachePath isolation', () => {
   })
 })
 
-describe('Config migration with custom configDir', () => {
-  let tmpDir: string
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'migration-test-'))
-  })
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
-  })
-
-  it('migrate-agents-to-store uses ctx.configDir when provided', async () => {
-    const { applyMigrations } = await import('../config/config-migrations.js')
-
-    const raw: Record<string, unknown> = {
-      agents: {
-        claude: { command: 'claude-agent-acp', args: [], env: {} },
-      },
-      defaultAgent: 'claude',
-    }
-
-    const { changed } = applyMigrations(raw, undefined, { configDir: tmpDir })
-
-    // Migration should have created agents.json in tmpDir (not ~/.openacp)
-    expect(changed).toBe(true)
-    const agentsPath = path.join(tmpDir, 'agents.json')
-    expect(fs.existsSync(agentsPath)).toBe(true)
-    const data = JSON.parse(fs.readFileSync(agentsPath, 'utf-8'))
-    expect(data.installed.claude).toBeDefined()
-  })
-})
-
 describe('InstanceRegistry edge cases', () => {
   let tmpDir: string
   let registryPath: string
@@ -196,21 +164,28 @@ describe('InstanceRegistry edge cases', () => {
 describe('InstanceContext path completeness', () => {
   it('creates all 16 path fields', async () => {
     const { createInstanceContext } = await import('../instance/instance-context.js')
-    const ctx = createInstanceContext({ id: 'test', root: '/tmp/test-root', isGlobal: false })
+    const ctx = createInstanceContext({ id: 'test', root: '/tmp/test-root' })
 
     const pathKeys = Object.keys(ctx.paths)
     expect(pathKeys).toHaveLength(16)
 
-    // Verify all paths are under the root
+    // Verify instance-local paths are under the root; shared paths point to ~/.openacp/
+    const sharedPathKeys = new Set(['agentsDir', 'bin', 'registryCache'])
     for (const [key, value] of Object.entries(ctx.paths)) {
-      expect(value).toContain('/tmp/test-root')
+      if (sharedPathKeys.has(key)) {
+        expect(value).toContain(path.join(os.homedir(), '.openacp'))
+      } else {
+        expect(value).toContain('/tmp/test-root')
+      }
     }
 
     // Verify specific critical paths
     expect(ctx.paths.config).toBe('/tmp/test-root/config.json')
     expect(ctx.paths.agents).toBe('/tmp/test-root/agents.json')
     expect(ctx.paths.sessions).toBe('/tmp/test-root/sessions.json')
-    expect(ctx.paths.registryCache).toBe('/tmp/test-root/registry-cache.json')
+    expect(ctx.paths.registryCache).toBe(path.join(os.homedir(), '.openacp', 'cache', 'registry-cache.json'))
+    expect(ctx.paths.bin).toBe(path.join(os.homedir(), '.openacp', 'bin'))
+    expect(ctx.paths.agentsDir).toBe(path.join(os.homedir(), '.openacp', 'agents'))
     expect(ctx.paths.plugins).toBe('/tmp/test-root/plugins')
     expect(ctx.paths.pluginsData).toBe('/tmp/test-root/plugins/data')
     expect(ctx.paths.pluginRegistry).toBe('/tmp/test-root/plugins.json')

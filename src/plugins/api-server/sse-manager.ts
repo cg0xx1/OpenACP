@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { EventBus, EventBusEvents } from "../../core/event-bus.js";
+import { BusEvent } from "../../core/events.js";
 
 interface SSEResponse extends http.ServerResponse {
   sessionFilter?: string;
@@ -11,6 +12,23 @@ interface SessionStats {
   total: number;
 }
 
+// Maximum concurrent SSE connections. Beyond this the server returns 503 to
+// prevent resource exhaustion (file-descriptor / memory DoS) from a single
+// attacker opening many persistent connections via the public tunnel.
+const MAX_SSE_CONNECTIONS = 50;
+
+/**
+ * Manages Server-Sent Events (SSE) connections and broadcasts OpenACP bus events to clients.
+ *
+ * SSE is used instead of WebSockets because:
+ * - It works natively through HTTP/1.1 proxies (Cloudflare, nginx) without upgrade negotiation.
+ * - The communication is unidirectional (server → client); clients send commands via REST.
+ * - It requires no additional dependencies and is built into all modern browsers.
+ *
+ * Clients can subscribe to a specific session by passing `?sessionId=` to filter the stream.
+ * Health heartbeats are sent every 15 seconds to keep the connection alive through idle-timeout
+ * proxies and to deliver periodic memory/session stats to the dashboard.
+ */
 export class SSEManager {
   private sseConnections = new Set<http.ServerResponse>();
   private sseCleanupHandlers = new Map<http.ServerResponse, () => void>();
@@ -26,15 +44,25 @@ export class SSEManager {
     private startedAt: number,
   ) {}
 
+  /**
+   * Subscribes to EventBus events and starts the health heartbeat interval.
+   *
+   * Must be called after the HTTP server is listening, not during plugin setup —
+   * before `setup()` runs, no EventBus listeners are registered, so any events
+   * emitted in the interim are silently missed.
+   */
   setup(): void {
     if (!this.eventBus) return;
 
     const events = [
-      "session:created",
-      "session:updated",
-      "session:deleted",
-      "agent:event",
-      "permission:request",
+      BusEvent.SESSION_CREATED,
+      BusEvent.SESSION_UPDATED,
+      BusEvent.SESSION_DELETED,
+      BusEvent.AGENT_EVENT,
+      BusEvent.PERMISSION_REQUEST,
+      BusEvent.PERMISSION_RESOLVED,
+      BusEvent.MESSAGE_QUEUED,
+      BusEvent.MESSAGE_PROCESSING,
     ] as const;
 
     for (const eventName of events) {
@@ -45,7 +73,7 @@ export class SSEManager {
       this.boundHandlers.push({ event: eventName, handler });
     }
 
-    // Health heartbeat every 30s
+    // Health heartbeat every 15s
     this.healthInterval = setInterval(() => {
       const mem = process.memoryUsage();
       const stats = this.getSessionStats();
@@ -61,7 +89,20 @@ export class SSEManager {
     }, 15_000);
   }
 
+  /**
+   * Handles an incoming SSE request by upgrading the HTTP response to an event stream.
+   *
+   * The response is kept open indefinitely; cleanup runs when the client disconnects.
+   * An initial `: connected` comment is written immediately so proxies and browsers
+   * flush the response headers before the first real event arrives.
+   */
   handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (this.sseConnections.size >= MAX_SSE_CONNECTIONS) {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Too many SSE connections" }));
+      return;
+    }
+
     const parsedUrl = new URL(req.url || "", "http://localhost");
     const sessionFilter = parsedUrl.searchParams.get("sessionId");
     console.log(`[sse] +connection total=${this.sseConnections.size + 1}`);
@@ -74,10 +115,11 @@ export class SSEManager {
       // Disable buffering in Nginx/Cloudflare/other reverse proxies
       "X-Accel-Buffering": "no",
     };
-    // SSE is authenticated via token query param — safe to allow any origin
+    // SSE is authenticated via Bearer/query token — no credentials (cookies) involved,
+    // so Access-Control-Allow-Credentials is not needed and must not be set alongside
+    // a reflected origin (that combination is a known CORS misconfiguration).
     if (origin) {
       corsHeaders["Access-Control-Allow-Origin"] = origin;
-      corsHeaders["Access-Control-Allow-Credentials"] = "true";
     }
     // Disable Nagle's algorithm so small SSE chunks are sent immediately
     res.socket?.setNoDelay(true);
@@ -100,13 +142,23 @@ export class SSEManager {
     req.on("close", cleanup);
   }
 
+  /**
+   * Broadcasts an event to all connected SSE clients.
+   *
+   * Session-scoped events (agent_event, permission_request, etc.) are filtered per-connection:
+   * a client that subscribed with `?sessionId=X` only receives events for session X.
+   * Global events (session_created, health) are delivered to every client.
+   */
   broadcast(event: string, data: unknown): void {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     // Events that carry sessionId and should be filtered
-    const sessionEvents = [
-      "agent:event",
-      "permission:request",
-      "session:updated",
+    const sessionEvents: string[] = [
+      BusEvent.AGENT_EVENT,
+      BusEvent.PERMISSION_REQUEST,
+      BusEvent.PERMISSION_RESOLVED,
+      BusEvent.SESSION_UPDATED,
+      BusEvent.MESSAGE_QUEUED,
+      BusEvent.MESSAGE_PROCESSING,
     ];
     for (const res of this.sseConnections) {
       const filter = (res as SSEResponse).sessionFilter;
@@ -133,6 +185,12 @@ export class SSEManager {
     };
   }
 
+  /**
+   * Stops the heartbeat, removes all EventBus listeners, and closes all open SSE connections.
+   *
+   * Only listeners registered by this instance are removed — other consumers on the same
+   * EventBus are unaffected.
+   */
   stop(): void {
     if (this.healthInterval) clearInterval(this.healthInterval);
 

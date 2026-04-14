@@ -2,6 +2,14 @@ import type { CommandRegistry } from '../command-registry.js'
 import type { CommandResponse } from '../plugin/types.js'
 import type { OpenACPCore } from '../core.js'
 
+/**
+ * Register the /switch command for hot-swapping agents mid-session.
+ *
+ * - `/switch` (no args): shows a menu of available agents (excluding current)
+ * - `/switch <agent>`: aborts any running prompt and delegates to AgentSwitchHandler
+ * - `/switch label on|off`: toggles agent attribution labels in conversation history
+ *   (used by the context plugin when building history for the new agent)
+ */
 export function registerSwitchCommands(registry: CommandRegistry, _core: unknown): void {
   const core = _core as OpenACPCore;
 
@@ -36,6 +44,7 @@ export function registerSwitchCommands(registry: CommandRegistry, _core: unknown
 
       // /switch <agentName> → direct switch
       if (raw) {
+        const droppedCount = session.queueDepth
         if (session.promptRunning) {
           await session.abortPrompt()
         }
@@ -43,7 +52,8 @@ export function registerSwitchCommands(registry: CommandRegistry, _core: unknown
         try {
           const { resumed } = await core.switchSessionAgent(session.id, raw)
           const status = resumed ? 'resumed' : 'new session'
-          return { type: 'text', text: `✅ Switched to ${raw} (${status})` } satisfies CommandResponse
+          const droppedNote = droppedCount > 0 ? ` (${droppedCount} queued prompt${droppedCount > 1 ? 's' : ''} cleared)` : ''
+          return { type: 'text', text: `✅ Switched to ${raw} (${status})${droppedNote}` } satisfies CommandResponse
         } catch (err: any) {
           return { type: 'error', message: `Failed to switch agent: ${err.message || err}` } satisfies CommandResponse
         }

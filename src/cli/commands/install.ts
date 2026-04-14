@@ -1,15 +1,20 @@
 import { execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import * as os from 'node:os'
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
+/**
+ * `openacp install` — Install an adapter plugin from npm into the instance's plugins directory.
+ *
+ * Initializes the plugins directory and its package.json if they don't exist, then
+ * delegates to `npm install` to fetch and install the package.
+ */
 export async function cmdInstall(args: string[], instanceRoot?: string): Promise<void> {
   const json = isJsonMode(args)
   if (json) await muteForJson()
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const pluginsDir = path.join(root, 'plugins')
 
   if (!json && wantsHelp(args)) {
@@ -20,7 +25,7 @@ export async function cmdInstall(args: string[], instanceRoot?: string): Promise
   openacp install <package>
 
 \x1b[1mArguments:\x1b[0m
-  <package>       npm package name (e.g. @openacp/adapter-discord)
+  <package>       npm package name (e.g. @openacp/discord-adapter)
 
 Installs the plugin to ~/.openacp/plugins/.
 
@@ -29,7 +34,7 @@ Installs the plugin to ~/.openacp/plugins/.
   -h, --help      Show this help message
 
 \x1b[1mExamples:\x1b[0m
-  openacp install @openacp/adapter-discord
+  openacp install @openacp/discord-adapter
 `)
     return
   }

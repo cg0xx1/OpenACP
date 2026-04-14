@@ -1,6 +1,6 @@
 import type {
   PluginContext, PluginStorage, CommandDef, CommandResponse,
-  OutgoingMessage,
+  OutgoingMessage, MenuItem,
 } from '@openacp/cli'
 
 export interface TestContextOpts {
@@ -112,6 +112,11 @@ export function createTestContext(opts: TestContextOpts): TestPluginContext {
     registerCommand(def: CommandDef): void {
       registeredCommands.set(def.name, def)
     },
+    registerMenuItem(_item: MenuItem): void {},
+    unregisterMenuItem(_id: string): void {},
+    registerAssistantSection(_section: import('@openacp/cli').AssistantSection): void {},
+    unregisterAssistantSection(_id: string): void {},
+    registerEditableFields(_fields: import('@openacp/cli').FieldDef[]): void {},
     storage,
     log: silentLog,
     async sendMessage(sessionId: string, content: OutgoingMessage): Promise<void> {

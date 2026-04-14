@@ -77,7 +77,7 @@ describe('daemon', () => {
         return true
       })
 
-      const result = await stopDaemon(pidFile)
+      const result = await stopDaemon(pidFile, tmpDir)
       expect(result.stopped).toBe(true)
       expect(result.pid).toBe(process.pid)
       expect(readPidFile(pidFile)).toBeNull()
@@ -111,7 +111,7 @@ describe('daemon', () => {
       })
 
       // Run stopDaemon and advance fake timers concurrently
-      const stopPromise = stopDaemon(pidFile)
+      const stopPromise = stopDaemon(pidFile, tmpDir)
       // Advance past the 5s SIGTERM timeout and 1s SIGKILL timeout
       await vi.runAllTimersAsync()
       const result = await stopPromise
@@ -135,7 +135,7 @@ describe('daemon', () => {
         return true
       })
 
-      const result = await stopDaemon(pidFile)
+      const result = await stopDaemon(pidFile, tmpDir)
       expect(result.stopped).toBe(false)
       expect(result.error).toContain('stale PID file removed')
       expect(readPidFile(pidFile)).toBeNull()
@@ -160,7 +160,7 @@ describe('daemon', () => {
         return true
       })
 
-      const result = await stopDaemon(pidFile)
+      const result = await stopDaemon(pidFile, tmpDir)
       expect(result.stopped).toBe(true)
       expect(readPidFile(pidFile)).toBeNull()
 

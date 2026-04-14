@@ -1,6 +1,10 @@
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
+/**
+ * `openacp plugins` — List all installed plugins.
+ * Short alias for `openacp plugin list`.
+ */
 export async function cmdPlugins(args: string[] = [], instanceRoot?: string): Promise<void> {
   const json = isJsonMode(args)
   if (json) await muteForJson()
@@ -21,11 +25,10 @@ Shows all plugins registered in the plugin registry.
     return
   }
 
-  const os = await import('node:os')
   const path = await import('node:path')
   const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const registryPath = path.join(root, 'plugins.json')
   const registry = new PluginRegistry(registryPath)
   await registry.load()
@@ -71,7 +74,7 @@ Shows all plugins registered in the plugin registry.
 export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Promise<void> {
   const subcommand = args[0]
 
-  if (wantsHelp(args) || !subcommand) {
+  if (!subcommand || (wantsHelp(args) && !['create', 'search'].includes(subcommand))) {
     console.log(`
 \x1b[1mopenacp plugin\x1b[0m — Plugin management
 
@@ -86,7 +89,8 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
   openacp plugin enable <name>           Enable a plugin
   openacp plugin disable <name>          Disable a plugin
   openacp plugin configure <name>        Run interactive configuration
-  openacp plugin create                  Scaffold a new plugin project
+  openacp plugin create                  Scaffold a new plugin project (interactive)
+  openacp plugin create --name <name>    Scaffold a new plugin project (non-interactive)
 
 \x1b[1mOptions:\x1b[0m
   --json          Output result as JSON
@@ -95,12 +99,12 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 \x1b[1mExamples:\x1b[0m
   openacp plugin list
   openacp plugin search telegram
-  openacp plugin add @openacp/adapter-discord
+  openacp plugin add @openacp/discord-adapter
   openacp plugin add translator@1.2.0
   openacp plugin add ./my-plugin            Install from local directory
-  openacp plugin enable @openacp/adapter-discord
-  openacp plugin configure @openacp/adapter-discord
-  openacp plugin remove @openacp/adapter-discord --purge
+  openacp plugin enable @openacp/discord-adapter
+  openacp plugin configure @openacp/discord-adapter
+  openacp plugin remove @openacp/discord-adapter --purge
 `)
     return
   }
@@ -174,7 +178,7 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 
     case 'create': {
       const { cmdPluginCreate } = await import('./plugin-create.js')
-      await cmdPluginCreate()
+      await cmdPluginCreate(args.slice(1))
       return
     }
 
@@ -188,11 +192,10 @@ export async function cmdPlugin(args: string[] = [], instanceRoot?: string): Pro
 async function setPluginEnabled(name: string, enabled: boolean, instanceRoot?: string, json = false): Promise<void> {
   if (json) await muteForJson()
 
-  const os = await import('node:os')
   const path = await import('node:path')
   const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const registryPath = path.join(root, 'plugins.json')
   const registry = new PluginRegistry(registryPath)
   await registry.load()
@@ -211,7 +214,6 @@ async function setPluginEnabled(name: string, enabled: boolean, instanceRoot?: s
 }
 
 async function configurePlugin(name: string, instanceRoot?: string): Promise<void> {
-  const os = await import('node:os')
   const path = await import('node:path')
   const { corePlugins } = await import('../../plugins/core-plugins.js')
   const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
@@ -223,7 +225,7 @@ async function configurePlugin(name: string, instanceRoot?: string): Promise<voi
     process.exit(1)
   }
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const basePath = path.join(root, 'plugins', 'data')
   const settingsManager = new SettingsManager(basePath)
   const ctx = createInstallContext({ pluginName: name, settingsManager, basePath })
@@ -240,7 +242,6 @@ async function configurePlugin(name: string, instanceRoot?: string): Promise<voi
 async function installPlugin(input: string, instanceRoot?: string, json = false): Promise<void> {
   if (json) await muteForJson()
 
-  const os = await import('node:os')
   const path = await import('node:path')
   const { execFileSync } = await import('node:child_process')
   const { getCurrentVersion } = await import('../version.js')
@@ -248,9 +249,11 @@ async function installPlugin(input: string, instanceRoot?: string, json = false)
   const { createInstallContext } = await import('../../core/plugin/install-context.js')
   const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
 
   // Parse input: "translator", "translator@1.2.0", "@lucas/pkg@2.0.0"
+  // Scoped packages require special handling because the first '@' is the scope prefix,
+  // not a version separator — the version '@' comes after the package name.
   let pkgName: string
   let pkgVersion: string | undefined
 
@@ -404,12 +407,11 @@ async function installPlugin(input: string, instanceRoot?: string, json = false)
 async function uninstallPlugin(name: string, purge: boolean, instanceRoot?: string, json = false): Promise<void> {
   if (json) await muteForJson()
 
-  const os = await import('node:os')
   const path = await import('node:path')
   const fs = await import('node:fs')
   const { PluginRegistry } = await import('../../core/plugin/plugin-registry.js')
 
-  const root = instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const root = instanceRoot!
   const registryPath = path.join(root, 'plugins.json')
   const registry = new PluginRegistry(registryPath)
   await registry.load()

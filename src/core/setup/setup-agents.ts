@@ -1,3 +1,8 @@
+/**
+ * Agent setup step — detects installed agents, offers additional installs
+ * from the agent registry, and lets the user pick a default agent.
+ */
+
 import { execFileSync } from "node:child_process";
 import * as clack from "@clack/prompts";
 import { commandExists } from "../agents/agent-dependencies.js";
@@ -10,6 +15,10 @@ const KNOWN_AGENTS: Array<{ name: string; commands: string[] }> = [
   { name: "codex", commands: ["codex"] },
 ];
 
+/**
+ * Scans PATH and local node_modules for known agent commands.
+ * Returns the first available command for each agent (priority order).
+ */
 export async function detectAgents(): Promise<
   Array<{ name: string; command: string }>
 > {
@@ -30,6 +39,7 @@ export async function detectAgents(): Promise<
   return found;
 }
 
+/** Checks whether a command is available in the system PATH. */
 export async function validateAgentCommand(command: string): Promise<boolean> {
   try {
     execFileSync("which", [command], { stdio: "pipe" });
@@ -39,14 +49,28 @@ export async function validateAgentCommand(command: string): Promise<boolean> {
   }
 }
 
-export async function setupAgents(): Promise<{
+/**
+ * Runs the agent installation and selection step of the setup wizard.
+ *
+ * Ensures Claude Agent is always available (bundled fallback), refreshes the
+ * agent registry, offers installation of additional agents, and prompts for
+ * a default agent when multiple are installed.
+ *
+ * @returns The key of the selected default agent (e.g. "claude")
+ */
+export async function setupAgents(instanceRoot?: string): Promise<{
   defaultAgent: string;
 }> {
   const { AgentCatalog } = await import("../agents/agent-catalog.js");
+  const { AgentStore } = await import("../agents/agent-store.js");
+  const pathMod = await import("node:path");
   const { muteLogger, unmuteLogger } = await import("../utils/log.js");
 
+  const root = instanceRoot!;
+  const store = new AgentStore(pathMod.join(root, "agents.json"));
+
   muteLogger();
-  const catalog = new AgentCatalog();
+  const catalog = new AgentCatalog(store, pathMod.join(root, "registry-cache.json"), pathMod.join(root, "agents"));
   catalog.load();
 
   const s = clack.spinner();
@@ -56,14 +80,11 @@ export async function setupAgents(): Promise<{
   // Claude is always pre-installed (bundled dependency)
   if (!catalog.getInstalledAgent("claude")) {
     const claudeRegistry = catalog.findRegistryAgent("claude-acp");
-    if (claudeRegistry) {
-      await catalog.install("claude-acp");
-    } else {
-      // Fallback: register bundled claude-agent-acp directly
-      const { AgentStore } = await import("../agents/agent-store.js");
-      const store = new AgentStore();
-      store.load();
-      store.addAgent("claude", {
+    const installed = claudeRegistry ? await catalog.install("claude-acp") : null;
+    if (!installed?.ok) {
+      // Fallback: register bundled claude-agent-acp directly into the catalog's
+      // own store so it shows up in getAvailable() even when Claude CLI is absent.
+      catalog.registerFallbackAgent("claude", {
         registryId: "claude-acp",
         name: "Claude Agent",
         version: "bundled",

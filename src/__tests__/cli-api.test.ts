@@ -44,7 +44,7 @@ describe('api-client', () => {
     vi.stubGlobal('fetch', mockFetch)
 
     const { apiCall } = await import('../cli/api-client.js')
-    const result = await apiCall(21420, '/api/sessions', { method: 'GET' })
+    const result = await apiCall(21420, '/api/sessions', { method: 'GET' }, tmpDir)
 
     expect(mockFetch).toHaveBeenCalledWith(
       'http://127.0.0.1:21420/api/sessions',

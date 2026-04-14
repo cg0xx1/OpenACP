@@ -30,6 +30,8 @@ $ERROR_C   = "$ESC[38;2;239;68;68m"      # red #ef4444
 $MUTED     = "$ESC[38;2;90;100;128m"     # text-muted #5a6480
 $NC        = "$ESC[0m"
 
+$INSTALLER_VERSION = "1.0.1"
+
 $NODE_MIN_MAJOR = 20
 
 function Write-Msg {
@@ -50,6 +52,7 @@ function Write-Banner {
     Write-Host ""
     Write-Host "${ACCENT}${BOLD}  OpenACP Installer${NC}"
     Write-Host "${MUTED}  AI coding agents, anywhere.${NC}"
+    Write-Host "${MUTED}  installer v$INSTALLER_VERSION${NC}"
     Write-Host ""
 }
 
@@ -204,14 +207,29 @@ function Resolve-PackageInstallSpec {
     return "@openacp/cli@$RequestedTag"
 }
 
+function Resolve-NpmExecutable {
+    # Node for Windows ships npm.ps1, which rebuilds argv via PowerShell's parser. Scoped package
+    # names (@scope/pkg) break that and npm may report Unknown command "pm". npm.cmd calls node
+    # directly and does not have this bug.
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if ($nodeCmd -and $nodeCmd.Source) {
+        $npmCmd = Join-Path (Split-Path -Parent $nodeCmd.Source) 'npm.cmd'
+        if (Test-Path -LiteralPath $npmCmd) {
+            return $npmCmd
+        }
+    }
+    return 'npm'
+}
+
 # ─── Section 6: Install via npm ──────────────────────────────────────────────
 
 function Install-OpenACPNpm {
+    $npmExe = Resolve-NpmExecutable
     $spec = Resolve-PackageInstallSpec -RequestedTag $Tag
     Write-Msg -Level info -Message "Installing $spec globally via npm..."
 
     if ($DryRun) {
-        Write-Msg -Level info -Message "[dry-run] Would run: npm install -g $spec"
+        Write-Msg -Level info -Message "[dry-run] Would run: npm install -g -- `"$spec`""
         return
     }
 
@@ -223,7 +241,7 @@ function Install-OpenACPNpm {
     while ($attempt -lt $maxRetries) {
         $attempt++
         try {
-            $lastOutput = & npm install -g $spec 2>&1
+            $lastOutput = & $npmExe install -g -- "$spec" 2>&1
             if ($LASTEXITCODE -eq 0) {
                 Write-Msg -Level success -Message "Installed $spec via npm"
                 return
@@ -235,7 +253,7 @@ function Install-OpenACPNpm {
         } catch {
             $lastOutput = "$_"
             if ($attempt -lt $maxRetries) {
-                Write-Msg -Level warn -Message "npm install error (attempt $attempt/$maxRetries): $_ — retrying in ${retryDelay}s..."
+                Write-Msg -Level warn -Message "npm install error (attempt $attempt/$maxRetries): $_ - retrying in ${retryDelay}s..."
                 Start-Sleep -Seconds $retryDelay
             }
         }
@@ -390,8 +408,9 @@ function Main {
         $env:Path = [System.Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path', 'User')
 
         # Find npm global bin and ensure it's in user PATH
+        $npmExe = Resolve-NpmExecutable
         try {
-            $npmPrefix = (& npm prefix -g 2>$null).Trim()
+            $npmPrefix = (& $npmExe prefix -g 2>$null).Trim()
             if ($npmPrefix) {
                 Add-ToPath -Dir $npmPrefix
             }
@@ -414,7 +433,8 @@ function Main {
     if (-not $openacp) {
         # Also check npm global prefix directly
         try {
-            $npmPrefix = (& npm prefix -g 2>$null).Trim()
+            $npmForPrefix = Resolve-NpmExecutable
+            $npmPrefix = (& $npmForPrefix prefix -g 2>$null).Trim()
             if ($npmPrefix -and (Test-Path (Join-Path $npmPrefix 'openacp.cmd'))) {
                 $env:Path = "$env:Path;$npmPrefix"
                 Add-ToPath -Dir $npmPrefix

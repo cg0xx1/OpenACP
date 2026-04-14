@@ -1,17 +1,26 @@
 import type { AssistantSection } from '../assistant-registry.js'
 
+/**
+ * Creates the "Configuration" section for the assistant's system prompt.
+ *
+ * Injects the workspace base path and speech-to-text availability, so the
+ * assistant knows the current environment and can guide config changes.
+ */
 export function createConfigSection(core: {
-  configManager: { get(): { workspace: { baseDir: string }; speech?: { stt?: { provider?: string } } } }
+  configManager: { resolveWorkspace(): string }
+  lifecycleManager?: { serviceRegistry: { get<T>(name: string): T | undefined } }
 }): AssistantSection {
   return {
     id: 'core:config',
     title: 'Configuration',
     priority: 30,
     buildContext: () => {
-      const config = core.configManager.get()
+      const workspace = core.configManager.resolveWorkspace()
+      const speechSvc = core.lifecycleManager?.serviceRegistry.get<{ isSTTAvailable(): boolean }>('speech')
+      const sttActive = speechSvc ? speechSvc.isSTTAvailable() : false
       return (
-        `Workspace base: ${config.workspace.baseDir}\n` +
-        `STT: ${config.speech?.stt?.provider ? `${config.speech.stt.provider} ✅` : 'Not configured'}`
+        `Workspace base: ${workspace}\n` +
+        `STT: ${sttActive ? 'configured ✅' : 'Not configured'}`
       )
     },
     commands: [

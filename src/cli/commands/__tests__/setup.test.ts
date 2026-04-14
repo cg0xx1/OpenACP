@@ -15,10 +15,10 @@ describe('cmdSetup', () => {
     vi.restoreAllMocks();
   });
 
-  it('writes config.json with correct fields when all flags provided', async () => {
+  it('writes config.json with correct fields when --dir flag provided', async () => {
     const { cmdSetup } = await import('../setup.js');
     await cmdSetup(
-      ['--workspace', '/tmp/my-workspace', '--agent', 'claude-code', '--run-mode', 'daemon'],
+      ['--dir', '/tmp/my-workspace', '--agent', 'claude-code', '--run-mode', 'daemon'],
       tmpDir,
     );
 
@@ -26,15 +26,30 @@ describe('cmdSetup', () => {
     expect(fs.existsSync(configPath)).toBe(true);
 
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(config.workspace.baseDir).toBe('/tmp/my-workspace');
+    expect(config.workspace).toBeUndefined();
     expect(config.defaultAgent).toBe('claude-code');
     expect(config.runMode).toBe('daemon');
     expect(config.autoStart).toBe(false);
   });
 
+  it('ignores unknown flags like --workspace (handled upstream in cli.ts)', async () => {
+    // --workspace deprecation is now handled in cli.ts before cmdSetup is called.
+    // cmdSetup receives the resolved instanceRoot and ignores --workspace in args.
+    const { cmdSetup } = await import('../setup.js');
+    await cmdSetup(
+      ['--workspace', '/tmp/my-workspace', '--agent', 'claude-code', '--run-mode', 'daemon'],
+      tmpDir,
+    );
+
+    const configPath = path.join(tmpDir, 'config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(config.workspace).toBeUndefined();
+    expect(config.defaultAgent).toBe('claude-code');
+  });
+
   it('uses first agent when comma-separated agents passed', async () => {
     const { cmdSetup } = await import('../setup.js');
-    await cmdSetup(['--workspace', '/tmp/ws', '--agent', 'claude-code,gemini'], tmpDir);
+    await cmdSetup(['--dir', '/tmp/ws', '--agent', 'claude-code,gemini'], tmpDir);
 
     const config = JSON.parse(fs.readFileSync(path.join(tmpDir, 'config.json'), 'utf-8'));
     expect(config.defaultAgent).toBe('claude-code');
@@ -45,7 +60,7 @@ describe('cmdSetup', () => {
     const { cmdSetup } = await import('../setup.js');
     const result = await captureJsonOutput(async () => {
       await cmdSetup(
-        ['--workspace', '/tmp/ws', '--agent', 'claude-code', '--json'],
+        ['--dir', '/tmp/ws', '--agent', 'claude-code', '--json'],
         tmpDir,
       );
     });
@@ -55,19 +70,11 @@ describe('cmdSetup', () => {
     expect((data.configPath as string)).toContain('config.json');
   });
 
-  it('exits with code 1 when --workspace is missing', async () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('process.exit called'); }) as any);
-
-    const { cmdSetup } = await import('../setup.js');
-    await expect(cmdSetup(['--agent', 'claude-code'], tmpDir)).rejects.toThrow('process.exit called');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
   it('exits with code 1 when --agent is missing', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => { throw new Error('process.exit called'); }) as any);
 
     const { cmdSetup } = await import('../setup.js');
-    await expect(cmdSetup(['--workspace', '/tmp/ws'], tmpDir)).rejects.toThrow('process.exit called');
+    await expect(cmdSetup(['--dir', '/tmp/ws'], tmpDir)).rejects.toThrow('process.exit called');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

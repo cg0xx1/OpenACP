@@ -14,9 +14,11 @@ import type { ContextManager } from "../../plugins/context/context-manager.js";
 import type { ContextQuery, ContextOptions, ContextResult } from "../../plugins/context/context-provider.js";
 import { Session } from "./session.js";
 import { createChildLogger } from "../utils/log.js";
+import { Hook, BusEvent, SessionEv } from "../events.js";
 
 const log = createChildLogger({ module: "session-factory" });
 
+/** Parameters for creating a new session — used by SessionFactory.create() and Core.createFullSession(). */
 export interface SessionCreateParams {
   channelId: string;
   agentName: string;
@@ -24,6 +26,7 @@ export interface SessionCreateParams {
   resumeAgentSessionId?: string;
   existingSessionId?: string;
   initialName?: string;
+  isAssistant?: boolean;
 }
 
 export interface SideEffectDeps {
@@ -32,6 +35,14 @@ export interface SideEffectDeps {
   tunnelService?: TunnelService;
 }
 
+/**
+ * Constructs new Sessions with the right agent, working directory, and initial state.
+ *
+ * Handles agent spawning (or resuming from a previous ACP session), middleware integration,
+ * ACP state hydration, and side-effect wiring (usage tracking, tunnel cleanup).
+ * Also provides lazy resume: when a message arrives for a stored (not live) session,
+ * the factory transparently resumes it by re-spawning the agent with the stored session ID.
+ */
 export class SessionFactory {
   middlewareChain?: MiddlewareChain;
   private resumeLocks: Map<string, Promise<Session | null>> = new Map();
@@ -48,6 +59,10 @@ export class SessionFactory {
   agentCatalog?: AgentCatalog;
   /** Injected by Core — needed for context-aware session creation */
   getContextManager?: () => ContextManager | undefined;
+  /** Injected by Core — returns extra filesystem paths the agent is allowed to read.
+   *  Used to whitelist the file-service upload directory so agents can read attachments
+   *  saved outside the workspace (e.g. ~/.openacp/instances/main/files/). */
+  getAgentAllowedPaths?: () => string[];
 
   constructor(
     private agentManager: AgentManager,
@@ -63,6 +78,10 @@ export class SessionFactory {
       : this.speechServiceAccessor;
   }
 
+  /**
+   * Create a new Session: spawn agent → create Session instance → hydrate ACP state → register.
+   * Runs session:beforeCreate middleware (which can modify params or block creation).
+   */
   async create(params: SessionCreateParams): Promise<Session> {
     // Hook: session:beforeCreate — modifiable, can block
     let createParams = params;
@@ -74,7 +93,7 @@ export class SessionFactory {
         channelId: params.channelId,
         threadId: '', // threadId is assigned after session creation
       };
-      const result = await this.middlewareChain.execute('session:beforeCreate', payload, async (p) => p);
+      const result = await this.middlewareChain.execute(Hook.SESSION_BEFORE_CREATE, payload, async (p) => p);
       if (!result) throw new Error("Session creation blocked by middleware");
       // Apply any middleware modifications back to create params
       createParams = {
@@ -86,18 +105,38 @@ export class SessionFactory {
     }
 
     // 1. Spawn or resume agent
+    // Include config-level allowedPaths so agents can read whitelisted directories from startup
+    const configAllowedPaths = this.configManager?.get().workspace?.security?.allowedPaths ?? [];
+
     let agentInstance;
     try {
-      agentInstance = createParams.resumeAgentSessionId
-        ? await this.agentManager.resume(
+      if (createParams.resumeAgentSessionId) {
+        try {
+          agentInstance = await this.agentManager.resume(
             createParams.agentName,
             createParams.workingDirectory,
             createParams.resumeAgentSessionId,
-          )
-        : await this.agentManager.spawn(
+            configAllowedPaths,
+          );
+        } catch (resumeErr) {
+          // Resume failed (session expired after restart) — fall back to fresh spawn
+          log.warn(
+            { agentName: createParams.agentName, resumeErr },
+            "Agent session resume failed, falling back to fresh spawn",
+          );
+          agentInstance = await this.agentManager.spawn(
             createParams.agentName,
             createParams.workingDirectory,
+            configAllowedPaths,
           );
+        }
+      } else {
+        agentInstance = await this.agentManager.spawn(
+          createParams.agentName,
+          createParams.workingDirectory,
+          configAllowedPaths,
+        );
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : String(err);
@@ -132,33 +171,24 @@ export class SessionFactory {
         message: guidanceLines.join("\n"),
       };
 
-      // Create a lightweight "failed" session context so UIs listening on the event bus
-      // still receive a message in the right channel/thread.
-      const failedSession = new Session({
-        id: createParams.existingSessionId,
-        channelId: createParams.channelId,
-        agentName: createParams.agentName,
-        workingDirectory: createParams.workingDirectory,
-        // Dummy agent instance — will never be prompted
-        agentInstance: {
-          sessionId: "",
-          prompt: async () => {},
-          cancel: async () => {},
-          destroy: async () => {},
-          on: () => {},
-          off: () => {},
-        } as any,
-        speechService: this.speechService,
-      });
-      this.sessionManager.registerSession(failedSession);
-      failedSession.emit("agent_event", guidance);
-      this.eventBus.emit("agent:event", {
-        sessionId: failedSession.id,
+      // Emit the error event directly on the event bus so UIs (SSE, adapters) can
+      // display it. We intentionally do NOT register a session — the dummy session
+      // would never be cleaned up, leaking memory in SessionManager.
+      const failedSessionId = createParams.existingSessionId ?? `failed-${Date.now()}`;
+      this.eventBus.emit(BusEvent.AGENT_EVENT, {
+        sessionId: failedSessionId,
         event: guidance,
       });
 
       // Re-throw so callers still see the failure
       throw err;
+    }
+
+    // Whitelist extra paths (e.g. file-service upload dir) so agents can read attachments
+    // saved outside the workspace boundary without lifting the workspace guard entirely.
+    const extraPaths = this.getAgentAllowedPaths?.() ?? [];
+    for (const p of extraPaths) {
+      agentInstance.addAllowedPath(p);
     }
 
     // Wire middleware chain to agent instance for FS/terminal hooks
@@ -180,25 +210,17 @@ export class SessionFactory {
     }
 
     // 3. Propagate ACP state from agent session response
-    const resp = agentInstance.initialSessionResponse;
-    if (resp) {
-      if (resp.configOptions) {
-        session.setInitialConfigOptions(resp.configOptions as import("../types.js").ConfigOption[]);
-      }
-      if (agentInstance.agentCapabilities) {
-        session.setAgentCapabilities(agentInstance.agentCapabilities);
-      }
-    } else if (agentInstance.agentCapabilities) {
-      session.setAgentCapabilities(agentInstance.agentCapabilities);
-    }
+    session.applySpawnResponse(agentInstance.initialSessionResponse, agentInstance.agentCapabilities);
 
     // 4. Register in SessionManager
     this.sessionManager.registerSession(session);
-    this.eventBus.emit("session:created", {
-      sessionId: session.id,
-      agent: session.agentName,
-      status: session.status,
-    });
+    if (!session.isAssistant) {
+      this.eventBus.emit(BusEvent.SESSION_CREATED, {
+        sessionId: session.id,
+        agent: session.agentName,
+        status: session.status,
+      });
+    }
 
     return session;
   }
@@ -213,6 +235,79 @@ export class SessionFactory {
     return this.lazyResume(channelId, threadId);
   }
 
+  async getOrResumeById(sessionId: string): Promise<Session | null> {
+    const live = this.sessionManager.getSession(sessionId);
+    if (live) return live;
+
+    if (!this.sessionStore || !this.createFullSession) return null;
+    const record = this.sessionStore.get(sessionId);
+    if (!record) return null;
+    if (record.isAssistant) return null;
+    if (record.status === "error" || record.status === "cancelled") return null;
+
+    // Deduplicate concurrent resumes for the same session
+    const existing = this.resumeLocks.get(sessionId);
+    if (existing) return existing;
+
+    const resumePromise = (async (): Promise<Session | null> => {
+      try {
+        const p = record.platform as { topicId?: number; threadId?: string } | undefined;
+        const existingThreadId = p?.topicId ? String(p.topicId) : p?.threadId;
+        const session = await this.createFullSession!({
+          channelId: record.channelId,
+          agentName: record.agentName,
+          workingDirectory: record.workingDir,
+          resumeAgentSessionId: record.agentSessionId,
+          existingSessionId: record.sessionId,
+          initialName: record.name,
+          threadId: existingThreadId,
+        });
+        session.activate();
+        if (record.clientOverrides) {
+          session.clientOverrides = record.clientOverrides;
+        } else if (record.dangerousMode) {
+          session.clientOverrides = { bypassPermissions: true };
+        }
+        if (record.firstAgent) session.firstAgent = record.firstAgent;
+        if (record.agentSwitchHistory) session.agentSwitchHistory = record.agentSwitchHistory;
+        if (record.currentPromptCount != null) session.promptCount = record.currentPromptCount;
+        if (record.attachedAdapters) session.attachedAdapters = record.attachedAdapters;
+        if (record.platforms) {
+          for (const [adapterId, platformData] of Object.entries(record.platforms)) {
+            const data = platformData as Record<string, unknown>;
+            const tid = adapterId === "telegram"
+              ? String(data.topicId ?? "")
+              : String(data.threadId ?? "");
+            if (tid) session.threadIds.set(adapterId, tid);
+          }
+        }
+        if (record.acpState) {
+          if (record.acpState.configOptions && session.configOptions.length === 0) {
+            session.setInitialConfigOptions(record.acpState.configOptions);
+          }
+          if (record.acpState.agentCapabilities && !session.agentCapabilities) {
+            session.setAgentCapabilities(record.acpState.agentCapabilities);
+          }
+        }
+        log.info({ sessionId }, "Lazy resume by ID successful");
+        return session;
+      } catch (err) {
+        log.error({ err, sessionId }, "Lazy resume by ID failed");
+        return null;
+      } finally {
+        this.resumeLocks.delete(sessionId);
+      }
+    })();
+
+    this.resumeLocks.set(sessionId, resumePromise);
+    return resumePromise;
+  }
+
+  /**
+   * Attempt to resume a session from disk when a message arrives on a thread with
+   * no live session. Deduplicates concurrent resume attempts for the same thread
+   * via resumeLocks to avoid spawning multiple agents.
+   */
   private async lazyResume(channelId: string, threadId: string): Promise<Session | null> {
     const store = this.sessionStore;
     if (!store || !this.createFullSession) return null;
@@ -225,12 +320,13 @@ export class SessionFactory {
 
     const record = store.findByPlatform(
       channelId,
-      (p) => String(p.topicId) === threadId,
+      (p) => String(p.topicId) === threadId || String(p.threadId ?? "") === threadId,
     );
     if (!record) {
       log.debug({ threadId, channelId }, "No session record found for thread");
       return null;
     }
+    if (record.isAssistant) return null;
 
     // Don't resume errored or cancelled sessions
     if (record.status === "error" || record.status === "cancelled") {
@@ -266,13 +362,48 @@ export class SessionFactory {
         if (record.agentSwitchHistory) session.agentSwitchHistory = record.agentSwitchHistory;
         if (record.currentPromptCount != null) session.promptCount = record.currentPromptCount;
 
-        // Hydrate cached ACP state (will be overridden by agent events on resume)
+        // Restore multi-adapter state
+        if (record.attachedAdapters) {
+          session.attachedAdapters = record.attachedAdapters;
+        }
+        if (record.platforms) {
+          for (const [adapterId, platformData] of Object.entries(record.platforms)) {
+            const data = platformData as Record<string, unknown>;
+            const tid = adapterId === "telegram"
+              ? String(data.topicId ?? "")
+              : String(data.threadId ?? "");
+            if (tid) session.threadIds.set(adapterId, tid);
+          }
+        }
+
+        // Hydrate cached ACP state only as fallback — fresh agent data takes precedence
         if (record.acpState) {
-          if (record.acpState.configOptions) {
+          if (record.acpState.configOptions && session.configOptions.length === 0) {
             session.setInitialConfigOptions(record.acpState.configOptions);
           }
-          if (record.acpState.agentCapabilities) {
+          if (record.acpState.agentCapabilities && !session.agentCapabilities) {
             session.setAgentCapabilities(record.acpState.agentCapabilities);
+          }
+        }
+
+        // If resume fell back to a fresh spawn (session.agentSessionId differs from record),
+        // inject conversation history so the new agent has context from previous sessions.
+        const resumeFalledBack = record.agentSessionId && session.agentSessionId !== record.agentSessionId;
+        if (resumeFalledBack) {
+          log.info({ sessionId: session.id }, "Resume fell back to fresh spawn — injecting conversation history");
+          const contextManager = this.getContextManager?.();
+          if (contextManager) {
+            try {
+              const config = this.configManager?.get();
+              const labelAgent = config?.agentSwitch?.labelHistory ?? true;
+              const contextResult = await contextManager.buildContext(
+                { type: 'session', value: record.sessionId, repoPath: record.workingDir },
+                { labelAgent, noCache: true },
+              );
+              if (contextResult?.markdown) {
+                session.setContext(contextResult.markdown);
+              }
+            } catch { /* context injection is best-effort */ }
           }
         }
 
@@ -300,11 +431,12 @@ export class SessionFactory {
     return resumePromise;
   }
 
+  /** Create a brand-new session, resolving agent name and workspace from config if not provided. */
   async handleNewSession(
     channelId: string,
     agentName?: string,
     workspacePath?: string,
-    options?: { createThread?: boolean },
+    options?: { createThread?: boolean; threadId?: string },
   ): Promise<Session> {
     if (!this.configManager || !this.agentCatalog || !this.createFullSession) {
       throw new Error("SessionFactory not fully initialized");
@@ -359,6 +491,7 @@ export class SessionFactory {
     );
   }
 
+  /** Create a session and inject conversation context from a ContextProvider (e.g., history from a previous session). */
   async createSessionWithContext(params: {
     channelId: string;
     agentName: string;
@@ -366,6 +499,7 @@ export class SessionFactory {
     contextQuery: ContextQuery;
     contextOptions?: ContextOptions;
     createThread?: boolean;
+    threadId?: string;
   }): Promise<{ session: Session; contextResult: ContextResult | null }> {
     if (!this.createFullSession) throw new Error("SessionFactory not fully initialized");
 
@@ -387,6 +521,7 @@ export class SessionFactory {
       agentName: params.agentName,
       workingDirectory: params.workingDirectory,
       createThread: params.createThread,
+      threadId: params.threadId,
     });
 
     if (contextResult) {
@@ -396,11 +531,12 @@ export class SessionFactory {
     return { session, contextResult };
   }
 
+  /** Wire session-level side effects: usage tracking (via EventBus) and tunnel cleanup on session end. */
   wireSideEffects(session: Session, deps: SideEffectDeps): void {
     // Wire usage tracking via event bus (consumed by usage plugin)
-    session.on("agent_event", (event: AgentEvent) => {
+    session.on(SessionEv.AGENT_EVENT, (event: AgentEvent) => {
       if (event.type !== "usage") return;
-      deps.eventBus.emit("usage:recorded", {
+      deps.eventBus.emit(BusEvent.USAGE_RECORDED, {
         sessionId: session.id,
         agentName: session.agentName,
         timestamp: new Date().toISOString(),
@@ -411,7 +547,7 @@ export class SessionFactory {
     });
 
     // Clean up user tunnels when session ends
-    session.on("status_change", (_from, to) => {
+    session.on(SessionEv.STATUS_CHANGE, (_from, to) => {
       if ((to === "finished" || to === "cancelled") && deps.tunnelService) {
         deps.tunnelService
           .stopBySession(session.id)

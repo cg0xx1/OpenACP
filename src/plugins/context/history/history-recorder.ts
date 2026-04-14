@@ -63,6 +63,8 @@ function extractLocations(
   return result.length > 0 ? result : undefined;
 }
 
+// These event types carry no meaningful conversation history — skip them to keep
+// the history compact and avoid noise in future context builds.
 const IGNORED_TYPES = new Set([
   "session_end",
   "error",
@@ -74,8 +76,26 @@ const IGNORED_TYPES = new Set([
   "tts_strip",
 ]);
 
+// Debounce intermediate writes — during a long agent turn, events arrive at high
+// frequency. We flush at most once per 2s so we don't hammer the disk, but we
+// always do a final write on turn end regardless of the debounce timer.
+const DEBOUNCE_MS = 2000;
+
+/**
+ * Records conversation turns to the HistoryStore in real-time by hooking into
+ * the `agent:beforePrompt`, `agent:afterEvent`, `turn:end`, `permission:afterResolve`,
+ * and `session:afterDestroy` middleware hooks.
+ *
+ * Each call to `onBeforePrompt` opens a new user→assistant turn pair.
+ * `onAfterEvent` streams agent events into the current assistant turn.
+ * `onTurnEnd` finalises the turn and flushes to disk.
+ *
+ * In-memory state is keyed by sessionId. Sessions are cleaned up on destroy
+ * or explicit `finalize()`.
+ */
 export class HistoryRecorder {
   private states = new Map<string, RecorderState>();
+  private debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(private readonly store: HistoryStore) {}
 
@@ -83,6 +103,7 @@ export class HistoryRecorder {
     sessionId: string,
     text: string,
     attachments: Attachment[] | undefined,
+    sourceAdapterId?: string,
   ): void {
     let state = this.states.get(sessionId);
     if (!state) {
@@ -101,6 +122,9 @@ export class HistoryRecorder {
     };
     if (attachments && attachments.length > 0) {
       userTurn.attachments = attachments.map(toHistoryAttachment);
+    }
+    if (sourceAdapterId) {
+      userTurn.sourceAdapterId = sourceAdapterId;
     }
     state.history.turns.push(userTurn);
 
@@ -152,6 +176,8 @@ export class HistoryRecorder {
           status: event.status,
         };
         if (event.kind) step.kind = event.kind;
+        // rawInput may arrive in the initial tool_call event (not just tool_update)
+        if (event.rawInput !== undefined) step.input = event.rawInput;
         steps.push(step);
         break;
       }
@@ -246,6 +272,8 @@ export class HistoryRecorder {
         break;
       }
     }
+
+    this.scheduleDebounce(sessionId);
   }
 
   onPermissionResolved(
@@ -263,19 +291,72 @@ export class HistoryRecorder {
   async onTurnEnd(sessionId: string, stopReason: string): Promise<void> {
     const state = this.states.get(sessionId);
     if (!state || !state.currentAssistantTurn) return;
+    this.cancelDebounce(sessionId);
     state.currentAssistantTurn.stopReason = stopReason;
     state.currentAssistantTurn = null;
     await this.store.write(state.history);
   }
 
+  /** Flush any in-progress turn as "interrupted" and clean up. Called on session destroy. */
+  async onSessionDestroy(sessionId: string): Promise<void> {
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    this.cancelDebounce(sessionId);
+    if (state.currentAssistantTurn) {
+      state.currentAssistantTurn.stopReason = "interrupted";
+      state.currentAssistantTurn = null;
+      await this.store.write(state.history);
+    }
+    this.finalize(sessionId);
+  }
+
   finalize(sessionId: string): void {
+    this.cancelDebounce(sessionId);
     this.states.delete(sessionId);
+  }
+
+  /**
+   * Flush any in-memory state for a session to disk immediately.
+   * Marks any in-progress turn as "interrupted".
+   * Called before buildContext during agent switches to ensure the last turn
+   * is persisted before the new agent reads history.
+   */
+  async flush(sessionId: string): Promise<void> {
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    this.cancelDebounce(sessionId);
+    if (state.currentAssistantTurn) {
+      state.currentAssistantTurn.stopReason = "interrupted";
+      state.currentAssistantTurn = null;
+    }
+    await this.store.write(state.history);
   }
 
   getState(sessionId: string): RecorderState | undefined {
     return this.states.get(sessionId);
   }
 
+  private scheduleDebounce(sessionId: string): void {
+    this.cancelDebounce(sessionId);
+    const state = this.states.get(sessionId);
+    if (!state) return;
+    const timer = setTimeout(() => {
+      this.debounceTimers.delete(sessionId);
+      this.store.write(state.history).catch(() => {});
+    }, DEBOUNCE_MS);
+    this.debounceTimers.set(sessionId, timer);
+  }
+
+  private cancelDebounce(sessionId: string): void {
+    const timer = this.debounceTimers.get(sessionId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.debounceTimers.delete(sessionId);
+    }
+  }
+
+  // Search backwards so we match the most recent tool call with this ID first,
+  // in case the same tool is invoked multiple times within one turn.
   private findToolCall(steps: Step[], id: string): ToolCallStep | undefined {
     for (let i = steps.length - 1; i >= 0; i--) {
       const s = steps[i];

@@ -148,3 +148,104 @@ describe('Session ACP state', () => {
     expect(session.clientOverrides.bypassPermissions).toBeUndefined()
   })
 })
+
+describe('Session.setConfigOption legacy fallback (empty configOptions response)', () => {
+  const initialOptions: ConfigOption[] = [
+    {
+      id: 'mode',
+      name: 'Mode',
+      category: 'mode',
+      type: 'select',
+      currentValue: 'code',
+      options: [
+        { value: 'code', name: 'Code' },
+        { value: 'architect', name: 'Architect' },
+      ],
+    },
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: 'sonnet',
+      options: [
+        { value: 'sonnet', name: 'Sonnet' },
+        { value: 'opus', name: 'Opus' },
+      ],
+    },
+  ]
+
+  let session: Session
+  let agent: ReturnType<typeof mockAgentInstance>
+
+  beforeEach(() => {
+    agent = mockAgentInstance()
+    session = new Session({
+      id: 'test-session',
+      channelId: 'telegram',
+      agentName: 'gemini',
+      workingDirectory: '/tmp',
+      agentInstance: agent,
+    })
+    session.setInitialConfigOptions(initialOptions)
+  })
+
+  it('updates currentValue optimistically when agent returns empty configOptions', async () => {
+    // Simulate legacy agent (e.g. Gemini) returning empty configOptions
+    vi.mocked(agent.setConfigOption).mockResolvedValueOnce({ configOptions: [] })
+
+    await session.setConfigOption('mode', { type: 'select', value: 'architect' })
+
+    expect(session.getConfigValue('mode')).toBe('architect')
+  })
+
+  it('preserves other options when updating one optimistically', async () => {
+    vi.mocked(agent.setConfigOption).mockResolvedValueOnce({ configOptions: [] })
+
+    await session.setConfigOption('mode', { type: 'select', value: 'architect' })
+
+    // model option should be unchanged
+    expect(session.getConfigValue('model')).toBe('sonnet')
+    expect(session.configOptions).toHaveLength(2)
+  })
+
+  it('uses full response configOptions when agent returns them (non-legacy)', async () => {
+    const updatedOptions: ConfigOption[] = [
+      { id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: 'architect', options: [] },
+      { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'opus', options: [] },
+    ]
+    vi.mocked(agent.setConfigOption).mockResolvedValueOnce({ configOptions: updatedOptions })
+
+    await session.setConfigOption('mode', { type: 'select', value: 'architect' })
+
+    // Should use the full response, including model change returned by agent
+    expect(session.configOptions).toEqual(updatedOptions)
+    expect(session.getConfigValue('model')).toBe('opus')
+  })
+
+  it('does not touch boolean options when updating a select option optimistically', async () => {
+    const withBoolean: ConfigOption[] = [
+      ...initialOptions,
+      { id: 'verbose', name: 'Verbose', type: 'boolean', currentValue: true },
+    ]
+    session.setInitialConfigOptions(withBoolean)
+    vi.mocked(agent.setConfigOption).mockResolvedValueOnce({ configOptions: [] })
+
+    await session.setConfigOption('mode', { type: 'select', value: 'architect' })
+
+    const verboseOpt = session.getConfigOption('verbose')
+    expect(verboseOpt?.type).toBe('boolean')
+    if (verboseOpt?.type === 'boolean') {
+      expect(verboseOpt.currentValue).toBe(true)
+    }
+  })
+
+  it('model currentValue updated optimistically when agent returns empty configOptions', async () => {
+    vi.mocked(agent.setConfigOption).mockResolvedValueOnce({ configOptions: [] })
+
+    await session.setConfigOption('model', { type: 'select', value: 'opus' })
+
+    expect(session.getConfigValue('model')).toBe('opus')
+    expect(session.getConfigValue('mode')).toBe('code') // mode unchanged
+  })
+})

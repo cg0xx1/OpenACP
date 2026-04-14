@@ -17,6 +17,15 @@ function botFromCtx(ctx: Context): Bot {
 
 // --- Arg parsing ---
 
+/**
+ * Parse `/resume` arguments into a ContextQuery.
+ *
+ * Supported forms:
+ * - No args → latest 5 sessions
+ * - `pr <number>`, `branch <name>`, `commit <hash>`
+ * - Checkpoint ID (12-char hex) or session ID (auto-detected)
+ * - GitHub/Entire.io URLs (PR, commit, branch, compare, checkpoint)
+ */
 export function parseResumeArgs(matchStr: string): { query: Omit<ContextQuery, "repoPath"> } | null {
   const args = matchStr.split(" ").filter(Boolean);
   if (args.length === 0) return { query: { type: "latest", value: "5" } };
@@ -130,10 +139,8 @@ async function executeResume(
       workingDirectory: repoPath,
       contextQuery: fullQuery,
       contextOptions: { maxTokens: DEFAULT_MAX_TOKENS },
+      threadId: String(threadId),
     });
-
-    session.threadId = String(threadId);
-    await core.sessionManager.patchRecord(session.id, { platform: { topicId: threadId } });
 
     // Build summary info
     const sessionCount = contextResult?.sessionCount ?? listResult.sessions.length;
@@ -181,6 +188,14 @@ async function executeResume(
 
 // --- Main handler ---
 
+/**
+ * Handle `/resume [args]` — create a new session with Entire.io conversation context.
+ *
+ * Parses the args into a ContextQuery, resolves the default workspace, checks that
+ * the Entire provider is enabled, then creates the session with historical context
+ * loaded. Creates the forum topic before calling `createSessionWithContext` to
+ * avoid a race where session events fire before the thread is ready.
+ */
 export async function handleResume(
   ctx: Context,
   core: OpenACPCore,
@@ -210,10 +225,8 @@ export async function handleResume(
 
   const { query } = parsed;
 
-  // Use default workspace baseDir
-  const config = core.configManager.get();
-  const baseDir = config.workspace.baseDir;
-  const resolved = core.configManager.resolveWorkspace(baseDir);
+  // Use default workspace directory (derived from instance root)
+  const resolved = core.configManager.resolveWorkspace();
   await executeResume(ctx, core, chatId, query, resolved, onControlMessage);
 }
 

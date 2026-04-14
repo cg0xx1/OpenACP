@@ -1,39 +1,85 @@
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
-import { InstanceRegistry } from '../../core/instance/instance-registry.js'
-import { getGlobalRoot, generateSlug } from '../../core/instance/instance-context.js'
+import { randomUUID } from 'node:crypto'
+import { InstanceRegistry, readIdFromConfig } from '../../core/instance/instance-registry.js'
+import { getGlobalRoot } from '../../core/instance/instance-context.js'
+import { initInstanceFiles } from '../../core/instance/instance-init.js'
 import { readInstanceInfo } from './status.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 import { wantsHelp } from './helpers.js'
 
+
+/** Summary entry for a registered instance, used in list and JSON output. */
 export interface InstanceListEntry {
   id: string
   name: string | null
+  /** Parent directory of the .openacp/ folder (the workspace directory). */
   directory: string
+  /** Full path to the .openacp/ folder. */
   root: string
   status: 'running' | 'stopped'
   port: number | null
 }
 
+/**
+ * Build a summary list of all registered instances from the global registry.
+ * Reads live status (PID, API port) directly from each instance root.
+ */
 export async function buildInstanceListEntries(): Promise<InstanceListEntry[]> {
   const registryPath = path.join(getGlobalRoot(), 'instances.json')
   const registry = new InstanceRegistry(registryPath)
   registry.load()
-  return registry.list().map(entry => {
+  const entries = registry.list()
+  return Promise.all(entries.map(async entry => {
     const info = readInstanceInfo(entry.root)
+    const status = info.pid
+      ? 'running'
+      // PID check failed but API port exists — do a real-time HTTP health check
+      // to catch processes that are alive but have no valid PID file (e.g. stale/missing PID file after restart)
+      : (info.apiPort && await isApiResponding(info.apiPort, entry.id) ? 'running' : 'stopped')
     return {
       id: entry.id,
       name: info.name,
       directory: path.dirname(entry.root),
       root: entry.root,
-      status: (info.pid ? 'running' : 'stopped') as 'running' | 'stopped',
+      status: status as 'running' | 'stopped',
       port: info.apiPort,
     }
-  })
+  }))
 }
 
-export async function cmdInstances(args: string[] = []): Promise<void> {
+/**
+ * Checks if the OpenACP API server on the given port belongs to the expected instance.
+ *
+ * Verifies instanceId in the response to guard against a different process occupying the port.
+ * Used as a fallback when the PID file is missing or stale.
+ */
+async function isApiResponding(port: number, expectedInstanceId: string): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 2000)
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/system/health`, {
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    if (!res.ok) return false
+    const body = await res.json() as { instanceId?: string }
+    return body.instanceId === expectedInstanceId
+  } catch {
+    return false
+  }
+}
+
+/**
+ * `openacp instances` — Manage registered OpenACP instances.
+ *
+ * Subcommands: list, create
+ *
+ * parentFlags carries workspace flags (--dir, --from, --name) that were consumed by
+ * the top-level extractInstanceFlags() parser and must be re-injected for create.
+ */
+export async function cmdInstances(args: string[] = [], parentFlags?: { dir?: string; from?: string; name?: string }): Promise<void> {
   if (wantsHelp(args)) {
     printInstancesHelp()
     return
@@ -41,6 +87,13 @@ export async function cmdInstances(args: string[] = []): Promise<void> {
 
   const sub = args[0]
   const subArgs = args.slice(1)
+
+  // Re-inject flags that were consumed by top-level parser
+  if (parentFlags) {
+    if (parentFlags.dir && !subArgs.includes('--dir')) subArgs.push('--dir', parentFlags.dir)
+    if (parentFlags.from && !subArgs.includes('--from')) subArgs.push('--from', parentFlags.from)
+    if (parentFlags.name && !subArgs.includes('--name')) subArgs.push('--name', parentFlags.name)
+  }
 
   if (!sub || sub === 'list') return cmdInstancesList(subArgs)
   if (sub === 'create') return cmdInstancesCreate(subArgs)
@@ -92,11 +145,18 @@ async function cmdInstancesList(args: string[]): Promise<void> {
   console.log('')
 }
 
+/**
+ * Create or register an instance at --dir.
+ *
+ * If .openacp already exists: reconciles the ID (config.json vs registry),
+ * applies --name if provided, and warns without overwriting.
+ * If .openacp does not exist: creates it from scratch or clones from --from.
+ * Orphaned registry entries for deleted .openacp directories are cleaned up.
+ */
 export async function cmdInstancesCreate(args: string[]): Promise<void> {
   const json = isJsonMode(args)
   if (json) await muteForJson()
 
-  // Parse flags
   const dirIdx = args.indexOf('--dir')
   const rawDir = dirIdx !== -1 ? args[dirIdx + 1] : undefined
   if (!rawDir) {
@@ -113,8 +173,7 @@ export async function cmdInstancesCreate(args: string[]): Promise<void> {
   const agent = agentIdx !== -1 ? args[agentIdx + 1] : undefined
   const noInteractive = args.includes('--no-interactive')
 
-  // Resolve absolute paths
-  const resolvedDir = path.resolve(rawDir.replace(/^~/, os.homedir()))
+  const resolvedDir = path.resolve(rawDir!.replace(/^~/, os.homedir()))
   const instanceRoot = path.join(resolvedDir, '.openacp')
 
   const registryPath = path.join(getGlobalRoot(), 'instances.json')
@@ -123,32 +182,39 @@ export async function cmdInstancesCreate(args: string[]): Promise<void> {
 
   // Case: .openacp already exists
   if (fs.existsSync(instanceRoot)) {
-    const existing = registry.getByRoot(instanceRoot)
-    if (existing) {
-      if (json) jsonError(ErrorCodes.UNKNOWN_ERROR, `Instance already exists at ${resolvedDir} (id: ${existing.id})`)
-      console.error(`Error: Instance already exists at ${resolvedDir} (id: ${existing.id})`)
+    if (rawFrom) {
+      if (json) jsonError(ErrorCodes.ALREADY_EXISTS, `Instance already exists at ${resolvedDir} — cannot use --from on an existing instance`)
+      console.error(`Error: Instance already exists at ${resolvedDir}. Remove it first to clone from another instance.`)
       process.exit(1)
     }
-    // .openacp exists but not registered — register it
-    const configPath = path.join(instanceRoot, 'config.json')
-    let name = path.basename(resolvedDir)
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-      name = config.instanceName ?? name
-    } catch {}
-    const id = registry.uniqueId(generateSlug(name))
-    registry.register(id, instanceRoot)
-    registry.save()
+
+    // Resolve id from config.json (source of truth) + registry. Reconciles any mismatch.
+    const { id, registryUpdated } = registry.resolveId(instanceRoot)
+
+    // Write id into config.json if missing; apply --name if provided
+    initInstanceFiles(instanceRoot, { mergeExisting: true, id, instanceName })
+
+    if (registryUpdated) registry.save()
+
+    if (!json) console.warn(`Warning: Instance already exists at ${resolvedDir} (id: ${id})`)
     await outputInstance(json, { id, root: instanceRoot })
     return
   }
 
+  // .openacp does NOT exist — remove any orphaned registry entry pointing here,
+  // then proceed to create. The entry is stale: .openacp was deleted externally.
+  const orphaned = registry.getByRoot(instanceRoot)
+  if (orphaned) {
+    registry.remove(orphaned.id)
+    registry.save()
+    if (!json) console.warn(`Warning: Removed stale registry entry for ${resolvedDir} (id: ${orphaned.id}) — .openacp was deleted. Creating new instance.`)
+  }
+
   // Case: create new
   const name = instanceName ?? `openacp-${registry.list().length + 1}`
-  const id = registry.uniqueId(generateSlug(name))
+  const id = randomUUID()
 
   if (rawFrom) {
-    // Clone from existing instance using copyInstance
     const fromRoot = path.join(path.resolve(rawFrom.replace(/^~/, os.homedir())), '.openacp')
     if (!fs.existsSync(path.join(fromRoot, 'config.json'))) {
       console.error(`Error: No OpenACP instance found at ${rawFrom}`)
@@ -157,28 +223,14 @@ export async function cmdInstancesCreate(args: string[]): Promise<void> {
     fs.mkdirSync(instanceRoot, { recursive: true })
     const { copyInstance } = await import('../../core/instance/instance-copy.js')
     await copyInstance(fromRoot, instanceRoot, {})
-    // Write instanceName into config
-    const configPath = path.join(instanceRoot, 'config.json')
-    try {
-      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
-      config.instanceName = name
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2))
-    } catch {}
-  } else if (noInteractive || !process.stdin.isTTY) {
-    // Minimal config for non-interactive mode
-    fs.mkdirSync(instanceRoot, { recursive: true })
-    const config: Record<string, unknown> = { instanceName: name, runMode: 'daemon' }
-    if (agent) config.defaultAgent = agent
-    fs.writeFileSync(path.join(instanceRoot, 'config.json'), JSON.stringify(config, null, 2))
-    fs.writeFileSync(path.join(instanceRoot, 'plugins.json'), JSON.stringify({ version: 1, installed: {} }, null, 2))
+    // copyInstance strips id — write the new id and instance name in one pass
+    initInstanceFiles(instanceRoot, { mergeExisting: true, id, instanceName: name })
   } else {
-    // Interactive wizard — requires plugin system; fall back to minimal config
-    fs.mkdirSync(instanceRoot, { recursive: true })
-    const config: Record<string, unknown> = { instanceName: name, runMode: 'daemon' }
-    if (agent) config.defaultAgent = agent
-    fs.writeFileSync(path.join(instanceRoot, 'config.json'), JSON.stringify(config, null, 2))
-    fs.writeFileSync(path.join(instanceRoot, 'plugins.json'), JSON.stringify({ version: 1, installed: {} }, null, 2))
-    console.log(`Instance created at ${resolvedDir}. Run 'openacp setup' inside that directory to configure it.`)
+    const agents = agent ? [agent] : undefined
+    initInstanceFiles(instanceRoot, { agents, instanceName: name, id })
+    if (!noInteractive && process.stdin.isTTY) {
+      console.log(`Instance created at ${resolvedDir}. Run 'openacp setup' inside that directory to configure it.`)
+    }
   }
 
   registry.register(id, instanceRoot)

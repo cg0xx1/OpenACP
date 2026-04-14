@@ -3,6 +3,17 @@ import { readApiPort, apiCall } from '../api-client.js'
 import { wantsHelp, buildNestedUpdateFromPath } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
+/**
+ * `openacp config` — View and edit the instance configuration.
+ *
+ * Subcommands:
+ * - (bare): opens the interactive TUI config editor
+ * - set <key> <value>: non-interactive path-value update
+ *
+ * When the daemon is running, config set uses the live API (PATCH /api/config)
+ * so changes take effect without restart where possible. When stopped, edits
+ * config.json directly.
+ */
 export async function cmdConfig(args: string[] = [], instanceRoot?: string): Promise<void> {
   const subCmd = args[0] // 'set' or undefined
 
@@ -126,15 +137,13 @@ the API for live updates. When stopped, edits config file directly.
   const { runConfigEditor } = await import('../../core/config/config-editor.js')
   const { ConfigManager } = await import('../../core/config/config.js')
   const { SettingsManager } = await import('../../core/plugin/settings-manager.js')
-  const { getGlobalRoot } = await import('../../core/instance/instance-context.js')
-  const cm = new ConfigManager(instanceRoot ? pathMod.join(instanceRoot, 'config.json') : undefined)
+  const root = instanceRoot!
+  const cm = new ConfigManager(pathMod.join(root, 'config.json'))
   if (!(await cm.exists())) {
     console.error('No config found. Run "openacp" first to set up.')
     process.exit(1)
   }
-
-  const root = instanceRoot ?? getGlobalRoot()
-  const settingsManager = new SettingsManager(pathMod.join(root, 'plugins'))
+  const settingsManager = new SettingsManager(pathMod.join(root, 'plugins', 'data'))
 
   const port = readApiPort(undefined, instanceRoot)
   if (port !== null) {

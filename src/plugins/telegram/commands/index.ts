@@ -5,7 +5,7 @@ import type { OpenACPCore } from "../../../core/index.js";
 import { handleNew, handleNewChat, createSessionDirect, showAgentPicker, setupNewSessionCallbacks } from './new-session.js'
 import { handleCancel, handleStatus, handleTopics, handleArchive, handleArchiveConfirm, setupSessionCallbacks } from './session.js'
 import { handleUpdate, handleRestart, handleTTS, handleVerbosity, handleOutputMode } from './admin.js'
-import { handleMenu, handleHelp, handleClear, buildMenuKeyboard } from './menu.js'
+import { handleMenu, handleHelp, buildMenuKeyboard } from './menu.js'
 import { handleAgents, handleInstall, handleAgentCallback } from "./agents.js";
 import { handleIntegrate } from "./integrate.js";
 import {
@@ -19,14 +19,23 @@ import { handleSwitch, setupSwitchCallbacks } from "./switch.js";
 import type { CommandRegistry } from "../../../core/command-registry.js";
 import type { MenuRegistry } from "../../../core/menu-registry.js";
 import { TELEGRAM_OVERRIDES } from './telegram-overrides.js'
+import { createChildLogger } from '../../../core/utils/log.js'
+const log = createChildLogger({ module: 'telegram-menu-callbacks' })
 
+/**
+ * Register all callback query handlers for the Telegram bot.
+ *
+ * Handler registration order is significant in grammY: more specific prefix
+ * handlers (ns:, ar:, ag:) must be registered before the broad `m:` dispatcher,
+ * otherwise the broad handler would consume callbacks intended for specific flows.
+ */
 export function setupAllCallbacks(
   bot: Bot,
   core: OpenACPCore,
   chatId: number,
   systemTopicIds?: { notificationTopicId: number; assistantTopicId: number },
   getAssistantSession?: () =>
-    | { topicId: number; enqueuePrompt: (p: string) => Promise<void> }
+    | { topicId: number; enqueuePrompt: (p: string) => Promise<string> }
     | undefined,
   onControlMessage?: (sessionId: string, msgId: number) => void,
 ): void {
@@ -58,12 +67,12 @@ export function setupAllCallbacks(
       core,
       chatId,
       agentKey,
-      core.configManager.get().workspace.baseDir,
+      core.configManager.resolveWorkspace(),
     );
   });
 
   // New Session button flow — must be before broad m: handler
-  setupNewSessionCallbacks(bot, core, chatId, getAssistantSession);
+  setupNewSessionCallbacks(bot, core, chatId);
 
   // Archive confirmation callbacks
   bot.callbackQuery(/^ar:/, (ctx) => handleArchiveConfirm(ctx, core, chatId));
@@ -77,7 +86,10 @@ export function setupAllCallbacks(
     if (!menuRegistry) return
 
     const item = menuRegistry.getItem(itemId)
-    if (!item) return
+    if (!item) {
+      log.warn({ itemId }, 'Menu item not found in registry')
+      return
+    }
 
     const topicId = ctx.callbackQuery.message?.message_thread_id
     const registry = core.lifecycleManager?.serviceRegistry?.get('command-registry') as CommandRegistry | undefined
@@ -202,7 +214,6 @@ export const STATIC_COMMANDS = [
   { command: "menu", description: "Show menu" },
   { command: "integrate", description: "Manage agent integrations" },
   { command: "handoff", description: "Continue this session in your terminal" },
-  { command: "clear", description: "Clear assistant history" },
   { command: "restart", description: "Restart OpenACP" },
   { command: "update", description: "Update to latest version and restart" },
   { command: "doctor", description: "Run system diagnostics" },

@@ -1,5 +1,15 @@
 import type { TemplateParams } from './package-json.js'
 
+/**
+ * Generate CLAUDE.md — the AI agent context file embedded in every plugin.
+ *
+ * This file is the primary reference for AI coding agents (Claude Code, Cursor, etc.)
+ * working on a plugin. It covers: plugin lifecycle, PluginContext API, event types,
+ * middleware hooks, service registry, testing patterns, and links to external docs.
+ *
+ * Must stay in sync with the actual OpenACP plugin API (see CLAUDE.md in repo root
+ * for the update rule). Outdated content here leads AI agents to generate incorrect code.
+ */
 export function generateClaudeMd(params: TemplateParams): string {
   return `# CLAUDE.md
 
@@ -188,7 +198,6 @@ interface InstallContext {
   pluginName: string
   terminal: TerminalIO        // text, select, confirm, password, multiselect, log, spinner, note
   settings: SettingsAPI
-  legacyConfig?: Record<string, unknown>
   dataDir: string
   log: Logger
 }
@@ -224,7 +233,7 @@ Declare in \`permissions\` array. Only request what you need.
 
 Calling a method without the required permission throws \`PluginPermissionError\`.
 
-## Middleware Hooks (20 total)
+## Middleware Hooks (19 total)
 
 Register with \`ctx.registerMiddleware(hook, { priority?, handler })\`. Return \`null\` to block the flow, call \`next()\` to continue.
 

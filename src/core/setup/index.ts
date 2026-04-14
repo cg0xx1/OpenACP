@@ -15,5 +15,4 @@ export { detectAgents, validateAgentCommand } from "./setup-agents.js";
 
 // Setup functions — re-exported for backward compat (were public in old setup.ts)
 export { setupAgents } from "./setup-agents.js";
-export { setupWorkspace } from "./setup-workspace.js";
 export { setupRunMode } from "./setup-run-mode.js";

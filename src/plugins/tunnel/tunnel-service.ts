@@ -1,4 +1,19 @@
-import type { TunnelConfig } from '../../core/config/config.js'
+// TunnelConfig was removed from config.ts (migrated to plugin settings)
+
+/**
+ * Tunnel plugin settings shape.
+ * `port` is deprecated — the tunnel now always points to the API server port.
+ * `auth` is deprecated — viewer routes are public; authentication was removed.
+ */
+export interface TunnelConfig {
+  enabled: boolean
+  port: number
+  provider: string
+  options: Record<string, unknown>
+  storeTtlMinutes: number
+  maxUserTunnels?: number
+  auth: { enabled: boolean; token?: string }
+}
 import { createChildLogger } from '../../core/utils/log.js'
 import { TunnelRegistry, type TunnelEntry } from './tunnel-registry.js'
 import { ViewerStore } from './viewer-store.js'
@@ -6,6 +21,14 @@ import type { PluginStorage } from '../../core/plugin/types.js'
 
 const log = createChildLogger({ module: 'tunnel' })
 
+/**
+ * High-level facade over TunnelRegistry and ViewerStore.
+ *
+ * Owns the system tunnel (started in `start()` once the API server port is known),
+ * user tunnel management (add/stop/list), and viewer URL generation.
+ * Registered as the `"tunnel"` service so other plugins can call `fileUrl()`,
+ * `diffUrl()`, etc. to share content via the public tunnel URL.
+ */
 export class TunnelService {
   private registry: TunnelRegistry
   private store: ViewerStore
@@ -53,16 +76,20 @@ export class TunnelService {
         // This intentionally bypasses TunnelRegistry's retry backoff — we want an
         // immediate provider switch rather than repeated retries against a down service.
         if (this.config.provider === 'openacp') {
-          log.warn({ err: (err as Error).message }, 'OpenACP tunnel service unreachable, falling back to Cloudflare quick tunnel')
+          const reason = (err as Error).message ?? String(err)
+          log.error({ err: reason }, '[tunnel] OpenACP tunnel failed — falling back to Cloudflare quick tunnel')
           try {
             const fallbackEntry = await this.registry.add(apiPort, {
               type: 'system',
               provider: 'cloudflare',
               label: 'system',
             })
-            this.startError = 'OpenACP tunnel unavailable — using Cloudflare quick tunnel'
-            return fallbackEntry.publicUrl || `http://localhost:${apiPort}`
+            const fallbackUrl = fallbackEntry.publicUrl || `http://localhost:${apiPort}`
+            log.warn({ url: fallbackUrl, reason }, '[tunnel] Cloudflare fallback tunnel active')
+            this.startError = `OpenACP tunnel unavailable (${reason}) — using Cloudflare quick tunnel`
+            return fallbackUrl
           } catch (fallbackErr) {
+            log.error({ err: (fallbackErr as Error).message }, '[tunnel] Cloudflare fallback also failed — no public URL')
             this.startError = (fallbackErr as Error).message
             return `http://localhost:${apiPort}`
           }

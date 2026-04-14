@@ -84,7 +84,7 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('adds a tunnel and resolves with active entry', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     const entry = await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     expect(entry.status).toBe('active')
@@ -93,7 +93,7 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('rejects duplicate active port', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     await expect(registry.add(3100, { type: 'user', provider: 'cloudflare' }))
@@ -109,7 +109,7 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('allows re-add after stop', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'user', provider: 'cloudflare' })
     await registry.stop(3100)
 
@@ -118,7 +118,7 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('allows re-add on a failed entry (clears retry timer)', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'user', provider: 'cloudflare' })
 
     // Crash it
@@ -131,14 +131,14 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('prevents stopping system tunnel', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     await expect(registry.stop(3100)).rejects.toThrow('Cannot stop system tunnel')
   })
 
   it('lists user tunnels only by default', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
     await registry.add(3200, { type: 'user', provider: 'cloudflare' })
 
@@ -147,7 +147,7 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('gets system entry', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     const sys = registry.getSystemEntry()
@@ -158,20 +158,20 @@ describe('TunnelRegistry — basic operations', () => {
   it('handles start failure gracefully', async () => {
     nextMockOverride = () => createMockProvider({ failStart: true })
 
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await expect(registry.add(3100, { type: 'user', provider: 'cloudflare' }))
       .rejects.toThrow('start failed')
   })
 
   it('unknown provider falls back to cloudflare', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     const entry = await registry.add(3100, { type: 'user', provider: 'unknown-thing' })
     expect(entry.status).toBe('active')
     expect(CloudflareTunnelProvider).toHaveBeenCalled()
   })
 
   it('shuts down all tunnels and calls stop on providers', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
     await registry.add(3200, { type: 'user', provider: 'cloudflare' })
 
@@ -184,7 +184,7 @@ describe('TunnelRegistry — basic operations', () => {
   })
 
   it('stopAllUser skips system tunnels', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
     await registry.add(3200, { type: 'user', provider: 'cloudflare' })
     await registry.add(3300, { type: 'user', provider: 'cloudflare' })
@@ -207,7 +207,7 @@ describe('TunnelRegistry — session tunnels', () => {
   })
 
   it('stopBySession stops only tunnels matching that sessionId', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'user', provider: 'cloudflare', sessionId: 'sess-a' })
     await registry.add(3200, { type: 'user', provider: 'cloudflare', sessionId: 'sess-b' })
     await registry.add(3300, { type: 'user', provider: 'cloudflare', sessionId: 'sess-a' })
@@ -219,7 +219,7 @@ describe('TunnelRegistry — session tunnels', () => {
   })
 
   it('stopBySession returns empty array when no tunnels match', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'user', provider: 'cloudflare', sessionId: 'sess-a' })
 
     const stopped = await registry.stopBySession('sess-nonexistent')
@@ -228,7 +228,7 @@ describe('TunnelRegistry — session tunnels', () => {
   })
 
   it('getBySession excludes system tunnels', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
     await registry.add(3200, { type: 'user', provider: 'cloudflare', sessionId: 'sess-a' })
 
@@ -250,7 +250,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('marks entry as failed on post-establishment crash', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     mockProviderInstances[0]._simulateCrash(1)
@@ -260,7 +260,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('retries on crash and reconnects with new URL', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     const crashed = mockProviderInstances[0]
@@ -277,7 +277,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('preserves retryCount after successful retry', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     nextMockOverride = () => createMockProvider({ url: 'https://r1.trycloudflare.com' })
@@ -291,7 +291,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('exhausts all 5 retries then stays failed', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     // Each retry will also fail on start
@@ -318,7 +318,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('respects exponential backoff: second retry waits 4s not 2s', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     // First crash → schedules retry at 2s
@@ -343,7 +343,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('stop() cancels a pending retry', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'user', provider: 'cloudflare' })
 
     mockProviderInstances[0]._simulateCrash(1)
@@ -360,7 +360,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('stop() during mid-flight retry removes the tunnel', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'user', provider: 'cloudflare' })
 
     // Slow mock for the retry — start() hangs until we resolve
@@ -396,7 +396,7 @@ describe('TunnelRegistry — retry logic', () => {
     // First attempt fails (simulates 429 rate limit)
     nextMockOverride = () => createMockProvider({ failStart: true })
 
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await expect(registry.add(3100, { type: 'system', provider: 'cloudflare' }))
       .rejects.toThrow('start failed')
 
@@ -412,7 +412,7 @@ describe('TunnelRegistry — retry logic', () => {
   })
 
   it('does not retry during shutdown', async () => {
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.add(3100, { type: 'system', provider: 'cloudflare' })
 
     const provider = mockProviderInstances[0]
@@ -445,7 +445,7 @@ describe('TunnelRegistry — restore', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(persisted))
 
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.restore()
 
     // Only user tunnel restored, not system
@@ -457,7 +457,7 @@ describe('TunnelRegistry — restore', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true)
     vi.mocked(fs.readFileSync).mockReturnValue('not valid json{{{')
 
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     // Should not throw
     await registry.restore()
     expect(registry.list(true)).toHaveLength(0)
@@ -479,7 +479,7 @@ describe('TunnelRegistry — restore', () => {
       return createMockProvider() as any
     })
 
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.restore()
 
     // Only second tunnel should be active
@@ -491,8 +491,131 @@ describe('TunnelRegistry — restore', () => {
   it('skips restore when tunnels.json does not exist', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false)
 
-    const registry = new TunnelRegistry()
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
     await registry.restore()
     expect(registry.list(true)).toHaveLength(0)
+  })
+
+  it('restores multiple user tunnels in parallel (not sequentially)', async () => {
+    const persisted = [
+      { port: 3200, type: 'user', provider: 'cloudflare', label: 'app-a', createdAt: new Date().toISOString() },
+      { port: 3300, type: 'user', provider: 'cloudflare', label: 'app-b', createdAt: new Date().toISOString() },
+      { port: 3400, type: 'user', provider: 'cloudflare', label: 'app-c', createdAt: new Date().toISOString() },
+    ]
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(persisted))
+
+    // Track the order of start() calls — all should be called before any resolves
+    const startOrder: number[] = []
+    let resolvers: Array<(url: string) => void> = []
+
+    vi.mocked(CloudflareTunnelProvider).mockImplementation(function (this: any) {
+      const mock = createMockProvider()
+      mock.start = vi.fn().mockImplementation((port: number) => {
+        startOrder.push(port)
+        return new Promise<string>(resolve => { resolvers.push(resolve) })
+      })
+      return mock as any
+    })
+
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
+    const restorePromise = registry.restore()
+
+    // All 3 starts should have been called concurrently
+    await vi.advanceTimersByTimeAsync(0)
+    expect(startOrder).toHaveLength(3)
+    expect(startOrder).toEqual([3200, 3300, 3400])
+
+    // Resolve them
+    resolvers.forEach(r => r('https://test.trycloudflare.com'))
+    await restorePromise
+
+    expect(registry.list(false)).toHaveLength(3)
+
+    // Restore default mock so subsequent tests aren't affected
+    vi.mocked(CloudflareTunnelProvider).mockImplementation(function (this: any) {
+      return createProviderFromOverrideOrDefault()
+    })
+  })
+
+  it('restores user tunnels without sessionId (sessions do not survive restart)', async () => {
+    const persisted = [
+      { port: 3200, type: 'user', provider: 'cloudflare', label: 'my-app', sessionId: 'sess-old', createdAt: new Date().toISOString() },
+    ]
+    vi.mocked(fs.existsSync).mockReturnValue(true)
+    vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify(persisted))
+
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
+    await registry.restore()
+
+    const restored = registry.list(false)
+    expect(restored).toHaveLength(1)
+    expect(restored[0].label).toBe('my-app')
+    expect(restored[0].sessionId).toBeUndefined()
+  })
+})
+
+describe('TunnelRegistry — shutdown persistence', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mockProviderInstances = []
+    nextMockOverride = null
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('shutdown passes preserveState=true to providers', async () => {
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
+    await registry.add(3100, { type: 'system', provider: 'cloudflare' })
+    await registry.add(3200, { type: 'user', provider: 'cloudflare' })
+
+    await registry.shutdown()
+
+    for (const mock of mockProviderInstances) {
+      expect(mock.stop).toHaveBeenCalledWith(true, true)
+    }
+  })
+
+  it('shutdown persists entries to tunnels.json before clearing', async () => {
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
+    await registry.add(3100, { type: 'system', provider: 'cloudflare' })
+    await registry.add(3200, { type: 'user', provider: 'cloudflare', label: 'my-app' })
+
+    await registry.shutdown()
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls
+    const lastWrite = writeCalls[writeCalls.length - 1]
+    const persisted = JSON.parse(lastWrite[1] as string) as Array<{ port: number; type: string }>
+
+    expect(persisted).toHaveLength(2)
+    expect(persisted.map(e => e.port).sort()).toEqual([3100, 3200])
+  })
+
+  it('flush() is a no-op after shutdown (does not overwrite with empty)', async () => {
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
+    await registry.add(3100, { type: 'user', provider: 'cloudflare' })
+
+    await registry.shutdown()
+
+    const writeCountAfterShutdown = vi.mocked(fs.writeFileSync).mock.calls.length
+
+    registry.flush()
+
+    expect(vi.mocked(fs.writeFileSync).mock.calls.length).toBe(writeCountAfterShutdown)
+  })
+
+  it('double shutdown does not overwrite preserved tunnels.json', async () => {
+    const registry = new TunnelRegistry({ registryPath: '/tmp/test-tunnels.json' })
+    await registry.add(3100, { type: 'user', provider: 'cloudflare' })
+
+    await registry.shutdown()
+
+    const writeCountAfterFirst = vi.mocked(fs.writeFileSync).mock.calls.length
+
+    await registry.shutdown()
+
+    expect(vi.mocked(fs.writeFileSync).mock.calls.length).toBe(writeCountAfterFirst)
   })
 })

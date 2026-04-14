@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { MiddlewareChain } from "../plugin/middleware-chain.js";
+import { filterEnv } from "../security/env-filter.js";
+import { Hook } from "../events.js";
 
 interface TerminalState {
   process: ChildProcess;
@@ -29,6 +31,15 @@ interface WaitForExitResult {
   signal: string | null;
 }
 
+/**
+ * Manages child-process terminals for agents that need interactive command execution.
+ *
+ * Agents request terminals via ACP's terminal_create method. Each terminal is a
+ * spawned child process whose stdout/stderr is captured into a ring buffer
+ * (capped at maxOutputBytes). The agent can poll output, wait for exit, or kill
+ * the process. Terminals are auto-cleaned up 30s after the process exits to allow
+ * final output retrieval.
+ */
 export class TerminalManager {
   private terminals: Map<string, TerminalState> = new Map();
   private maxOutputBytes: number;
@@ -37,6 +48,11 @@ export class TerminalManager {
     this.maxOutputBytes = maxOutputBytes;
   }
 
+  /**
+   * Spawn a new terminal process. Runs terminal:beforeCreate middleware first
+   * (which can modify command/args/env or block creation entirely).
+   * Returns a terminalId for subsequent output/wait/kill operations.
+   */
   async createTerminal(
     sessionId: string,
     params: CreateTerminalParams,
@@ -50,7 +66,7 @@ export class TerminalManager {
     if (middlewareChain) {
       const envRecord: Record<string, string> = {};
       for (const ev of termEnvArr) { envRecord[ev.name] = ev.value; }
-      const result = await middlewareChain.execute('terminal:beforeCreate', {
+      const result = await middlewareChain.execute(Hook.TERMINAL_BEFORE_CREATE, {
         sessionId,
         command: termCommand,
         args: termArgs as string[],
@@ -75,7 +91,7 @@ export class TerminalManager {
 
     const childProcess = spawn(termCommand, args, {
       cwd: termCwd,
-      env: { ...process.env, ...env },
+      env: filterEnv(process.env as Record<string, string>, env),
       shell: false,
     });
 
@@ -90,6 +106,8 @@ export class TerminalManager {
 
     const outputByteLimit = params.outputByteLimit ?? this.maxOutputBytes;
 
+    // Ring buffer: keep only the latest outputByteLimit bytes — oldest output
+    // is trimmed from the front when the buffer exceeds the limit.
     const appendOutput = (chunk: string) => {
       state.output += chunk;
       const bytes = Buffer.byteLength(state.output, "utf-8");
@@ -109,7 +127,7 @@ export class TerminalManager {
     childProcess.on("exit", (code, signal) => {
       state.exitStatus = { exitCode: code, signal };
       if (middlewareChain) {
-        middlewareChain.execute('terminal:afterExit', {
+        middlewareChain.execute(Hook.TERMINAL_AFTER_EXIT, {
           sessionId,
           terminalId,
           command: state.command,
@@ -117,11 +135,19 @@ export class TerminalManager {
           durationMs: Date.now() - state.startTime,
         }, async (p) => p).catch(() => {});
       }
+      // Schedule cleanup of the terminal entry after a grace period to allow
+      // output retrieval by the agent after the process has exited.
+      setTimeout(() => {
+        if (this.terminals.has(terminalId)) {
+          this.terminals.delete(terminalId);
+        }
+      }, 30_000).unref();
     });
 
     return { terminalId };
   }
 
+  /** Retrieve accumulated stdout/stderr output for a terminal. */
   getOutput(terminalId: string): TerminalOutputResult {
     const state = this.terminals.get(terminalId);
     if (!state) {
@@ -139,6 +165,7 @@ export class TerminalManager {
     };
   }
 
+  /** Block until the terminal process exits, returning exit code and signal. */
   async waitForExit(terminalId: string): Promise<WaitForExitResult> {
     const state = this.terminals.get(terminalId);
     if (!state) {
@@ -154,9 +181,19 @@ export class TerminalManager {
       state.process.on("exit", (code, signal) => {
         resolve({ exitCode: code, signal });
       });
+      // Re-check after attaching the listener to close the TOCTOU race:
+      // the process may have exited between the null check above and the
+      // listener registration.
+      if (state.exitStatus !== null) {
+        resolve({
+          exitCode: state.exitStatus.exitCode,
+          signal: state.exitStatus.signal,
+        });
+      }
     });
   }
 
+  /** Send SIGTERM to a terminal process (graceful shutdown). */
   kill(terminalId: string): void {
     const state = this.terminals.get(terminalId);
     if (!state) {
@@ -165,6 +202,7 @@ export class TerminalManager {
     state.process.kill("SIGTERM");
   }
 
+  /** Force-kill (SIGKILL) and immediately remove a terminal from the registry. */
   release(terminalId: string): void {
     const state = this.terminals.get(terminalId);
     if (!state) {
@@ -174,6 +212,7 @@ export class TerminalManager {
     this.terminals.delete(terminalId);
   }
 
+  /** Force-kill all terminals. Used during session/system teardown. */
   destroyAll(): void {
     for (const [, t] of this.terminals) {
       t.process.kill("SIGKILL");

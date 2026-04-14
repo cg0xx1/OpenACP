@@ -6,6 +6,8 @@ import { SpeechService, GroqSTT } from './exports.js'
 import type { SpeechServiceConfig } from './exports.js'
 import { installNpmPlugin } from '../../core/plugin/plugin-installer.js'
 
+// TTS is provided by a separate optional plugin so the core speech plugin
+// doesn't bundle a large native dependency on every install.
 const EDGE_TTS_PLUGIN = '@openacp/msedge-tts-plugin'
 
 const speechPlugin: OpenACPPlugin = {
@@ -13,32 +15,14 @@ const speechPlugin: OpenACPPlugin = {
   version: '1.0.0',
   description: 'Text-to-speech and speech-to-text with pluggable providers',
   essential: false,
+  // file-service is needed to persist synthesized audio for adapters that send files
   optionalPluginDependencies: { '@openacp/file-service': '^1.0.0' },
   permissions: ['services:register', 'commands:register', 'kernel:access'],
   inheritableKeys: ['ttsProvider', 'ttsVoice'],
 
   async install(ctx: InstallContext) {
-    const { terminal, settings, legacyConfig } = ctx
+    const { terminal, settings } = ctx
     const pluginsDir = ctx.instanceRoot ? path.join(ctx.instanceRoot, 'plugins') : undefined
-
-    // Migrate from legacy config if present
-    if (legacyConfig) {
-      const speechCfg = legacyConfig.speech as Record<string, unknown> | undefined
-      if (speechCfg) {
-        const stt = speechCfg.stt as Record<string, unknown> | undefined
-        const tts = speechCfg.tts as Record<string, unknown> | undefined
-        const groqProviders = stt?.providers as Record<string, unknown> | undefined
-        const groqConfig = groqProviders?.groq as Record<string, unknown> | undefined
-        await settings.setAll({
-          sttProvider: stt?.provider ?? null,
-          groqApiKey: groqConfig?.apiKey ?? '',
-          ttsProvider: tts?.provider ?? 'edge-tts',
-          ttsVoice: '',
-        })
-        terminal.log.success('Speech settings migrated from legacy config')
-        return
-      }
-    }
 
     // Interactive setup
     const enableStt = await terminal.confirm({
@@ -138,10 +122,17 @@ const speechPlugin: OpenACPPlugin = {
   },
 
   async setup(ctx) {
+    ctx.registerEditableFields([
+      { key: 'sttProvider', displayName: 'Speech to Text', type: 'select', scope: 'safe', hotReload: true, options: ['groq'] },
+      { key: 'groqApiKey', displayName: 'STT API Key', type: 'string', scope: 'sensitive', hotReload: true },
+      { key: 'ttsProvider', displayName: 'Text to Speech', type: 'select', scope: 'safe', hotReload: true, options: ['edge-tts'] },
+    ])
+
     const pluginsDir = ctx.instanceRoot ? path.join(ctx.instanceRoot, 'plugins') : undefined
     const config = ctx.pluginConfig as Record<string, unknown>
     const groqApiKey = config.groqApiKey as string | undefined
 
+    // STT provider is determined solely by whether an API key is present
     const sttProvider = groqApiKey ? 'groq' : null
     const speechConfig: SpeechServiceConfig = {
       stt: {
@@ -214,6 +205,7 @@ const speechPlugin: OpenACPPlugin = {
             const mod = await installNpmPlugin(EDGE_TTS_PLUGIN, pluginsDir)
             const plugin = mod.default
             if (plugin && ctx.core) {
+              // Boot the newly installed plugin without restarting the process
               const lm = (ctx.core as OpenACPCore).lifecycleManager
               const registry = lm.registry
               if (registry) {

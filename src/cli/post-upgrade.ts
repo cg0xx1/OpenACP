@@ -1,36 +1,56 @@
 import { createChildLogger } from "../core/utils/log.js";
 import { commandExists } from "../core/agents/agent-dependencies.js";
 import type { Config } from "../core/config/config.js";
+import type { InstanceContext } from "../core/instance/instance-context.js";
 
 const log = createChildLogger({ module: "post-upgrade" });
 
 /**
- * Post-upgrade dependency check — runs on every start.
- * Centralized source of truth for all binary dependency management.
- * Silent if everything is OK.
+ * Run dependency and integration health checks after each start.
+ *
+ * Checks are best-effort: each section is wrapped in a try/catch so a failure in
+ * one check never blocks the daemon from starting. All checks are read-only unless
+ * auto-install is triggered (e.g., cloudflared, jq). Silent when everything is OK.
+ *
+ * Checks performed:
+ * 1. Tunnel provider binary (cloudflared auto-install, or warn for others)
+ * 2. Claude CLI integration + jq (warns if handoff is installed but jq is missing)
+ * 3. unzip (needed for binary agent distribution installs)
+ * 4. uvx (needed for Python-based agents via uv)
  */
-export async function runPostUpgradeChecks(config: Config): Promise<void> {
-  // 1. Tunnel provider binary
-  if (config.tunnel.enabled) {
-    if (config.tunnel.provider === "cloudflare") {
-      try {
-        const { ensureCloudflared } = await import(
-          "../plugins/tunnel/providers/install-cloudflared.js"
-        );
-        await ensureCloudflared();
-      } catch (err) {
-        log.warn(
-          { err: (err as Error).message },
-          "Could not install cloudflared. Tunnel may not work.",
-        );
-      }
-    } else {
-      if (!commandExists(config.tunnel.provider)) {
-        log.warn(
-          `Tunnel provider "${config.tunnel.provider}" is not installed. Install it or switch to cloudflare (free, auto-installed).`,
-        );
+export async function runPostUpgradeChecks(config: Config, ctx?: InstanceContext): Promise<void> {
+  // 1. Tunnel provider binary — read from plugin settings (tunnel migrated out of config.json)
+  try {
+    const { SettingsManager } = await import("../core/plugin/settings-manager.js");
+    const pluginsDataPath = ctx!.paths.pluginsData;
+    const sm = new SettingsManager(pluginsDataPath);
+    const tunnelSettings = await sm.loadSettings("@openacp/tunnel");
+    const tunnelEnabled = (tunnelSettings.enabled as boolean) ?? false;
+    const tunnelProvider = (tunnelSettings.provider as string) ?? "cloudflare";
+
+    if (tunnelEnabled) {
+      if (tunnelProvider === "cloudflare") {
+        try {
+          const { ensureCloudflared } = await import(
+            "../plugins/tunnel/providers/install-cloudflared.js"
+          );
+          await ensureCloudflared();
+        } catch (err) {
+          log.warn(
+            { err: (err as Error).message },
+            "Could not install cloudflared. Tunnel may not work.",
+          );
+        }
+      } else {
+        if (!commandExists(tunnelProvider)) {
+          log.warn(
+            `Tunnel provider "${tunnelProvider}" is not installed. Install it or switch to cloudflare (free, auto-installed).`,
+          );
+        }
       }
     }
+  } catch {
+    // tunnel settings not available — skip tunnel check
   }
 
   // 2. Claude CLI integration + jq
@@ -72,7 +92,7 @@ export async function runPostUpgradeChecks(config: Config): Promise<void> {
   // 4. uvx (needed for Python-based agents)
   try {
     const { AgentStore } = await import("../core/agents/agent-store.js");
-    const store = new AgentStore();
+    const store = new AgentStore(ctx!.paths.agents);
     store.load();
     const entries = store.getInstalled();
     const hasUvxAgent = Object.values(entries).some(

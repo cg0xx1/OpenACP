@@ -1,5 +1,3 @@
-import path from 'node:path'
-import os from 'node:os'
 import type {
   PluginContext,
   PluginPermission,
@@ -21,6 +19,7 @@ import { MiddlewareChain } from './middleware-chain.js'
 import { ErrorTracker } from './error-tracker.js'
 import { PluginStorageImpl } from './plugin-storage.js'
 
+/** Internal options for creating a PluginContext. Passed from LifecycleManager. */
 interface CreatePluginContextOpts {
   pluginName: string
   pluginConfig: Record<string, unknown>
@@ -41,12 +40,21 @@ interface CreatePluginContextOpts {
   instanceRoot?: string
 }
 
+/** Gate that throws if the plugin's declared permissions don't include the required one. */
 function requirePermission(permissions: PluginPermission[], required: PluginPermission, action: string): void {
   if (!permissions.includes(required)) {
     throw new Error(`Plugin does not have '${required}' permission required for ${action}`)
   }
 }
 
+/**
+ * Factory that creates a scoped, permission-gated PluginContext for a single plugin.
+ *
+ * Every call to a context method checks the plugin's declared permissions first.
+ * The returned object also includes a `cleanup()` method used by LifecycleManager
+ * to remove all registrations (listeners, middleware, services, commands) when
+ * the plugin is unloaded — ensuring no dangling references.
+ */
 export function createPluginContext(opts: CreatePluginContextOpts): PluginContext & { cleanup(): void } {
   const {
     pluginName,
@@ -60,11 +68,14 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
     config,
     core,
   } = opts
-  const instanceRoot = opts.instanceRoot ?? path.join(os.homedir(), '.openacp')
+  const instanceRoot = opts.instanceRoot!
 
-  // Track registered items for cleanup
+  // Track all registrations so cleanup() can remove them on plugin unload.
+  // Without this, unloaded plugins would leave orphaned listeners and middleware.
   const registeredListeners: Array<{ event: string; handler: (...args: unknown[]) => void }> = []
   const registeredCommands: CommandDef[] = []
+  const registeredMenuItemIds: string[] = []
+  const registeredAssistantSectionIds: string[] = []
 
   const noopLog: Logger = {
     trace() {},
@@ -82,7 +93,8 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
 
   const storageImpl = new PluginStorageImpl(storagePath)
 
-  // Create permission-guarded storage proxy
+  // Wrap storage operations with permission checks — plugins without
+  // storage:read or storage:write permissions cannot access the filesystem.
   const storage: PluginStorage = {
     async get<T>(key: string): Promise<T | undefined> {
       requirePermission(permissions, 'storage:read', 'storage.get')
@@ -168,7 +180,10 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
       requirePermission(permissions, 'commands:register', 'registerMenuItem()')
       const menuRegistry = serviceRegistry.get('menu-registry') as MenuRegistry | undefined
       if (!menuRegistry) return
-      menuRegistry.register({ ...item, id: `${pluginName}:${item.id}` })
+      // Namespace menu item IDs with plugin name to prevent collisions
+      const qualifiedId = `${pluginName}:${item.id}`
+      menuRegistry.register({ ...item, id: qualifiedId })
+      registeredMenuItemIds.push(qualifiedId)
     },
 
     unregisterMenuItem(id: string): void {
@@ -182,7 +197,10 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
       requirePermission(permissions, 'commands:register', 'registerAssistantSection()')
       const assistantRegistry = serviceRegistry.get('assistant-registry') as AssistantRegistry | undefined
       if (!assistantRegistry) return
-      assistantRegistry.register({ ...section, id: `${pluginName}:${section.id}` })
+      // Namespace section IDs with plugin name to prevent collisions
+      const qualifiedId = `${pluginName}:${section.id}`
+      assistantRegistry.register({ ...section, id: qualifiedId })
+      registeredAssistantSectionIds.push(qualifiedId)
     },
 
     unregisterAssistantSection(id: string): void {
@@ -190,6 +208,15 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
       const assistantRegistry = serviceRegistry.get('assistant-registry') as AssistantRegistry | undefined
       if (!assistantRegistry) return
       assistantRegistry.unregister(`${pluginName}:${id}`)
+    },
+
+    registerEditableFields(fields: import('./types.js').FieldDef[]): void {
+      requirePermission(permissions, 'commands:register', 'registerEditableFields()')
+      const registry = serviceRegistry.get<{ register(pluginName: string, fields: import('./types.js').FieldDef[]): void }>('field-registry')
+      if (registry && typeof registry.register === 'function') {
+        registry.register(pluginName, fields)
+        log.debug(`Registered ${fields.length} editable field(s) for ${pluginName}`)
+      }
     },
 
     get sessions() {
@@ -214,6 +241,11 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
 
     instanceRoot,
 
+    /**
+     * Called by LifecycleManager during plugin teardown.
+     * Unregisters all event handlers, middleware, commands, and services
+     * registered by this plugin, preventing leaks across reloads.
+     */
     cleanup(): void {
       // Remove all event listeners registered by this plugin
       for (const { event, handler } of registeredListeners) {
@@ -232,6 +264,24 @@ export function createPluginContext(opts: CreatePluginContextOpts): PluginContex
       if (cmdRegistry && typeof cmdRegistry.unregisterByPlugin === 'function') {
         cmdRegistry.unregisterByPlugin(pluginName)
       }
+
+      // Unregister menu items
+      const menuRegistry = serviceRegistry.get('menu-registry') as MenuRegistry | undefined
+      if (menuRegistry) {
+        for (const id of registeredMenuItemIds) {
+          menuRegistry.unregister(id)
+        }
+      }
+      registeredMenuItemIds.length = 0
+
+      // Unregister assistant sections
+      const assistantRegistry = serviceRegistry.get('assistant-registry') as AssistantRegistry | undefined
+      if (assistantRegistry) {
+        for (const id of registeredAssistantSectionIds) {
+          assistantRegistry.unregister(id)
+        }
+      }
+      registeredAssistantSectionIds.length = 0
 
       // Clear commands
       registeredCommands.length = 0

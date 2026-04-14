@@ -1,6 +1,15 @@
 /**
- * OpenACP Product Guide — comprehensive reference for the AI assistant.
- * The assistant reads this at runtime to answer user questions about features.
+ * OpenACP Product Guide — comprehensive reference text injected into the AI assistant's system prompt.
+ *
+ * The assistant (in the Assistant topic/thread) reads this at startup to answer user questions
+ * about features, CLI commands, configuration, and troubleshooting without hitting the network.
+ *
+ * **How it's used:** The assistant plugin reads `PRODUCT_GUIDE` and prepends it to the system
+ * prompt so the AI has full product knowledge baked in, not fetched per-session.
+ *
+ * **How to update:** Edit the Markdown content below. Keep it accurate with the current feature set —
+ * outdated entries cause the assistant to give wrong answers. Sections use `---` dividers and
+ * `##` headings so the assistant can navigate the content efficiently.
  */
 export const PRODUCT_GUIDE = `
 # OpenACP — Product Guide
@@ -125,8 +134,8 @@ Configure via \`security.sessionTimeoutMinutes\` in config.
 3. Copy and run it in your terminal — the session continues there with full conversation history
 
 ### Terminal → Chat
-1. First time: run \`openacp integrate claude\` to install the handoff skill (one-time setup)
-2. In Claude Code, use the /openacp:handoff slash command
+1. First time: run \`openacp integrate <agent>\` to install handoff integration (one-time setup)
+2. In supported agents (for example Claude Code or OpenCode), use /openacp:handoff
 3. The session appears as a new topic/thread and you can continue chatting there
 
 ### How it works
@@ -320,7 +329,7 @@ Config file: \`~/.openacp/config.json\`
 - Agent list is fetched from the ACP Registry CDN and cached locally (24h)
 
 ### Workspace
-- **workspace.baseDir** — Base directory for project folders (default: \`~/openacp-workspace\`)
+- Workspace directory is the parent of \`.openacp/\` (where you ran \`openacp\` setup)
 
 ### Security
 - **security.allowedUserIds** — Restrict who can use the bot (empty = everyone)

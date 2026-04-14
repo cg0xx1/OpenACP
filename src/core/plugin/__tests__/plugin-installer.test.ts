@@ -104,6 +104,20 @@ describe('importFromDir', () => {
   })
 })
 
+describe('installNpmPlugin — --ignore-scripts flag', () => {
+  it("includes --ignore-scripts flag in npm install command", async () => {
+    const fs = await import("node:fs");
+    const source = fs.readFileSync(
+      new URL("../plugin-installer.ts", import.meta.url).pathname.replace("__tests__/", ""),
+      "utf-8",
+    );
+    // Verify --ignore-scripts is present in execFile/exec npm install calls
+    expect(source).toContain("--ignore-scripts");
+    // Verify execFile is used instead of exec (no shell injection)
+    expect(source).toContain("execFileAsync");
+  });
+});
+
 describe('installNpmPlugin — package name validation', () => {
   // Shell injection attempts must be rejected before any exec
   const maliciousNames = [

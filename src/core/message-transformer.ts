@@ -1,9 +1,20 @@
+import * as path from "node:path";
 import type { AgentEvent, OutgoingMessage } from "./types.js";
 import type { TunnelServiceInterface } from "./plugin/types.js";
 import { extractFileInfo } from "./utils/extract-file-info.js";
+import { isApplyPatchOtherTool } from "./utils/apply-patch-detection.js";
 import { createChildLogger } from "./utils/log.js";
 
 const log = createChildLogger({ module: "message-transformer" });
+
+// Binary file extensions that cannot be displayed in the code viewer
+const BINARY_VIEWER_EXTENSIONS = new Set([
+  '.wav', '.ogg', '.mp3', '.m4a', '.aac', '.flac', '.opus', '.weba',
+  '.mp4', '.avi', '.mov', '.webm', '.mkv',
+  '.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.ico', '.svg',
+  '.pdf', '.zip', '.gz', '.tar', '.7z', '.rar',
+  '.bin', '.exe', '.dll', '.so', '.dylib', '.wasm',
+]);
 
 /**
  * Compute actual line-level diff by stripping common prefix/suffix lines.
@@ -36,6 +47,105 @@ function computeLineDiff(oldStr: string, newStr: string): { added: number; remov
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asNonNegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * OpenCode ACP apply_patch may include diff counts in rawOutput.metadata:
+ * - metadata.files[].additions/deletions
+ * - metadata.additions/deletions
+ */
+function extractDiffStatsFromRawOutput(rawOutput: unknown): { added: number; removed: number } | null {
+  const output = asRecord(rawOutput);
+  const metadata = asRecord(output?.metadata);
+  if (!metadata) return null;
+
+  const files = Array.isArray(metadata.files) ? metadata.files : null;
+  if (files && files.length > 0) {
+    let added = 0;
+    let removed = 0;
+    let hasAny = false;
+
+    for (const file of files) {
+      const fileMeta = asRecord(file);
+      if (!fileMeta) continue;
+
+      const fileAdded = asNonNegativeNumber(fileMeta.additions);
+      const fileRemoved = asNonNegativeNumber(fileMeta.deletions);
+      if (fileAdded === null && fileRemoved === null) continue;
+
+      added += fileAdded ?? 0;
+      removed += fileRemoved ?? 0;
+      hasAny = true;
+    }
+
+    if (hasAny && (added > 0 || removed > 0)) return { added, removed };
+  }
+
+  const added = asNonNegativeNumber(metadata.additions);
+  const removed = asNonNegativeNumber(metadata.deletions);
+  if (added === null && removed === null) return null;
+  if ((added ?? 0) === 0 && (removed ?? 0) === 0) return null;
+
+  return {
+    added: added ?? 0,
+    removed: removed ?? 0,
+  };
+}
+
+function extractDiffStatsFromToolPayload(
+  name: string,
+  kind: string | undefined,
+  rawInput: unknown,
+  rawOutput: unknown,
+): { added: number; removed: number } | null {
+  if (kind === "edit" || kind === "write") {
+    const ri = asRecord(rawInput);
+    if (!ri) return null;
+
+    const oldStr = typeof ri.old_string === "string" ? ri.old_string : typeof ri.oldText === "string" ? ri.oldText : null;
+    const newStr = typeof ri.new_string === "string" ? ri.new_string : typeof ri.newText === "string" ? ri.newText : typeof ri.content === "string" ? ri.content : null;
+
+    if (oldStr !== null && newStr !== null) {
+      const stats = computeLineDiff(oldStr, newStr);
+      return stats.added > 0 || stats.removed > 0 ? stats : null;
+    }
+
+    if (oldStr === null && newStr !== null && kind === "write") {
+      // New file creation — no old content, count all new lines as added
+      const added = newStr.split("\n").length;
+      return added > 0 ? { added, removed: 0 } : null;
+    }
+
+    return null;
+  }
+
+  if (isApplyPatchOtherTool(kind, name, rawInput)) {
+    return extractDiffStatsFromRawOutput(rawOutput);
+  }
+
+  return null;
+}
+
+/**
+ * Transforms AgentEvents into OutgoingMessages suitable for adapter delivery.
+ *
+ * Handles two key concerns beyond simple type mapping:
+ * 1. **Tool input caching** — `tool_call` events carry `rawInput`, but subsequent
+ *    `tool_update` events for the same tool often omit it. The transformer caches
+ *    rawInput so updates can inherit it for viewer link generation.
+ * 2. **Viewer link enrichment** — when a tunnel service is available, tool events
+ *    for file reads/edits are enriched with public URLs to the code viewer and diff viewer.
+ *    Intermediate updates (with raw content) are preferred over completion events
+ *    (which have formatted content with line numbers).
+ */
 export class MessageTransformer {
   tunnelService?: TunnelServiceInterface;
   /** Cache rawInput from tool_call so it's available in tool_update (which often lacks it) */
@@ -47,6 +157,12 @@ export class MessageTransformer {
     this.tunnelService = tunnelService;
   }
 
+  /**
+   * Convert an agent event to an outgoing message for adapter delivery.
+   *
+   * For tool events, enriches the metadata with diff stats and viewer links
+   * when a tunnel service is available.
+   */
   transform(
     event: AgentEvent,
     sessionContext?: { id: string; workingDirectory: string },
@@ -182,6 +298,22 @@ export class MessageTransformer {
     }
   }
 
+  /** Clear cached entries whose key starts with the given prefix. */
+  clearSessionCaches(prefix: string): void {
+    for (const key of this.toolRawInputCache.keys()) {
+      if (key.startsWith(prefix)) this.toolRawInputCache.delete(key);
+    }
+    for (const key of this.toolViewerCache.keys()) {
+      if (key.startsWith(prefix)) this.toolViewerCache.delete(key);
+    }
+  }
+
+  /** Clear all caches. */
+  clearCaches(): void {
+    this.toolRawInputCache.clear();
+    this.toolViewerCache.clear();
+  }
+
   /** Check if rawInput is a non-empty object (not null, not {}) */
   private isNonEmptyInput(input: unknown): input is Record<string, unknown> {
     return input !== null && input !== undefined && typeof input === "object" && !Array.isArray(input) && Object.keys(input as object).length > 0;
@@ -192,24 +324,13 @@ export class MessageTransformer {
     metadata: Record<string, unknown>,
     sessionContext?: { id: string; workingDirectory: string },
   ): void {
-    // Compute diffStats from rawInput even without tunnelService
+    const name = "name" in event ? event.name || "" : "";
+    // Compute diffStats from tool payload even without tunnelService.
+    // Includes edit/write rawInput and apply_patch rawOutput compatibility.
     const kind = "kind" in event ? event.kind : undefined;
-    if (!metadata.diffStats && (kind === "edit" || kind === "write")) {
-      const ri = event.rawInput as Record<string, unknown> | undefined;
-      if (ri) {
-        const oldStr = typeof ri.old_string === "string" ? ri.old_string : typeof ri.oldText === "string" ? ri.oldText : null;
-        const newStr = typeof ri.new_string === "string" ? ri.new_string : typeof ri.newText === "string" ? ri.newText : typeof ri.content === "string" ? ri.content : null;
-        if (oldStr !== null && newStr !== null) {
-          const stats = computeLineDiff(oldStr, newStr);
-          if (stats.added > 0 || stats.removed > 0) {
-            metadata.diffStats = stats;
-          }
-        } else if (oldStr === null && newStr !== null && kind === "write") {
-          // New file creation — no old content, count all new lines as added
-          const added = newStr.split("\n").length;
-          if (added > 0) metadata.diffStats = { added, removed: 0 };
-        }
-      }
+    if (!metadata.diffStats) {
+      const stats = extractDiffStatsFromToolPayload(name, kind, event.rawInput, event.rawOutput);
+      if (stats) metadata.diffStats = stats;
     }
 
     if (!this.tunnelService || !sessionContext) {
@@ -219,8 +340,6 @@ export class MessageTransformer {
       );
       return;
     }
-
-    const name = "name" in event ? event.name || "" : "";
 
     log.debug(
       { name, kind, status: event.status, hasContent: !!event.content, hasRawInput: !!event.rawInput },
@@ -233,12 +352,20 @@ export class MessageTransformer {
       event.content,
       event.rawInput,
       event.meta,
+      event.rawOutput,
     );
     if (!fileInfo) {
       log.debug(
         { name, kind, hasContent: !!event.content, hasRawInput: !!event.rawInput, hasMeta: !!event.meta },
         "enrichWithViewerLinks: extractFileInfo returned null",
       );
+      return;
+    }
+
+    // Skip binary/non-text files — they cannot be displayed in the code viewer
+    const fileExt = path.extname(fileInfo.filePath).toLowerCase();
+    if (BINARY_VIEWER_EXTENSIONS.has(fileExt)) {
+      log.debug({ kind, filePath: fileInfo.filePath }, "enrichWithViewerLinks: skipping binary file");
       return;
     }
 

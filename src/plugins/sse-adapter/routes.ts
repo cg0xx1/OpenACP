@@ -3,8 +3,9 @@ import type { OpenACPCore } from '../../core/core.js';
 import type { ConnectionManager } from './connection-manager.js';
 import type { EventBuffer } from './event-buffer.js';
 import type { CommandRegistry } from '../../core/command-registry.js';
-import { NotFoundError, BadRequestError } from '../api-server/middleware/error-handler.js';
+import { NotFoundError, BadRequestError, ServiceUnavailableError } from '../api-server/middleware/error-handler.js';
 import { requireScopes } from '../api-server/middleware/auth.js';
+import { resolveAttachments } from '../api-server/routes/attachment-utils.js';
 import {
   SessionIdParamSchema,
   PromptBodySchema,
@@ -21,6 +22,7 @@ function decodeParam(value: string): string {
   }
 }
 
+/** Dependencies injected into the SSE route handlers. */
 export interface SSERouteDeps {
   core: OpenACPCore;
   connectionManager: ConnectionManager;
@@ -28,6 +30,12 @@ export interface SSERouteDeps {
   commandRegistry?: CommandRegistry;
 }
 
+/**
+ * Registers all SSE adapter routes on the given Fastify sub-app.
+ *
+ * Routes are mounted under `/api/v1/sse` by the plugin's `setup()` hook.
+ * All routes require authentication (scopes enforced per-route).
+ */
 export async function sseRoutes(app: FastifyInstance, deps: SSERouteDeps): Promise<void> {
   // GET /sessions/:sessionId/stream — SSE event stream
   app.get<{ Params: { sessionId: string } }>(
@@ -63,13 +71,15 @@ export async function sseRoutes(app: FastifyInstance, deps: SSERouteDeps): Promi
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        // Disable buffering in Nginx/Cloudflare so events arrive without delay
         'X-Accel-Buffering': 'no',
       });
 
       // Send connected event
       raw.write(serializeConnected(connection.id, sessionId));
 
-      // Replay missed events from buffer using Last-Event-ID header
+      // Replay missed events from buffer using Last-Event-ID header.
+      // Null result means the referenced event ID has been evicted — notify the client.
       const lastEventId = request.headers['last-event-id'] as string | undefined;
       if (lastEventId) {
         const missed = deps.eventBuffer.getSince(sessionId, lastEventId);
@@ -89,10 +99,11 @@ export async function sseRoutes(app: FastifyInstance, deps: SSERouteDeps): Promi
     },
   );
 
-  // POST /sessions/:sessionId/prompt — send a prompt to a session
+  // POST /sessions/:sessionId/prompt — send a prompt (with optional file attachments) to a session.
+  // bodyLimit is raised to 110 MB to accommodate up to 10 attachments × ~10 MB base64 each plus prompt overhead.
   app.post<{ Params: { sessionId: string } }>(
     '/sessions/:sessionId/prompt',
-    { preHandler: requireScopes('sessions:prompt') },
+    { preHandler: requireScopes('sessions:prompt'), bodyLimit: 115_000_000 },
     async (request, reply) => {
       const { sessionId: rawId } = SessionIdParamSchema.parse(request.params);
       const sessionId = decodeParam(rawId);
@@ -107,7 +118,23 @@ export async function sseRoutes(app: FastifyInstance, deps: SSERouteDeps): Promi
       }
 
       const body = PromptBodySchema.parse(request.body);
-      await session.enqueuePrompt(body.prompt);
+
+      // Decode base64 attachments and persist via FileService when provided
+      let attachments;
+      if (body.attachments?.length) {
+        let fileService;
+        try {
+          fileService = deps.core.fileService;
+        } catch {
+          throw new ServiceUnavailableError(
+            'FILE_SERVICE_UNAVAILABLE',
+            'File attachments are not supported: file-service plugin is not loaded',
+          );
+        }
+        attachments = await resolveAttachments(fileService, sessionId, body.attachments);
+      }
+
+      await session.enqueuePrompt(body.prompt, attachments, { sourceAdapterId: 'sse' });
 
       return { ok: true, sessionId, queueDepth: session.queueDepth };
     },
@@ -133,6 +160,16 @@ export async function sseRoutes(app: FastifyInstance, deps: SSERouteDeps): Promi
       }
 
       session.permissionGate.resolve(body.optionId);
+
+      if (body.feedback) {
+        // Abort current turn so the agent doesn't respond about the refusal,
+        // then queue feedback as next prompt.
+        await session.abortPrompt().catch((err: unknown) => {
+          request.log.warn({ err }, 'Failed to abort prompt before feedback enqueue');
+        });
+        await session.enqueuePrompt(body.feedback, undefined, { sourceAdapterId: 'sse' });
+      }
+
       return { ok: true };
     },
   );
@@ -173,6 +210,7 @@ export async function sseRoutes(app: FastifyInstance, deps: SSERouteDeps): Promi
       }
 
       const body = ExecuteCommandBodySchema.parse(request.body);
+      // Normalize command strings: ensure they start with `/` for CommandRegistry lookup
       const commandString = body.command.startsWith('/') ? body.command : `/${body.command}`;
 
       const result = await deps.commandRegistry.execute(commandString, {

@@ -11,12 +11,15 @@ const log = createChildLogger({ module: 'openacp-tunnel' })
 export const DEFAULT_WORKER_URL = 'https://tunnel-worker.openacp.ai'
 export const DEFAULT_API_KEY = 'saG87sc26gZKbA24tQm0tqsJ0jo3z'
 
+// Periodically ping the worker to keep the tunnel registration alive.
+// Workers may expire idle tunnels, so we heartbeat every 10 minutes.
 const HEARTBEAT_INTERVAL_MS = 10 * 60 * 1000
 // 15s instead of the spec's suggested 10s: cloudflared can take a few seconds to
 // connect on slower machines or cold starts. If it hasn't crashed by 15s we assume
 // the tunnel is up — the public URL is already known from the worker response anyway.
 const STARTUP_TIMEOUT_MS = 15_000
 const SIGKILL_TIMEOUT_MS = 5_000
+// Plugin storage key for persisted tunnel state (tunnelId + token + publicUrl)
 const STORAGE_KEY = 'openacp-tunnels'
 
 interface TunnelState {
@@ -27,6 +30,19 @@ interface TunnelState {
 
 type TunnelStateMap = Record<string, TunnelState>
 
+/**
+ * OpenACP managed tunnel provider.
+ *
+ * Flow:
+ * 1. Request a tunnel from the OpenACP worker (POST /tunnel/create) — gets back a
+ *    Cloudflare tunnel token and a stable public URL.
+ * 2. Spawn cloudflared with that token to connect the tunnel.
+ * 3. Run a heartbeat to keep the tunnel registration alive on the worker.
+ * 4. On stop, DELETE the tunnel from the worker (unless preserveState=true for restart).
+ *
+ * Tunnel state (id + token + URL) is persisted in plugin storage so restarts can
+ * reuse existing tunnels instead of creating new ones (stable URL survives restarts).
+ */
 export class OpenACPTunnelProvider implements TunnelProvider {
   private child: ChildProcess | null = null
   private publicUrl = ''
@@ -53,10 +69,9 @@ export class OpenACPTunnelProvider implements TunnelProvider {
 
   start(localPort: number): Promise<string> {
     const promise = this._startAsync(localPort)
-    // Attach a no-op catch so Node.js does not flag this as an unhandled
-    // rejection if the process exits during fake-timer advancement in tests
-    // (before the caller's await/catch is reached). The original `promise`
-    // reference still rejects normally for the caller.
+    // Attach a no-op catch so Node.js does not flag this as an unhandled rejection
+    // if the process exits during fake-timer advancement in tests before the
+    // caller's await/catch is reached. The original `promise` still rejects normally.
     promise.catch(() => {})
     return promise
   }
@@ -78,7 +93,7 @@ export class OpenACPTunnelProvider implements TunnelProvider {
     return this.publicUrl
   }
 
-  async stop(force = false): Promise<void> {
+  async stop(force = false, preserveState = false): Promise<void> {
     this.stopHeartbeat()
 
     const child = this.child
@@ -100,7 +115,7 @@ export class OpenACPTunnelProvider implements TunnelProvider {
       }
     }
 
-    if (tunnelId) {
+    if (tunnelId && !preserveState) {
       this.deleteFromWorker(tunnelId).catch(err => {
         log.warn({ err: (err as Error).message }, 'Failed to delete tunnel from worker')
       })
@@ -110,13 +125,15 @@ export class OpenACPTunnelProvider implements TunnelProvider {
       await this.storage.set(STORAGE_KEY, all)
     }
 
-    log.info({ localPort }, 'OpenACP tunnel stopped')
+    log.info({ localPort, preserveState }, 'OpenACP tunnel stopped')
   }
 
   getPublicUrl(): string {
     return this.publicUrl
   }
 
+  // Try to reuse a persisted tunnel (stable URL across restarts).
+  // If the saved tunnel is no longer alive on the worker, create a fresh one.
   private async resolveCredentials(
     saved: TunnelState | undefined,
     all: TunnelStateMap,
@@ -142,7 +159,7 @@ export class OpenACPTunnelProvider implements TunnelProvider {
     // `--url` with `--token` is a documented cloudflared shorthand: it sets up a
     // simple HTTP proxy to the given local service without requiring ingress rules
     // to be configured on the Cloudflare dashboard side.
-    const args = ['tunnel', 'run', '--token', token, '--url', `http://localhost:${port}`]
+    const args = ['tunnel', 'run', '--url', `http://localhost:${port}`, '--token', token]
 
     return new Promise<void>((resolve, reject) => {
       let settled = false
@@ -165,6 +182,17 @@ export class OpenACPTunnelProvider implements TunnelProvider {
       }
 
       this.child = child
+
+      const onData = (data: Buffer): void => {
+        const line = data.toString()
+        if (/Registered tunnel connection/.test(line)) {
+          clearTimeout(timeout)
+          log.info({ port }, 'cloudflared connection registered')
+          settle(resolve)
+        }
+      }
+      child.stdout?.on('data', onData)
+      child.stderr?.on('data', onData)
 
       child.on('error', (err) => {
         clearTimeout(timeout)

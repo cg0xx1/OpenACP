@@ -3,6 +3,8 @@ import type { RouteDeps } from './types.js';
 import { requireScopes } from '../middleware/auth.js';
 import { UpdateConfigBodySchema } from '../schemas/config.js';
 
+// Keys redacted in config API responses to prevent credentials leaking to UI clients.
+// This list covers common naming conventions across all plugin configs.
 const SENSITIVE_KEYS = [
   'botToken',
   'token',
@@ -33,28 +35,39 @@ function redactDeep(obj: Record<string, unknown>): void {
   }
 }
 
+/**
+ * Config routes under `/api/v1/config`.
+ *
+ * `GET /` returns the full config with sensitive values redacted.
+ * `GET /editable` returns only fields marked `scope: 'safe'` in the config registry,
+ * which are the fields the App UI may display and modify.
+ * `GET /schema` returns the full JSON Schema for documentation/form generation.
+ * `PATCH /` updates a single field by dot-notation path; only `safe`-scoped fields
+ * are permitted to prevent unauthorized changes to security-sensitive settings.
+ *
+ * Requires `config:read` for reads; `config:write` for mutations.
+ */
 export async function configRoutes(
   app: FastifyInstance,
   deps: RouteDeps,
 ): Promise<void> {
   // GET /config/editable — list safe-to-edit config fields
   app.get('/editable', { preHandler: requireScopes('config:read') }, async () => {
-    const { getSafeFields, resolveOptions, getFieldValueAsync } = await import(
+    const { getSafeFields, resolveOptions, getConfigValue } = await import(
       '../../../core/config/config-registry.js'
     );
     const config = deps.core.configManager.get();
-    const settingsManager = deps.core.settingsManager;
     const safeFields = getSafeFields();
 
-    const fields = await Promise.all(safeFields.map(async (def) => ({
+    const fields = safeFields.map((def) => ({
       path: def.path,
       displayName: def.displayName,
       group: def.group,
       type: def.type,
       options: resolveOptions(def, config),
-      value: await getFieldValueAsync(def, deps.core.configManager, settingsManager),
+      value: getConfigValue(config as any, def.path),
       hotReload: def.hotReload,
-    })));
+    }));
 
     return { fields };
   });
@@ -95,9 +108,8 @@ export async function configRoutes(
       });
     }
 
-    const settingsManager = deps.core.settingsManager;
     const { needsRestart } = await setFieldValueAsync(
-      fieldDef, value, deps.core.configManager, settingsManager,
+      fieldDef, value, deps.core.configManager,
     );
 
     return {

@@ -29,6 +29,7 @@ function createMockSession(overrides: Record<string, unknown> = {}) {
       resolve: vi.fn(),
     },
     enqueuePrompt: vi.fn().mockResolvedValue(undefined),
+    abortPrompt: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -36,15 +37,35 @@ function createMockSession(overrides: Record<string, unknown> = {}) {
 function createMockDeps(overrides: Partial<RouteDeps> = {}): RouteDeps {
   const mockSession = createMockSession();
 
+  const sessionManager = {
+    listSessions: vi.fn().mockReturnValue([mockSession]),
+    listAllSessions: vi.fn().mockReturnValue([
+      {
+        id: 'sess-1',
+        agent: 'claude',
+        status: 'active',
+        name: 'Test Session',
+        workspace: '/tmp/test',
+        channelId: 'api',
+        createdAt: '2026-01-01T00:00:00Z',
+        lastActiveAt: '2026-01-01T00:00:00Z',
+        dangerousMode: false,
+        queueDepth: 0,
+        promptRunning: false,
+        configOptions: undefined,
+        capabilities: null,
+        isLive: true,
+      },
+    ]),
+    getSession: vi.fn().mockReturnValue(mockSession),
+    getSessionRecord: vi.fn().mockReturnValue({ lastActiveAt: '2026-01-01T00:00:00Z' }),
+    cancelSession: vi.fn().mockResolvedValue(undefined),
+    patchRecord: vi.fn().mockResolvedValue(undefined),
+  };
+
   return {
     core: {
-      sessionManager: {
-        listSessions: vi.fn().mockReturnValue([mockSession]),
-        getSession: vi.fn().mockReturnValue(mockSession),
-        getSessionRecord: vi.fn().mockReturnValue({ lastActiveAt: '2026-01-01T00:00:00Z' }),
-        cancelSession: vi.fn().mockResolvedValue(undefined),
-        patchRecord: vi.fn().mockResolvedValue(undefined),
-      },
+      sessionManager,
       configManager: {
         get: vi.fn().mockReturnValue({
           defaultAgent: 'claude',
@@ -59,9 +80,14 @@ function createMockDeps(overrides: Partial<RouteDeps> = {}): RouteDeps {
       createSession: vi.fn().mockResolvedValue(mockSession),
       adoptSession: vi.fn().mockResolvedValue({ ok: true, sessionId: 'sess-1' }),
       archiveSession: vi.fn().mockResolvedValue({ ok: true }),
+      // Delegates to sessionManager.getSession so tests can control both via one mock
+      getOrResumeSessionById: vi.fn().mockImplementation((id: string) =>
+        Promise.resolve(sessionManager.getSession(id))
+      ),
       agentManager: {
         getAvailableAgents: vi.fn().mockReturnValue([]),
       },
+      eventBus: { emit: vi.fn() },
     } as any,
     topicManager: undefined,
     startedAt: Date.now(),
@@ -97,7 +123,7 @@ describe('session routes', () => {
   });
 
   describe('GET /api/v1/sessions', () => {
-    it('returns list of sessions', async () => {
+    it('returns list of sessions with isLive and lastActiveAt', async () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/v1/sessions',
@@ -109,6 +135,42 @@ describe('session routes', () => {
       expect(body.sessions[0].id).toBe('sess-1');
       expect(body.sessions[0].agent).toBe('claude');
       expect(body.sessions[0].status).toBe('active');
+      expect(body.sessions[0].isLive).toBe(true);
+      expect(body.sessions[0].lastActiveAt).toBe('2026-01-01T00:00:00Z');
+      expect(body.sessions[0].channelId).toBe('api');
+    });
+
+    it('returns historical (non-live) sessions', async () => {
+      (deps.core.sessionManager.listAllSessions as any).mockReturnValue([
+        {
+          id: 'old-sess',
+          agent: 'claude',
+          status: 'cancelled',
+          name: 'Old Session',
+          workspace: '/tmp/old',
+          channelId: 'telegram',
+          createdAt: '2026-01-01T00:00:00Z',
+          lastActiveAt: '2026-01-02T00:00:00Z',
+          dangerousMode: false,
+          queueDepth: 0,
+          promptRunning: false,
+          configOptions: undefined,
+          capabilities: null,
+          isLive: false,
+        },
+      ]);
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/sessions',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.sessions[0].id).toBe('old-sess');
+      expect(body.sessions[0].status).toBe('cancelled');
+      expect(body.sessions[0].isLive).toBe(false);
+      expect(body.sessions[0].lastActiveAt).toBe('2026-01-02T00:00:00Z');
     });
   });
 
@@ -152,10 +214,13 @@ describe('session routes', () => {
     });
 
     it('returns 429 when max sessions reached', async () => {
-      (deps.core.configManager.get as any).mockReturnValue({
-        defaultAgent: 'claude',
-        security: { maxConcurrentSessions: 0 },
-      });
+      // Override lifecycleManager with settingsManager returning maxConcurrentSessions=0
+      // so that any active session triggers the limit
+      deps.lifecycleManager = {
+        settingsManager: {
+          loadSettings: vi.fn().mockResolvedValue({ maxConcurrentSessions: 0 }),
+        },
+      } as any;
 
       const response = await app.inject({
         method: 'POST',
@@ -174,6 +239,38 @@ describe('session routes', () => {
       });
 
       expect(response.statusCode).toBe(400);
+    });
+
+    it('creates headless API session when no channel is provided, even if adapters are registered', async () => {
+      // Simulate a Telegram adapter being registered
+      (deps.core.adapters as Map<string, any>).set('telegram', {} as any);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { agent: 'claude' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(deps.core.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'api', createThread: false }),
+      );
+    });
+
+    it('creates adapter session when explicit channel is provided', async () => {
+      const mockAdapter = {} as any;
+      (deps.core.adapters as Map<string, any>).set('telegram', mockAdapter);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/sessions',
+        payload: { agent: 'claude', channel: 'telegram' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(deps.core.createSession).toHaveBeenCalledWith(
+        expect.objectContaining({ channelId: 'telegram', createThread: true }),
+      );
     });
   });
 
@@ -214,7 +311,7 @@ describe('session routes', () => {
       const body = JSON.parse(response.body);
       expect(body.ok).toBe(true);
       const session = (deps.core.sessionManager.getSession as any).mock.results[0].value;
-      expect(session.enqueuePrompt).toHaveBeenCalledWith('Hello!');
+      expect(session.enqueuePrompt).toHaveBeenCalledWith('Hello!', undefined, expect.objectContaining({ sourceAdapterId: 'api' }), expect.any(String));
     });
 
     it('returns 404 for unknown session', async () => {
@@ -275,6 +372,60 @@ describe('session routes', () => {
       });
 
       expect(response.statusCode).toBe(400);
+    });
+
+    it('aborts current turn and enqueues feedback when feedback provided', async () => {
+      const mockAbortPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockEnqueuePrompt = vi.fn().mockResolvedValue('turn-1');
+      const mockResolve = vi.fn();
+      (deps.core.sessionManager.getSession as any).mockReturnValue(
+        createMockSession({
+          permissionGate: { isPending: true, requestId: 'perm-1', resolve: mockResolve },
+          abortPrompt: mockAbortPrompt,
+          enqueuePrompt: mockEnqueuePrompt,
+        }),
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/sessions/sess-1/permission',
+        payload: { permissionId: 'perm-1', optionId: 'deny', feedback: 'Please use a different approach' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockResolve).toHaveBeenCalledWith('deny');
+      expect(mockAbortPrompt).toHaveBeenCalled();
+      expect(mockEnqueuePrompt).toHaveBeenCalledWith(
+        'Please use a different approach',
+        undefined,
+        { sourceAdapterId: 'api' },
+      );
+      // abort must complete before enqueue (sequential, not concurrent)
+      const abortOrder = mockAbortPrompt.mock.invocationCallOrder[0];
+      const enqueueOrder = mockEnqueuePrompt.mock.invocationCallOrder[0];
+      expect(abortOrder).toBeLessThan(enqueueOrder);
+    });
+
+    it('does not abort or enqueue when no feedback provided', async () => {
+      const mockAbortPrompt = vi.fn().mockResolvedValue(undefined);
+      const mockEnqueuePrompt = vi.fn().mockResolvedValue('turn-1');
+      (deps.core.sessionManager.getSession as any).mockReturnValue(
+        createMockSession({
+          permissionGate: { isPending: true, requestId: 'perm-1', resolve: vi.fn() },
+          abortPrompt: mockAbortPrompt,
+          enqueuePrompt: mockEnqueuePrompt,
+        }),
+      );
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/sessions/sess-1/permission',
+        payload: { permissionId: 'perm-1', optionId: 'allow' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockAbortPrompt).not.toHaveBeenCalled();
+      expect(mockEnqueuePrompt).not.toHaveBeenCalled();
     });
   });
 

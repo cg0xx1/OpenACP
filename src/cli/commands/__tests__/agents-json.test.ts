@@ -39,7 +39,7 @@ describe('agents list --json', () => {
   it('outputs envelope with agents array', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['list', '--json'], undefined)
+      await cmdAgents(['list', '--json'], '/tmp/test-openacp')
     })
     expect(result.exitCode).toBe(0)
     const data = expectValidJsonSuccess(result.stdout)
@@ -51,7 +51,7 @@ describe('agents list --json', () => {
   it('includes all required fields in each agent entry', async () => {
     const { cmdAgents } = await import('../agents.js')
     const result = await captureJsonOutput(async () => {
-      await cmdAgents(['list', '--json'], undefined)
+      await cmdAgents(['list', '--json'], '/tmp/test-openacp')
     })
     const data = expectValidJsonSuccess(result.stdout)
     const agent = (data.agents as Record<string, unknown>[])[0]

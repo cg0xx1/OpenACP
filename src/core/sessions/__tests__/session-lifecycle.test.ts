@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Session } from '../session.js'
 import { TypedEmitter } from '../../utils/typed-emitter.js'
 import type { AgentEvent } from '../../types.js'
+import { MiddlewareChain } from '../../plugin/middleware-chain.js'
 
 function mockAgentInstance() {
   const emitter = new TypedEmitter<{ agent_event: (event: AgentEvent) => void }>()
@@ -331,5 +332,55 @@ describe("Session - Context Injection", () => {
     await session.enqueuePrompt("hello after finish");
     await new Promise((r) => setTimeout(r, 50));
     expect(agent.prompt.mock.calls.length).toBe(callsBefore);
+  });
+});
+
+describe("Session - turn:end middleware on error", () => {
+  it("fires turn:end with stopReason 'error' even when prompt throws", async () => {
+    const agent = mockAgentInstance();
+    agent.prompt.mockRejectedValue(new Error("agent crash"));
+
+    const turnEndPayloads: { stopReason: string }[] = [];
+    const chain = new MiddlewareChain();
+    chain.add("turn:end", "test", {
+      priority: 100,
+      handler: async (payload: any, next: any) => {
+        turnEndPayloads.push({ stopReason: payload.stopReason });
+        return next(payload);
+      },
+    });
+
+    const session = createTestSession(agent);
+    session.name = "skip-autoname";
+    session.middlewareChain = chain;
+
+    await session.enqueuePrompt("hello");
+    await vi.waitFor(() => expect(turnEndPayloads).toHaveLength(1), { timeout: 1000 });
+
+    expect(turnEndPayloads[0].stopReason).toBe("error");
+  });
+
+  it("fires turn:end with stopReason 'end_turn' on success", async () => {
+    const agent = mockAgentInstance();
+    agent.prompt.mockResolvedValue(undefined);
+
+    const turnEndPayloads: { stopReason: string }[] = [];
+    const chain = new MiddlewareChain();
+    chain.add("turn:end", "test", {
+      priority: 100,
+      handler: async (payload: any, next: any) => {
+        turnEndPayloads.push({ stopReason: payload.stopReason });
+        return next(payload);
+      },
+    });
+
+    const session = createTestSession(agent);
+    session.name = "skip-autoname";
+    session.middlewareChain = chain;
+
+    await session.enqueuePrompt("hello");
+    await vi.waitFor(() => expect(turnEndPayloads).toHaveLength(1), { timeout: 1000 });
+
+    expect(turnEndPayloads[0].stopReason).toBe("end_turn");
   });
 });

@@ -79,7 +79,7 @@ hello-world/
 
 The scaffold generates two documentation files to help you (and your tools) work with the plugin:
 
-- **CLAUDE.md** — A comprehensive technical reference for AI coding agents. Contains the full plugin API, all 18 middleware hooks, permissions, testing utilities, and code patterns. An agent with zero prior context can read this file and write a complete plugin.
+- **CLAUDE.md** — A comprehensive technical reference for AI coding agents. Contains the full plugin API, all 19 middleware hooks, permissions, testing utilities, and code patterns. An agent with zero prior context can read this file and write a complete plugin.
 - **PLUGIN_GUIDE.md** — A shorter, practical guide for human developers. Covers the development workflow, code examples for common tasks (commands, services, middleware, settings), testing, and publishing.
 
 ### package.json

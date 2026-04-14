@@ -1,5 +1,6 @@
 import { Bot, InputFile } from "grammy";
 import path from "node:path";
+import { BusEvent } from "../../core/events.js";
 import type {
   OpenACPCore,
   OutgoingMessage,
@@ -69,10 +70,11 @@ interface UsageMetadata {
 }
 
 /**
- * Wraps native fetch to work around grammY's polyfilled AbortController.
- * grammY uses abort-controller polyfill whose AbortSignal fails instanceof
- * checks in Node 24+ native fetch. This wrapper re-creates a native
- * AbortSignal from the polyfilled one before passing it to fetch.
+ * Wrap native fetch to work around grammY's polyfilled AbortController.
+ *
+ * grammY uses an abort-controller polyfill whose AbortSignal fails `instanceof`
+ * checks in Node 24+ native fetch. This wrapper re-creates a native AbortSignal
+ * from the polyfilled signal object before forwarding the request.
  */
 function patchedFetch(
   input: RequestInfo | URL,
@@ -94,6 +96,27 @@ function patchedFetch(
   return fetch(input, init);
 }
 
+/**
+ * Telegram adapter — bridges the OpenACP session system to a Telegram supergroup.
+ *
+ * Architecture overview:
+ * - **Topic-per-session model**: each agent session lives in its own Telegram forum
+ *   topic. The topic ID is stored as `session.threadId` and used to route all
+ *   inbound and outbound messages.
+ * - **Two system topics**: "📋 Notifications" (cross-session alerts) and
+ *   "🤖 Assistant" (conversational AI). Created once on first run, IDs persisted.
+ * - **Streaming**: agent text arrives as `text_delta` chunks. A `MessageDraft`
+ *   accumulates chunks and edits the message in-place every 5 seconds, reducing
+ *   API calls while keeping the response live.
+ * - **Callback routing**:
+ *   - `p:<key>:<optionId>` — permission approval buttons
+ *   - `c/<command>` (or `c/#<id>` for long commands) — command button actions
+ *   - `m:<itemId>` — MenuRegistry item dispatch
+ *   - Domain prefixes (`d:`, `v:`, `ns:`, `sw:`, etc.) — specific feature flows
+ * - **Two-phase startup**: Phase 1 starts the bot and registers handlers.
+ *   Phase 2 checks group prerequisites (admin, topics enabled) and creates
+ *   system topics. If prerequisites are not met, a background watcher retries.
+ */
 export class TelegramAdapter extends MessagingAdapter {
   readonly name = "telegram";
   readonly renderer: IRenderer = new TelegramRenderer();
@@ -128,8 +151,20 @@ export class TelegramAdapter extends MessagingAdapter {
   private _pendingSkillCommands = new Map<string, AgentCommand[]>();
   /** Control message IDs per session (for updating status text/buttons) */
   private controlMsgIds = new Map<string, number>();
+  private _threadReadyHandler?: (data: { sessionId: string; channelId: string; threadId: string }) => void;
+  private _configChangedHandler?: (data: { sessionId: string }) => void;
+  /** Mutable ref passed to callbacks before topics are ready; updated in-place by initTopicDependentFeatures */
+  private _systemTopicIds = { notificationTopicId: 0, assistantTopicId: 0 };
+  /** True once topics are initialized and Phase 2 is complete */
+  private _topicsInitialized = false;
+  /** Background watcher timer — cancelled on stop() or when topics succeed */
+  private _prerequisiteWatcher: ReturnType<typeof setTimeout> | null = null;
 
-  /** Store control message ID in memory + persist to session record */
+  /**
+   * Persist the control message ID both in-memory and to the session record.
+   * The control message is the pinned status card with bypass/TTS buttons; its ID
+   * is needed after a restart to edit it when config changes.
+   */
   private storeControlMsgId(sessionId: string, msgId: number): void {
     this.controlMsgIds.set(sessionId, msgId);
     const record = this.core.sessionManager.getSessionRecord(sessionId);
@@ -206,6 +241,12 @@ export class TelegramAdapter extends MessagingAdapter {
     this.saveTopicIds = saveTopicIds;
   }
 
+  /**
+   * Set up the grammY bot, register all callback and message handlers, then perform
+   * two-phase startup: Phase 1 starts polling immediately; Phase 2 checks group
+   * prerequisites (bot is admin, topics are enabled) and creates/restores system topics.
+   * If prerequisites are not met, a background watcher retries until they are.
+   */
   async start(): Promise<void> {
     this.bot = new Bot(this.telegramConfig.botToken, {
       client: {
@@ -288,28 +329,6 @@ export class TelegramAdapter extends MessagingAdapter {
       return next();
     });
 
-    // Ensure system topics exist (retry on transient network failures)
-    const topics = await this.retryWithBackoff(
-      () => ensureTopics(
-        this.bot,
-        this.telegramConfig.chatId,
-        this.telegramConfig,
-        async (updates) => {
-          if (this.saveTopicIds) {
-            await this.saveTopicIds(updates);
-          } else {
-            // Fallback for legacy usage without plugin settings
-            await this.core.configManager.save({
-              channels: { telegram: updates },
-            });
-          }
-        },
-      ),
-      "ensureTopics",
-    );
-    this.notificationTopicId = topics.notificationTopicId;
-    this.assistantTopicId = topics.assistantTopicId;
-
     // Setup permission handler
     this.permissionHandler = new PermissionHandler(
       this.bot,
@@ -320,9 +339,17 @@ export class TelegramAdapter extends MessagingAdapter {
 
     // Generic CommandRegistry dispatch — handles any command registered via plugin system.
     // Must be early so registry commands run before legacy bot.command() handlers.
+    // Command handler — guard when topics not yet initialized
     this.bot.on("message:text", async (ctx, next) => {
       const text = ctx.message?.text;
       if (!text?.startsWith("/")) return next();
+
+      if (!this._topicsInitialized) {
+        await ctx.reply(
+          "⏳ OpenACP is still setting up. Check the General topic for instructions.",
+        ).catch(() => {});
+        return;
+      }
 
       const registry =
         this.core.lifecycleManager?.serviceRegistry?.get<CommandRegistry>(
@@ -407,6 +434,11 @@ export class TelegramAdapter extends MessagingAdapter {
 
     // Callback query handler for command buttons (c/ prefix)
     this.bot.callbackQuery(/^c\//, async (ctx) => {
+      if (!this._topicsInitialized) {
+        await ctx.answerCallbackQuery().catch(() => {});
+        return;
+      }
+
       const data = ctx.callbackQuery.data;
       const command = this.fromCallbackData(data);
 
@@ -476,14 +508,15 @@ export class TelegramAdapter extends MessagingAdapter {
     setupTTSCallbacks(this.bot, this.core as OpenACPCore);
     setupVerbosityCallbacks(this.bot, this.core as OpenACPCore);
     setupIntegrateCallbacks(this.bot, this.core as OpenACPCore);
+    this.permissionHandler.setupCallbackHandler();
+
+    // Register topic-dependent callbacks using a mutable ref (_systemTopicIds).
+    // The ref is updated in-place by initTopicDependentFeatures() once topics are ready.
     setupMenuCallbacks(
       this.bot,
       this.core as OpenACPCore,
       this.telegramConfig.chatId,
-      {
-        notificationTopicId: this.notificationTopicId,
-        assistantTopicId: this.assistantTopicId,
-      },
+      this._systemTopicIds,
       () => {
         const assistant = this.core.assistantManager?.get('telegram');
         if (!assistant) return undefined;
@@ -500,94 +533,38 @@ export class TelegramAdapter extends MessagingAdapter {
         this.storeControlMsgId(sessionId, msgId);
       },
     );
-    this.permissionHandler.setupCallbackHandler();
-
-    // Send initial messages when a new session thread is created via API/CLI
-    this.core.eventBus.on("session:threadReady", ({ sessionId, channelId, threadId }) => {
-      if (channelId !== "telegram") return;
-      const session = this.core.sessionManager.getSession(sessionId);
-      if (!session) return;
-      const numThreadId = Number(threadId);
-      if (!numThreadId) return;
-      // Skip assistant session — it manages its own welcome message
-      if (sessionId === this.core.assistantManager?.get('telegram')?.id) return;
-
-      // Send "Setting up..." then control message with real session state
-      this.sendQueue.enqueue(() =>
-        this.bot.api.sendMessage(this.telegramConfig.chatId, `⏳ Setting up session, please wait...`, {
-          message_thread_id: numThreadId,
-          parse_mode: 'HTML',
-        }),
-      ).then(() =>
-        this.sendQueue.enqueue(() =>
-          this.bot.api.sendMessage(
-            this.telegramConfig.chatId,
-            buildSessionStatusText(session, '✅ <b>Session started</b>'),
-            {
-              message_thread_id: numThreadId,
-              parse_mode: 'HTML',
-              reply_markup: buildSessionControlKeyboard(sessionId, isBypassActive(session), session.voiceMode === "on"),
-            },
-          ),
-        ),
-      ).then((msg) => {
-        if (msg) this.storeControlMsgId(sessionId, msg.message_id);
-      }).catch((err) => {
-        log.warn({ err, sessionId }, 'Failed to send initial messages for new session');
-      });
-    });
-
-    // Update control message when config changes via commands (/model, /mode, /bypass, etc.)
-    this.core.eventBus.on("session:configChanged", ({ sessionId }) => {
-      this.updateControlMessage(sessionId).catch(() => {});
-    });
-
-    // Setup message routing
     this.setupRoutes();
 
     // Start bot polling
     this.bot.start({
       allowed_updates: ["message", "callback_query"],
-      onStart: () =>
-        log.info(
-          { chatId: this.telegramConfig.chatId },
-          "Telegram bot started",
-        ),
+      onStart: () => log.info({ chatId: this.telegramConfig.chatId }, "Telegram bot started"),
     });
 
-    // Send welcome message
-    try {
-      const config = this.core.configManager.get();
-      const agents = this.core.agentManager.getAvailableAgents();
-      const allRecords = this.core.sessionManager.listRecords();
+    // Phase 2: check prerequisites and either initialize topics now or start watcher
+    log.info(
+      {
+        chatId: this.telegramConfig.chatId,
+        notificationTopicId: this.telegramConfig.notificationTopicId,
+        assistantTopicId: this.telegramConfig.assistantTopicId,
+      },
+      'Telegram adapter: starting prerequisite check (existing topic IDs shown)',
+    );
+    const { checkTopicsPrerequisites } = await import('./validators.js');
+    const prereqResult = await checkTopicsPrerequisites(
+      this.telegramConfig.botToken,
+      this.telegramConfig.chatId,
+    );
 
-      const welcomeText = buildWelcomeMessage({
-        activeCount: allRecords.filter(
-          (r) => r.status === "active" || r.status === "initializing",
-        ).length,
-        errorCount: allRecords.filter((r) => r.status === "error").length,
-        totalCount: allRecords.length,
-        agents: agents.map((a) => a.name),
-        defaultAgent: config.defaultAgent,
-        workspace: this.core.configManager.resolveWorkspace(),
-      });
-
-      await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {
-        message_thread_id: this.assistantTopicId,
-        parse_mode: "HTML",
-        reply_markup: buildMenuKeyboard(
-          this.core.lifecycleManager?.serviceRegistry?.get('menu-registry') as import('../../core/menu-registry.js').MenuRegistry | undefined,
-        ),
-      });
-    } catch (err) {
-      log.warn({ err }, "Failed to send welcome message");
-    }
-
-    // Spawn assistant via AssistantManager
-    try {
-      await this.core.assistantManager.spawn("telegram", String(this.assistantTopicId));
-    } catch (err) {
-      log.error({ err }, "Failed to spawn assistant");
+    if (prereqResult.ok) {
+      log.info('Telegram adapter: prerequisites OK, initializing topic-dependent features');
+      await this.initTopicDependentFeatures();
+    } else {
+      log.warn({ issues: prereqResult.issues }, 'Telegram adapter: prerequisites NOT met, starting watcher');
+      for (const issue of prereqResult.issues) {
+        log.warn({ issue }, 'Telegram prerequisite not met');
+      }
+      this.startPrerequisiteWatcher(prereqResult.issues);
     }
   }
 
@@ -632,12 +609,202 @@ export class TelegramAdapter extends MessagingAdapter {
     });
   }
 
+  private async initTopicDependentFeatures(): Promise<void> {
+    if (this._topicsInitialized) return; // idempotent guard
+    log.info(
+      { notificationTopicId: this.telegramConfig.notificationTopicId, assistantTopicId: this.telegramConfig.assistantTopicId },
+      'initTopicDependentFeatures: starting (existing IDs in config)',
+    );
+    // Ensure system topics exist (retry on transient network failures)
+    const topics = await this.retryWithBackoff(
+      () => ensureTopics(
+        this.bot,
+        this.telegramConfig.chatId,
+        this.telegramConfig,
+        async (updates) => {
+          if (this.saveTopicIds) {
+            await this.saveTopicIds(updates);
+          } else {
+            // Fallback for legacy usage without plugin settings
+            await this.core.configManager.save({
+              channels: { telegram: updates },
+            });
+          }
+        },
+      ),
+      "ensureTopics",
+    );
+    this.notificationTopicId = topics.notificationTopicId;
+    this.assistantTopicId = topics.assistantTopicId;
+    // Update the mutable ref so callbacks registered before bot.start() see the correct IDs
+    this._systemTopicIds.notificationTopicId = topics.notificationTopicId;
+    this._systemTopicIds.assistantTopicId = topics.assistantTopicId;
+    log.info(
+      { notificationTopicId: this.notificationTopicId, assistantTopicId: this.assistantTopicId },
+      'initTopicDependentFeatures: topics ready',
+    );
+
+    // Send initial messages when a new session thread is created via API/CLI
+    this._threadReadyHandler = ({ sessionId, channelId, threadId }) => {
+      if (channelId !== "telegram") return;
+      const session = this.core.sessionManager.getSession(sessionId);
+      if (!session) return;
+      const numThreadId = Number(threadId);
+      if (!numThreadId) return;
+      // Skip assistant session — it manages its own welcome message
+      if (sessionId === this.core.assistantManager?.get('telegram')?.id) return;
+
+      // Send "Setting up..." then control message with real session state
+      this.sendQueue.enqueue(() =>
+        this.bot.api.sendMessage(this.telegramConfig.chatId, `⏳ Setting up session, please wait...`, {
+          message_thread_id: numThreadId,
+          parse_mode: 'HTML',
+        }),
+      ).then(() =>
+        this.sendQueue.enqueue(() =>
+          this.bot.api.sendMessage(
+            this.telegramConfig.chatId,
+            buildSessionStatusText(session, '✅ <b>Session started</b>'),
+            {
+              message_thread_id: numThreadId,
+              parse_mode: 'HTML',
+              reply_markup: buildSessionControlKeyboard(sessionId, isBypassActive(session), session.voiceMode === "on"),
+            },
+          ),
+        ),
+      ).then((msg) => {
+        if (msg) this.storeControlMsgId(sessionId, msg.message_id);
+      }).catch((err) => {
+        log.warn({ err, sessionId }, 'Failed to send initial messages for new session');
+      });
+    };
+    this.core.eventBus.on(BusEvent.SESSION_THREAD_READY, this._threadReadyHandler);
+
+    // Update control message when config changes via commands (/model, /mode, /bypass, etc.)
+    this._configChangedHandler = ({ sessionId }) => {
+      this.updateControlMessage(sessionId).catch(() => {});
+    };
+    this.core.eventBus.on("session:configChanged", this._configChangedHandler);
+
+    // Send welcome message
+    log.info({ assistantTopicId: this.assistantTopicId }, 'initTopicDependentFeatures: sending welcome message');
+    try {
+      const config = this.core.configManager.get();
+      const agents = this.core.agentManager.getAvailableAgents();
+      const allRecords = this.core.sessionManager.listRecords();
+
+      const welcomeText = buildWelcomeMessage({
+        activeCount: allRecords.filter(
+          (r) => r.status === "active" || r.status === "initializing",
+        ).length,
+        errorCount: allRecords.filter((r) => r.status === "error").length,
+        totalCount: allRecords.length,
+        agents: agents.map((a) => a.name),
+        defaultAgent: config.defaultAgent,
+        workspace: this.core.configManager.resolveWorkspace(),
+      });
+
+      await this.bot.api.sendMessage(this.telegramConfig.chatId, welcomeText, {
+        message_thread_id: this.assistantTopicId,
+        parse_mode: "HTML",
+        reply_markup: buildMenuKeyboard(
+          this.core.lifecycleManager?.serviceRegistry?.get('menu-registry') as import('../../core/menu-registry.js').MenuRegistry | undefined,
+        ),
+      });
+      log.info('initTopicDependentFeatures: welcome message sent');
+    } catch (err) {
+      log.warn({ err }, "Failed to send welcome message");
+    }
+
+    // Spawn assistant via AssistantManager
+    try {
+      await this.core.assistantManager.getOrSpawn("telegram", String(this.assistantTopicId));
+    } catch (err) {
+      log.error({ err }, "Failed to spawn assistant");
+    }
+
+    this._topicsInitialized = true;
+    log.info("Telegram adapter fully initialized");
+  }
+
+  private startPrerequisiteWatcher(issues: string[]): void {
+    const setupMessage =
+      `⚠️ <b>OpenACP needs setup before it can start.</b>\n\n` +
+      issues.join('\n\n') +
+      `\n\nOpenACP will automatically retry until this is resolved.`;
+
+    this.bot.api.sendMessage(this.telegramConfig.chatId, setupMessage, {
+      parse_mode: 'HTML',
+    }).catch((err) => {
+      log.warn({ err }, 'Failed to send setup guidance to General topic');
+    });
+
+    const schedule = [5_000, 10_000, 30_000];
+    let attempt = 1;
+
+    const retry = async () => {
+      if (this._prerequisiteWatcher === null) return; // cancelled by stop()
+
+      const { checkTopicsPrerequisites } = await import('./validators.js');
+      const result = await checkTopicsPrerequisites(
+        this.telegramConfig.botToken,
+        this.telegramConfig.chatId,
+      );
+
+      if (result.ok) {
+        this._prerequisiteWatcher = null;
+        log.info('Prerequisites met — completing Telegram adapter initialization');
+        try {
+          await this.initTopicDependentFeatures();
+          await this.bot.api.sendMessage(
+            this.telegramConfig.chatId,
+            '✅ <b>OpenACP is ready!</b>\n\nSystem topics have been created. Use the 🤖 Assistant topic to get started.',
+            { parse_mode: 'HTML' },
+          );
+        } catch (err) {
+          log.error({ err }, 'Failed to complete initialization after prerequisites met');
+        }
+        return;
+      }
+
+      log.debug({ issues: result.issues }, 'Prerequisites not yet met, retrying');
+      const delay = schedule[Math.min(attempt, schedule.length - 1)];
+      attempt++;
+      this._prerequisiteWatcher = setTimeout(retry, delay);
+    };
+
+    this._prerequisiteWatcher = setTimeout(retry, schedule[0]);
+  }
+
+  /**
+   * Tear down the bot and release all associated resources.
+   *
+   * Cancels the background prerequisite watcher, destroys all per-session activity
+   * trackers (which hold interval timers), removes eventBus listeners, clears the
+   * send queue, and stops the grammY bot polling loop.
+   */
   async stop(): Promise<void> {
+    // Cancel background prerequisite watcher if running
+    if (this._prerequisiteWatcher !== null) {
+      clearTimeout(this._prerequisiteWatcher);
+      this._prerequisiteWatcher = null;
+    }
+
     // Cleanup activity trackers (interval timers)
     for (const tracker of this.sessionTrackers.values()) {
       tracker.destroy();
     }
     this.sessionTrackers.clear();
+
+    // Remove direct eventBus listeners
+    if (this._threadReadyHandler) {
+      this.core.eventBus.off(BusEvent.SESSION_THREAD_READY, this._threadReadyHandler);
+      this._threadReadyHandler = undefined;
+    }
+    if (this._configChangedHandler) {
+      this.core.eventBus.off("session:configChanged", this._configChangedHandler);
+      this._configChangedHandler = undefined;
+    }
 
     // Clear send queue
     this.sendQueue.clear();
@@ -736,6 +903,14 @@ export class TelegramAdapter extends MessagingAdapter {
 
   private setupRoutes(): void {
     this.bot.on("message:text", async (ctx) => {
+      // Guard: topics not yet initialized — non-command messages would use stale/zero topic IDs
+      if (!this._topicsInitialized) {
+        await ctx.reply(
+          "⏳ OpenACP is still setting up. Check the General topic for instructions.",
+        ).catch(() => {});
+        return;
+      }
+
       const threadId = ctx.message.message_thread_id;
       const text = ctx.message.text;
 
@@ -768,8 +943,7 @@ export class TelegramAdapter extends MessagingAdapter {
         await this.draftManager.finalize(sessionId, assistantSession?.id);
       }
       if (sessionId) {
-        const tracker = this.sessionTrackers.get(sessionId);
-        if (tracker) await tracker.onNewPrompt();
+        await this.drainAndResetTracker(sessionId);
       }
       ctx.replyWithChatAction("typing").catch(() => {});
       this.core
@@ -874,10 +1048,29 @@ export class TelegramAdapter extends MessagingAdapter {
    */
   private _dispatchQueues = new Map<string, Promise<void>>();
 
+  /**
+   * Drain pending event dispatches from the previous prompt, then reset the
+   * activity tracker so late tool_call events don't leak into the new card.
+   */
+  private async drainAndResetTracker(sessionId: string): Promise<void> {
+    const pendingDispatch = this._dispatchQueues.get(sessionId);
+    if (pendingDispatch) await pendingDispatch;
+
+    const tracker = this.sessionTrackers.get(sessionId);
+    if (tracker) await tracker.onNewPrompt();
+  }
+
   private getTracer(sessionId: string): DebugTracer | null {
     return this.core.sessionManager.getSession(sessionId)?.agentInstance?.debugTracer ?? null;
   }
 
+  /**
+   * Primary outbound dispatch method — routes an agent message to the session's Telegram topic.
+   *
+   * Wraps the base class `sendMessage` in a per-session promise chain (`_dispatchQueues`)
+   * so that concurrent events fired from SessionBridge are serialized and delivered in the
+   * order they arrive, preventing fast handlers from overtaking slower ones.
+   */
   async sendMessage(
     sessionId: string,
     content: OutgoingMessage,
@@ -1267,6 +1460,11 @@ export class TelegramAdapter extends MessagingAdapter {
     );
   }
 
+  /**
+   * Render a PermissionRequest as an inline keyboard in the session topic and
+   * notify the Notifications topic. Runs inside a sendQueue item, so
+   * notification is fire-and-forget to avoid deadlock.
+   */
   async sendPermissionRequest(
     sessionId: string,
     request: PermissionRequest,
@@ -1281,6 +1479,11 @@ export class TelegramAdapter extends MessagingAdapter {
     );
   }
 
+  /**
+   * Post a notification to the Notifications topic.
+   * Assistant session notifications are suppressed — the assistant topic is
+   * the user's primary interface and does not need a separate alert.
+   */
   async sendNotification(notification: NotificationMessage): Promise<void> {
     this.getTracer(notification.sessionId)?.log("telegram", { action: "notification:send", sessionId: notification.sessionId, type: notification.type });
     if (notification.sessionId === this.core.assistantManager?.get('telegram')?.id) return;
@@ -1327,6 +1530,10 @@ export class TelegramAdapter extends MessagingAdapter {
     );
   }
 
+  /**
+   * Create a new Telegram forum topic for a session and return its thread ID as a string.
+   * Called by the core when a session is created via the API or CLI (not from the Telegram UI).
+   */
   async createSessionThread(sessionId: string, name: string): Promise<string> {
     this.getTracer(sessionId)?.log("telegram", { action: "thread:create", sessionId, name });
     log.info({ sessionId, name }, "Session topic created");
@@ -1335,6 +1542,10 @@ export class TelegramAdapter extends MessagingAdapter {
     );
   }
 
+  /**
+   * Rename the forum topic for a session and update the session record's display name.
+   * No-ops silently if the session doesn't have a threadId yet (e.g. still initializing).
+   */
   async renameSessionThread(sessionId: string, newName: string): Promise<void> {
     this.getTracer(sessionId)?.log("telegram", { action: "thread:rename", sessionId, newName });
     const session = this.core.sessionManager.getSession(sessionId);
@@ -1353,6 +1564,7 @@ export class TelegramAdapter extends MessagingAdapter {
     await this.core.sessionManager.patchRecord(sessionId, { name: newName });
   }
 
+  /** Delete the forum topic associated with a session. */
   async deleteSessionThread(sessionId: string): Promise<void> {
     const record = this.core.sessionManager.getSessionRecord(sessionId);
     const platform = record?.platform as
@@ -1371,6 +1583,11 @@ export class TelegramAdapter extends MessagingAdapter {
     }
   }
 
+  /**
+   * Display or update the pinned skill commands message for a session.
+   * If the session's threadId is not yet set (e.g. session created from API),
+   * the commands are queued and flushed once the thread becomes available.
+   */
   async sendSkillCommands(
     sessionId: string,
     commands: AgentCommand[],
@@ -1487,7 +1704,10 @@ export class TelegramAdapter extends MessagingAdapter {
 
     // Session topic
     const sid = await this.resolveSessionId(threadId);
-    if (sid) await this.draftManager.finalize(sid, this.core.assistantManager?.get('telegram')?.id);
+    if (sid) {
+      await this.draftManager.finalize(sid, this.core.assistantManager?.get('telegram')?.id);
+      await this.drainAndResetTracker(sid);
+    }
     this.core
       .handleMessage({
         channelId: "telegram",
@@ -1499,11 +1719,25 @@ export class TelegramAdapter extends MessagingAdapter {
       .catch((err) => log.error({ err }, "handleMessage error"));
   }
 
+  /**
+   * Remove skill slash commands from the Telegram bot command list for a session.
+   *
+   * Clears any queued pending commands that hadn't been sent yet, then delegates
+   * to `SkillCommandManager` to delete the commands from the Telegram API. Called
+   * when a session with registered skill commands ends.
+   */
   async cleanupSkillCommands(sessionId: string): Promise<void> {
     this._pendingSkillCommands.delete(sessionId);
     await this.skillManager.cleanup(sessionId);
   }
 
+  /**
+   * Clean up all adapter state associated with a session.
+   *
+   * Finalizes and discards any in-flight draft, destroys the activity tracker
+   * (stopping ThinkingIndicator timers and finalizing any open ToolCard), and
+   * clears pending skill commands. Called when a session ends or is reset.
+   */
   async cleanupSessionState(sessionId: string): Promise<void> {
     this._pendingSkillCommands.delete(sessionId);
     // Finalize and clean up draft state
@@ -1518,10 +1752,23 @@ export class TelegramAdapter extends MessagingAdapter {
     }
   }
 
+  /**
+   * Remove `[TTS]...[/TTS]` blocks from the active or finalized draft for a session.
+   *
+   * The agent embeds these blocks so the speech plugin can extract the TTS text, but
+   * they should never appear in the chat message. Called after TTS audio has been sent.
+   */
   async stripTTSBlock(sessionId: string): Promise<void> {
     await this.draftManager.stripPattern(sessionId, /\[TTS\][\s\S]*?\[\/TTS\]/g);
   }
 
+  /**
+   * Archive a session by deleting its forum topic.
+   *
+   * Sets `session.archiving = true` to suppress any outgoing messages while the
+   * topic is being torn down, finalizes pending drafts, cleans up all trackers,
+   * then deletes the Telegram topic (which removes all messages).
+   */
   async archiveSessionTopic(sessionId: string): Promise<void> {
     this.getTracer(sessionId)?.log("telegram", { action: "thread:archive", sessionId });
     const core = this.core as OpenACPCore;

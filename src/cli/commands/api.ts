@@ -2,6 +2,25 @@ import { readApiPort, removeStalePortFile, apiCall } from '../api-client.js'
 import { wantsHelp } from './helpers.js'
 import { isJsonMode, jsonSuccess, jsonError, muteForJson, ErrorCodes } from '../output.js'
 
+/**
+ * Extract a human-readable error message from an API response body.
+ *
+ * The API can return errors in two shapes:
+ *   - Structured: `{ error: { message: "...", code: "...", statusCode: N } }` (from globalErrorHandler)
+ *   - Plain string: `{ error: "..." }` (from inline reply.send())
+ *
+ * Without this helper, `String(data.error)` produces "[object Object]" for structured errors.
+ */
+function extractApiError(data: Record<string, unknown>, fallback = 'API request failed'): string {
+  const err = data.error
+  if (!err) return fallback
+  if (typeof err === 'string') return err
+  if (typeof err === 'object' && err !== null && 'message' in err) {
+    return String((err as Record<string, unknown>).message)
+  }
+  return fallback
+}
+
 function printApiHelp(): void {
   console.log(`
 \x1b[1mopenacp api\x1b[0m — Interact with the running OpenACP daemon
@@ -48,6 +67,17 @@ function printApiHelp(): void {
 `)
 }
 
+/**
+ * `openacp api` — Interact with the running daemon via its REST API.
+ *
+ * All subcommands require a running daemon. Reads the port from api.port and
+ * sends authenticated HTTP requests. Removes stale port files on connection
+ * failure so subsequent checks correctly report the daemon as offline.
+ *
+ * Subcommands: status, session, new, send, cancel, bypass, session-config,
+ *              topics, delete-topic, cleanup, health, agents, adapters,
+ *              tunnel, config, config set, notify, restart, version
+ */
 export async function cmdApi(args: string[], instanceRoot?: string): Promise<void> {
   const subCmd = args[0]
 
@@ -305,8 +335,8 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -330,8 +360,8 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess({ cancelled: true, sessionId })
@@ -397,8 +427,8 @@ Shows the version of the currently running daemon process.
         process.exit(1)
       }
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -446,8 +476,8 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -463,8 +493,8 @@ Shows the version of the currently running daemon process.
       const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}`)
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -502,8 +532,8 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -514,8 +544,8 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/health')
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -541,8 +571,8 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/restart', { method: 'POST' })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess({ restarted: true })
@@ -555,8 +585,8 @@ Shows the version of the currently running daemon process.
         const res = await call('/api/config')
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
-          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-          console.error(`Error: ${data.error}`)
+          if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+          console.error(`Error: ${extractApiError(data)}`)
           process.exit(1)
         }
         if (json) jsonSuccess(data)
@@ -582,8 +612,8 @@ Shows the version of the currently running daemon process.
         })
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
-          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-          console.error(`Error: ${data.error}`)
+          if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+          console.error(`Error: ${extractApiError(data)}`)
           process.exit(1)
         }
         if (json) jsonSuccess(data)
@@ -617,8 +647,8 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/tunnel')
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -643,8 +673,8 @@ Shows the version of the currently running daemon process.
       })
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess({ sent: true })
@@ -654,8 +684,8 @@ Shows the version of the currently running daemon process.
       const res = await call('/api/version')
       const data = await res.json() as Record<string, unknown>
       if (!res.ok) {
-        if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-        console.error(`Error: ${data.error}`)
+        if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+        console.error(`Error: ${extractApiError(data)}`)
         process.exit(1)
       }
       if (json) jsonSuccess(data)
@@ -675,8 +705,8 @@ Shows the version of the currently running daemon process.
         const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}/config`)
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
-          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-          console.error(`Error: ${data.error}`)
+          if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+          console.error(`Error: ${extractApiError(data)}`)
           process.exit(1)
         }
         if (json) jsonSuccess(data)
@@ -723,8 +753,8 @@ Shows the version of the currently running daemon process.
         })
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
-          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-          console.error(`Error: ${data.error}`)
+          if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+          console.error(`Error: ${extractApiError(data)}`)
           process.exit(1)
         }
         if (json) jsonSuccess(data)
@@ -740,8 +770,8 @@ Shows the version of the currently running daemon process.
         const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}/config/overrides`)
         const data = await res.json() as Record<string, unknown>
         if (!res.ok) {
-          if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-          console.error(`Error: ${data.error}`)
+          if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+          console.error(`Error: ${extractApiError(data)}`)
           process.exit(1)
         }
         if (json) jsonSuccess(data)
@@ -771,8 +801,8 @@ Shows the version of the currently running daemon process.
           })
           const data = await res.json() as Record<string, unknown>
           if (!res.ok) {
-            if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-            console.error(`Error: ${data.error}`)
+            if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+            console.error(`Error: ${extractApiError(data)}`)
             process.exit(1)
           }
           if (json) jsonSuccess(data)
@@ -783,8 +813,8 @@ Shows the version of the currently running daemon process.
           const res = await call(`/api/sessions/${encodeURIComponent(sessionId)}/config/overrides`)
           const data = await res.json() as Record<string, unknown>
           if (!res.ok) {
-            if (json) jsonError(ErrorCodes.API_ERROR, String(data.error ?? 'API request failed'))
-            console.error(`Error: ${data.error}`)
+            if (json) jsonError(ErrorCodes.API_ERROR, extractApiError(data))
+            console.error(`Error: ${extractApiError(data)}`)
             process.exit(1)
           }
           if (json) jsonSuccess(data)
@@ -820,6 +850,9 @@ Shows the version of the currently running daemon process.
   } catch (err) {
     // jsonSuccess/jsonError call process.exit which may throw in certain environments
     if (err instanceof Error && err.message.startsWith('process.exit')) throw err
+    // Node.js wraps low-level TCP errors from fetch() as TypeError with a cause.code —
+    // ECONNREFUSED means the port file exists but nothing is listening on that port (stale).
+    // Remove the port file so the next `openacp start` doesn't refuse to launch.
     if (err instanceof TypeError && (err.cause as Record<string, unknown> | undefined)?.code === 'ECONNREFUSED') {
       if (json) jsonError(ErrorCodes.API_ERROR, 'OpenACP is not running (stale port file)')
       console.error('OpenACP is not running (stale port file)')
